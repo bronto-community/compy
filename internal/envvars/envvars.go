@@ -28,7 +28,10 @@ func Vars(s state.Settings) map[string]string {
 }
 
 // Script renders vars as a shell script for the given shell: "sh" (the
-// default, also used for ""), "fish", or "pwsh". Keys are sorted for
+// default, also used for ""), "fish", or "pwsh". Values are single-quoted
+// per the target shell's own escaping rules so values are inert to the
+// shell (no expansion of "$(...)", backticks, "$VAR", etc.) even when they
+// come from user input (e.g. OTEL_RESOURCE_ATTRIBUTES). Keys are sorted for
 // deterministic output. An unknown shell returns an error.
 func Script(vars map[string]string, shell string) (string, error) {
 	var b strings.Builder
@@ -36,16 +39,37 @@ func Script(vars map[string]string, shell string) (string, error) {
 		v := vars[k]
 		switch shell {
 		case "", "sh":
-			fmt.Fprintf(&b, "export %s=%q\n", k, v)
+			fmt.Fprintf(&b, "export %s=%s\n", k, quoteSh(v))
 		case "fish":
-			fmt.Fprintf(&b, "set -gx %s %q\n", k, v)
+			fmt.Fprintf(&b, "set -gx %s %s\n", k, quoteFish(v))
 		case "pwsh":
-			fmt.Fprintf(&b, "$env:%s = %q\n", k, v)
+			fmt.Fprintf(&b, "$env:%s = %s\n", k, quotePwsh(v))
 		default:
 			return "", fmt.Errorf("envvars: unsupported shell %q", shell)
 		}
 	}
 	return b.String(), nil
+}
+
+// quoteSh single-quotes v for POSIX sh: each embedded quote character is
+// replaced with: close quote, backslash-escaped literal quote, reopen quote.
+func quoteSh(v string) string {
+	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
+}
+
+// quoteFish single-quotes v for fish, whose single-quoted strings only
+// recognize the backslash escapes \\ and \': backslash must be escaped
+// first, then the quote.
+func quoteFish(v string) string {
+	v = strings.ReplaceAll(v, `\`, `\\`)
+	v = strings.ReplaceAll(v, "'", `\'`)
+	return "'" + v + "'"
+}
+
+// quotePwsh single-quotes v for PowerShell: each embedded quote character
+// is doubled.
+func quotePwsh(v string) string {
+	return "'" + strings.ReplaceAll(v, "'", "''") + "'"
 }
 
 // Run execs argv[0] with os.Environ() plus vars, stdio inherited, and
