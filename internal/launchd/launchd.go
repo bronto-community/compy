@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/bronto-io/compy/internal/state"
 )
@@ -95,10 +96,18 @@ func Install(bin string, args []string, logPath string) error {
 	}
 
 	_, _ = Exec("bootout", guiTarget()+"/"+Label) // ignore error: may not be loaded
-	if _, err := Exec("bootstrap", guiTarget(), path); err != nil {
-		return err
+
+	// bootout returns before launchd has finished tearing the job down, and
+	// bootstrapping into that window fails with "5: Input/output error" —
+	// leaving the collector stopped. Retry briefly (~2s) until it lands.
+	var out []byte
+	for i := 0; i < 20; i++ {
+		if out, err = Exec("bootstrap", guiTarget(), path); err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	return nil
+	return fmt.Errorf("launchctl bootstrap: %w: %s", err, out)
 }
 
 // Uninstall unloads the job (ignoring errors) and removes the plist file.

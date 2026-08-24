@@ -1,6 +1,7 @@
 package launchd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,6 +78,32 @@ func TestInstallCallsLaunchctl(t *testing.T) {
 	}
 	if !foundBootstrap {
 		t.Fatalf("bootstrap not called: %v", calls)
+	}
+}
+
+// launchctl bootout returns before the job is fully gone; the bootstrap that
+// follows then fails with "5: Input/output error". Install must retry.
+func TestInstallRetriesBootstrapAfterBootoutRace(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	attempts := 0
+	orig := Exec
+	Exec = func(args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "bootstrap" {
+			attempts++
+			if attempts < 3 {
+				return []byte("Bootstrap failed: 5: Input/output error"), errors.New("exit status 5")
+			}
+		}
+		return nil, nil
+	}
+	defer func() { Exec = orig }()
+
+	if err := Install("/usr/local/bin/otelcol", nil, "/tmp/out.log"); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("bootstrap attempts = %d, want 3", attempts)
 	}
 }
 
