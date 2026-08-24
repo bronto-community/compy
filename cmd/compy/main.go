@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -42,7 +43,7 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy run -- <cmd...>
   compy raw on|off|edit
   compy ui [--port N]
-  compy tray
+  compy tray [install|uninstall]
 `
 
 func main() {
@@ -91,9 +92,42 @@ func run(args []string) error {
 	case "ui":
 		return cmdUI(rest)
 	case "tray":
-		return withApp(tray.Run)
+		return cmdTray(rest)
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
+	}
+}
+
+// cmdTray runs the tray inline (no args), or installs/uninstalls a login
+// LaunchAgent for it. The tray agent runs at load but is NOT kept alive, so
+// quitting from the menu sticks until next login or reinstall.
+func cmdTray(args []string) error {
+	if len(args) == 0 {
+		return withApp(tray.Run)
+	}
+	switch args[0] {
+	case "install":
+		bin, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		dir, err := state.Dir()
+		if err != nil {
+			return err
+		}
+		if err := launchd.InstallAgent(launchd.TrayLabel, bin, []string{"tray"}, filepath.Join(dir, "logs", "tray.log"), false); err != nil {
+			return err
+		}
+		fmt.Println("tray installed (starts at login; running now)")
+		return nil
+	case "uninstall":
+		if err := launchd.UninstallAgent(launchd.TrayLabel); err != nil {
+			return err
+		}
+		fmt.Println("tray uninstalled")
+		return nil
+	default:
+		return fmt.Errorf("usage: compy tray [install|uninstall]")
 	}
 }
 

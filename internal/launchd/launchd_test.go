@@ -107,6 +107,61 @@ func TestInstallRetriesBootstrapAfterBootoutRace(t *testing.T) {
 	}
 }
 
+func TestRenderPlistKeepAliveVariants(t *testing.T) {
+	on := string(renderPlist(Label, "/bin/otelcol", nil, "/tmp/x.log", true))
+	if !strings.Contains(on, "<key>KeepAlive</key><true/>") {
+		t.Fatalf("keepAlive=true missing <true/>: %s", on)
+	}
+	off := string(renderPlist(TrayLabel, "/bin/compy", []string{"tray"}, "/tmp/t.log", false))
+	if !strings.Contains(off, "<key>KeepAlive</key><false/>") {
+		t.Fatalf("keepAlive=false missing <false/>: %s", off)
+	}
+	if !strings.Contains(off, "<key>Label</key><string>"+TrayLabel+"</string>") {
+		t.Fatalf("tray label missing: %s", off)
+	}
+}
+
+func TestInstallAgentTrayLabel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var calls [][]string
+	orig := Exec
+	Exec = func(args ...string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		return nil, nil
+	}
+	defer func() { Exec = orig }()
+
+	if err := InstallAgent(TrayLabel, "/bin/compy", []string{"tray"}, "/tmp/t.log", false); err != nil {
+		t.Fatalf("InstallAgent: %v", err)
+	}
+	path := filepath.Join(home, "Library", "LaunchAgents", TrayLabel+".plist")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("tray plist not written: %v", err)
+	}
+	if !strings.Contains(string(data), "<false/>") {
+		t.Fatalf("tray plist should not keep alive: %s", data)
+	}
+	var bootstrapped bool
+	for _, c := range calls {
+		if len(c) > 2 && c[0] == "bootstrap" && c[2] == path {
+			bootstrapped = true
+		}
+	}
+	if !bootstrapped {
+		t.Fatalf("bootstrap not called with tray plist: %v", calls)
+	}
+
+	if err := UninstallAgent(TrayLabel); err != nil {
+		t.Fatalf("UninstallAgent: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("tray plist not removed: %v", err)
+	}
+}
+
 func TestRunningParsesState(t *testing.T) {
 	orig := Exec
 	defer func() { Exec = orig }()

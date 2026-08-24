@@ -17,8 +17,13 @@ import (
 	"github.com/bronto-io/compy/internal/state"
 )
 
-// Label is the launchd job label used for the plist filename and identity.
-const Label = "io.bronto.compy.collector"
+// Label is the collector job's launchd label, used for the plist filename
+// and identity. TrayLabel is the menu-bar tray's job; it runs at load but is
+// not kept alive, so quitting from the menu sticks.
+const (
+	Label     = "io.bronto.compy.collector"
+	TrayLabel = "io.bronto.compy.tray"
+)
 
 // Exec is the launchctl runner, a package var so tests can stub it.
 var Exec = func(args ...string) ([]byte, error) {
@@ -33,7 +38,7 @@ var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.
     {{range .Argv}}<string>{{.}}</string>
     {{end}}</array>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <key>KeepAlive</key>{{if .KeepAlive}}<true/>{{else}}<false/>{{end}}
   <key>StandardErrorPath</key><string>{{.LogPath}}</string>
   <key>StandardOutPath</key><string>{{.LogPath}}</string>
 </dict></plist>
@@ -41,11 +46,15 @@ var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.
 
 // PlistPath returns ~/Library/LaunchAgents/<Label>.plist.
 func PlistPath() (string, error) {
+	return agentPlistPath(Label)
+}
+
+func agentPlistPath(label string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, "Library", "LaunchAgents", Label+".plist"), nil
+	return filepath.Join(home, "Library", "LaunchAgents", label+".plist"), nil
 }
 
 func xmlEscape(s string) string {
@@ -54,9 +63,13 @@ func xmlEscape(s string) string {
 	return buf.String()
 }
 
-// RenderPlist renders the LaunchAgent plist for bin run with args, logging
-// to logPath. Argv entries and logPath are XML-escaped.
+// RenderPlist renders the collector LaunchAgent plist for bin run with args,
+// logging to logPath. Argv entries and logPath are XML-escaped.
 func RenderPlist(bin string, args []string, logPath string) []byte {
+	return renderPlist(Label, bin, args, logPath, true)
+}
+
+func renderPlist(label, bin string, args []string, logPath string, keepAlive bool) []byte {
 	argv := make([]string, 0, len(args)+1)
 	argv = append(argv, xmlEscape(bin))
 	for _, a := range args {
@@ -65,13 +78,15 @@ func RenderPlist(bin string, args []string, logPath string) []byte {
 
 	var buf bytes.Buffer
 	_ = plistTemplate.Execute(&buf, struct {
-		Label   string
-		Argv    []string
-		LogPath string
+		Label     string
+		Argv      []string
+		LogPath   string
+		KeepAlive bool
 	}{
-		Label:   Label,
-		Argv:    argv,
-		LogPath: xmlEscape(logPath),
+		Label:     label,
+		Argv:      argv,
+		LogPath:   xmlEscape(logPath),
+		KeepAlive: keepAlive,
 	})
 	return buf.Bytes()
 }
@@ -80,22 +95,27 @@ func guiTarget() string {
 	return fmt.Sprintf("gui/%d", os.Getuid())
 }
 
-// Install writes the plist and (re)loads it via launchctl: bootout any
-// existing job (ignoring errors, since it may not be loaded), then
-// bootstrap.
+// Install writes the collector plist and (re)loads it via launchctl.
 func Install(bin string, args []string, logPath string) error {
-	path, err := PlistPath()
+	return InstallAgent(Label, bin, args, logPath, true)
+}
+
+// InstallAgent writes the plist for label and (re)loads it via launchctl:
+// bootout any existing job (ignoring errors, since it may not be loaded),
+// then bootstrap.
+func InstallAgent(label, bin string, args []string, logPath string, keepAlive bool) error {
+	path, err := agentPlistPath(label)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := state.WriteFileAtomic(path, RenderPlist(bin, args, logPath), 0o644); err != nil {
+	if err := state.WriteFileAtomic(path, renderPlist(label, bin, args, logPath, keepAlive), 0o644); err != nil {
 		return err
 	}
 
-	_, _ = Exec("bootout", guiTarget()+"/"+Label) // ignore error: may not be loaded
+	_, _ = Exec("bootout", guiTarget()+"/"+label) // ignore error: may not be loaded
 
 	// bootout returns before launchd has finished tearing the job down, and
 	// bootstrapping into that window fails with "5: Input/output error" —
@@ -110,11 +130,18 @@ func Install(bin string, args []string, logPath string) error {
 	return fmt.Errorf("launchctl bootstrap: %w: %s", err, out)
 }
 
-// Uninstall unloads the job (ignoring errors) and removes the plist file.
+// Uninstall unloads the collector job (ignoring errors) and removes its
+// plist file.
 func Uninstall() error {
-	_, _ = Exec("bootout", guiTarget()+"/"+Label) // ignore error: may not be loaded
+	return UninstallAgent(Label)
+}
 
-	path, err := PlistPath()
+// UninstallAgent unloads the job for label (ignoring errors) and removes its
+// plist file.
+func UninstallAgent(label string) error {
+	_, _ = Exec("bootout", guiTarget()+"/"+label) // ignore error: may not be loaded
+
+	path, err := agentPlistPath(label)
 	if err != nil {
 		return err
 	}
