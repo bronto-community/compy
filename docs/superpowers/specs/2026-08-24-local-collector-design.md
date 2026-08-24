@@ -1,6 +1,10 @@
 # Local OTel Collector Manager — Design
 
-2026-08-24. Open source, owned by bronto.io. Working name: **loco** (LOcal COllector) — placeholder, rename freely.
+2026-08-24. Open source, owned by bronto.io. Name: **compy** (after
+Compsognathus, the tiny dinosaur — a small local companion, on brand for
+bronto.io). Name-conflict sweep done 2026-08-24: no dev-tool or observability
+collisions; major registries squatted by dead projects (irrelevant for a Go
+binary), Homebrew free.
 
 ## What it is
 
@@ -42,21 +46,21 @@ The OS service manager is the supervisor. On macOS a per-user LaunchAgent with
 `KeepAlive` runs the collector binary directly: start at login, restart on
 death, both for free. (Linux: systemd user unit. Windows: service, later.)
 
-The `loco` binary is a pure control plane. GUI, tray, and CLI all operate on
+The `compy` binary is a pure control plane. GUI, tray, and CLI all operate on
 the same state directory and poke launchd; files are the single source of
 truth, so there is no IPC protocol and no way for CLI and UI to disagree.
 
 ```
 apps ──OTLP──▶ collector (supervised by launchd) ──▶ enabled backends
                     ▲ config files + plist
-loco CLI ──┐        │
-loco UI  ──┼──▶ state dir ──▶ launchctl kickstart on apply
-loco tray ─┘
+compy CLI ──┐        │
+compy UI  ──┼──▶ state dir ──▶ launchctl kickstart on apply
+compy tray ─┘
 ```
 
 ### State directory
 
-`~/Library/Application Support/loco/` (XDG dirs on Linux):
+`~/Library/Application Support/compy/` (XDG dirs on Linux):
 
 ```
 config/base.yaml            # receivers (stable OTLP ports), shared processors,
@@ -100,24 +104,24 @@ Remote config: a backend (or the base) may be a confmap URI
 as the single `--config`. Backend toggles are disabled while raw mode is on.
 Switching back re-renders from base + fragments. No silent detaching.
 
-**Apply flow** (`loco apply`, also triggered by every UI toggle):
+**Apply flow** (`compy apply`, also triggered by every UI toggle):
 1. Run `<selected distro binary> validate --config …` with the exact flag set.
    This gives distribution-aware validation for free — a contrib-only
    component fails validation the moment core is selected.
 2. On pass: snapshot current set to `last-good/` (only if the running
    collector is healthy), rewrite plist, `launchctl kickstart -k`.
 3. Post-apply health probe (process up + OTLP port accepting). On failure:
-   surface tail of `collector.log`, offer `loco rollback`.
+   surface tail of `collector.log`, offer `compy rollback`.
 
-`loco rollback` re-applies the `last-good/` snapshot.
+`compy rollback` re-applies the `last-good/` snapshot.
 
 ### Distributions
 
 - Release artifacts **bundle** core and contrib binaries for the platform
-  alongside `loco` (inside the signed/notarized package — this sidesteps the
+  alongside `compy` (inside the signed/notarized package — this sidesteps the
   unsigned-upstream-binary problem on macOS entirely).
-- `loco distro add <path>` registers any local binary (vendor distro, custom
-  build). `loco distro use <name>` switches; switching re-runs the apply flow
+- `compy distro add <path>` registers any local binary (vendor distro, custom
+  build). `compy distro use <name>` switches; switching re-runs the apply flow
   (validate against the new binary first, so a bad switch is caught before
   the restart).
 - Runtime download of distributions is a **non-goal for v1** (Gatekeeper +
@@ -129,9 +133,9 @@ Vars managed: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
 and `OTEL_RESOURCE_ATTRIBUTES` if the user sets any. Values point at the
 stable local endpoint, so they change only when ports change.
 
-- `loco env [--shell sh|fish|pwsh]` — emits export lines for
-  `eval "$(loco env)"`.
-- `loco run -- <cmd>` — spawns the command with vars injected (the
+- `compy env [--shell sh|fish|pwsh]` — emits export lines for
+  `eval "$(compy env)"`.
+- `compy run -- <cmd>` — spawns the command with vars injected (the
   Claude Code / one-off tool case). Nothing touches the parent shell.
 - OS-level (opt-in, explicit on/off in UI and CLI): macOS
   `launchctl setenv` per var, affecting newly launched GUI apps and login
@@ -141,7 +145,7 @@ stable local endpoint, so they change only when ports change.
 ### Web UI and tray
 
 Single-page UI, embedded via `go:embed`, served on a localhost port only
-while the tray app or `loco ui` is running — there is no always-on UI server;
+while the tray app or `compy ui` is running — there is no always-on UI server;
 the only long-lived process on the machine is the collector itself. Bound to `127.0.0.1` with a Host-header check (DNS
 rebinding) — no auth beyond that; single-user machine.
 
@@ -159,14 +163,14 @@ CLI + web UI, which is what keeps Linux-without-tray a non-event.
 ### CLI surface (v1)
 
 ```
-loco service install|uninstall|status
-loco status
-loco backend list|add|remove|enable|disable|edit <name>
-loco apply | rollback | validate
-loco distro list|add <path>|use <name>
-loco env [--shell …]
-loco run -- <cmd>
-loco ui
+compy service install|uninstall|status
+compy status
+compy backend list|add|remove|enable|disable|edit <name>
+compy apply | rollback | validate
+compy distro list|add <path>|use <name>
+compy env [--shell …]
+compy run -- <cmd>
+compy ui
 ```
 
 ## Error handling
@@ -197,7 +201,7 @@ loco ui
   historically confmap replaces lists, and append behavior arrived behind a
   merge-append option gate in recent collector versions. **Verify before any
   other work.** Fallback if append isn't reliable across supported distros:
-  fragments stay pure YAML, but loco renders the `service:` section itself
+  fragments stay pure YAML, but compy renders the `service:` section itself
   into a small generated overlay file — contained change, same UX.
 - **R2:** OTelBin URL-fragment format and size limits.
 - **R3:** `launchctl setenv` behavior on current macOS (SIP-era quirks).
@@ -207,9 +211,9 @@ loco ui
 ## Milestones
 
 1. **Core loop, no service:** state dir, config model, presets,
-   `loco validate` + foreground run. (R1 verification is task zero.)
+   `compy validate` + foreground run. (R1 verification is task zero.)
 2. **Service:** launchd install, apply/kickstart, health probe, rollback.
-3. **Env:** `loco env`, `loco run`, macOS `launchctl setenv` opt-in.
+3. **Env:** `compy env`, `compy run`, macOS `launchctl setenv` opt-in.
 4. **UI + tray:** embedded web UI, menu-bar app.
 5. **Packaging:** signing, notarization, bundled distros, brew tap.
 
