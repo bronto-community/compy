@@ -221,6 +221,9 @@ func (a *App) SetEnabled(name string, enabled bool) error {
 		return err
 	}
 	if enabled {
+		if !state.ValidBackendName(name) {
+			return fmt.Errorf("invalid backend name %q", name)
+		}
 		if _, err := os.Stat(config.BackendPath(a.Dir, name)); err != nil {
 			return fmt.Errorf("no such backend %q", name)
 		}

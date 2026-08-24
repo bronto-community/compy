@@ -28,7 +28,8 @@ out on other GOOS in `internal/tray`).
   into a validated, installed, running collector; the one API the CLI, web
   UI, and tray all call into.
 - `collector` — runs and probes a local OpenTelemetry Collector binary
-  (validate, start via launchd, health probe, log tail).
+  (validate, health probe, log tail); starting it is `launchd`'s job, via
+  `app.Apply`.
 - `config` — collector configuration: base template, per-backend fragments,
   presets, collector arg construction (`--config` per enabled backend),
   last-good snapshot/restore.
@@ -39,8 +40,8 @@ out on other GOOS in `internal/tray`).
   uninstalls / kickstarts / inspects it via `launchctl`.
 - `state` — on-disk state: settings, distros, state directory layout
   (`COMPY_HOME`, below).
-- `tray` — macOS menu-bar icon (status, enable/disable toggles, Open UI,
-  Quit); non-darwin build is a no-op stub.
+- `tray` — macOS menu-bar icon (status, Open UI, Quit — deliberately no
+  per-backend toggles); non-darwin build is a no-op stub.
 - `webui` — localhost-only web UI: JSON API plus an embedded (`go:embed`)
   single-page app; no internal dependencies, the caller wires behavior in
   via a closure struct.

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -67,10 +68,22 @@ func Serve(addr string, api API) error {
 }
 
 // hostCheck rejects (403) any request whose Host header is not localhost,
-// 127.0.0.1, or [::1] (with optional :port) — a DNS-rebinding guard.
+// 127.0.0.1, or [::1] (with optional :port) — a DNS-rebinding guard — and
+// any request that looks cross-site: a non-localhost Origin header (a
+// cross-site form POST still carries one even though the Host check passes,
+// since Host is just this server's own address), or a Sec-Fetch-Site value
+// other than same-origin/none.
 func hostCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isLocalHost(r.Host) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" && !isLocalOrigin(origin) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -89,6 +102,16 @@ func isLocalHost(host string) bool {
 		return true
 	}
 	return false
+}
+
+// isLocalOrigin reports whether origin (an Origin header value) is
+// http://localhost, http://127.0.0.1, or http://[::1], any port.
+func isLocalOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "http" && isLocalHost(u.Host)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

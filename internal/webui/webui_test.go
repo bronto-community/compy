@@ -122,6 +122,81 @@ func TestHostCheckRejectsEvilHost(t *testing.T) {
 	}
 }
 
+func TestCSRFRejectsCrossOriginOrigin(t *testing.T) {
+	api := fakeAPI()
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/apply", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "https://evil.com")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestCSRFRejectsCrossSiteSecFetchSite(t *testing.T) {
+	api := fakeAPI()
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/apply", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestCSRFAllowsLocalhostOriginWithAnyPort(t *testing.T) {
+	api := fakeAPI()
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/apply", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "http://localhost:9999")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestCSRFAllowsRequestsWithoutOriginOrSecFetchSite(t *testing.T) {
+	api := fakeAPI()
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/api/apply", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
 func TestErrorPassthrough(t *testing.T) {
 	api := fakeAPI()
 	api.Apply = func() error { return errWithMessage("collector said no") }
