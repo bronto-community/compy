@@ -41,6 +41,19 @@ func ValidBackendName(name string) bool {
 	return len(name) <= 64 && backendNameRE.MatchString(name)
 }
 
+// baseDir computes the default (COMPY_HOME-less) state directory for a given
+// GOOS/XDG_DATA_HOME/home, factored out so the non-darwin branch is testable
+// without build tags.
+func baseDir(goos, xdgDataHome, home string) string {
+	if goos == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "compy")
+	}
+	if xdgDataHome == "" {
+		xdgDataHome = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(xdgDataHome, "compy")
+}
+
 // Dir resolves the compy state directory, creating it (and its
 // config/backends, logs, and last-good subdirectories) if needed.
 func Dir() (string, error) {
@@ -50,11 +63,7 @@ func Dir() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if runtime.GOOS == "darwin" {
-			base = filepath.Join(home, "Library", "Application Support", "compy")
-		} else {
-			base = filepath.Join(home, ".compy")
-		}
+		base = baseDir(runtime.GOOS, os.Getenv("XDG_DATA_HOME"), home)
 	}
 	for _, sub := range []string{filepath.Join("config", "backends"), "logs", "last-good"} {
 		if err := os.MkdirAll(filepath.Join(base, sub), 0o755); err != nil {
@@ -126,7 +135,9 @@ func LoadSettings() (Settings, error) {
 }
 
 // SaveSettings writes settings.json atomically, keeping Enabled sorted.
+// The caller's Enabled slice is not mutated.
 func SaveSettings(s Settings) error {
+	s.Enabled = slices.Clone(s.Enabled)
 	slices.Sort(s.Enabled)
 	return saveJSON("settings.json", s)
 }
