@@ -22,6 +22,7 @@ import (
 	"github.com/bronto-io/compy/internal/envvars"
 	"github.com/bronto-io/compy/internal/launchd"
 	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-io/compy/internal/tray"
 	"github.com/bronto-io/compy/internal/webui"
 )
 
@@ -41,6 +42,7 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy run -- <cmd...>
   compy raw on|off|edit
   compy ui [--port N]
+  compy tray
 `
 
 func main() {
@@ -88,6 +90,8 @@ func run(args []string) error {
 		return cmdRaw(rest)
 	case "ui":
 		return cmdUI(rest)
+	case "tray":
+		return withApp(tray.Run)
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
 	}
