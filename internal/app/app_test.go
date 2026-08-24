@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -320,6 +321,32 @@ func TestBackendLifecycle(t *testing.T) {
 	}
 	if _, err := os.Stat(config.BackendPath(a.Dir, "local-debug")); err == nil {
 		t.Error("fragment still on disk after remove")
+	}
+}
+
+func TestSetEnabledRejectsInvalidBackendName(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.SetEnabled("../base", true); err == nil {
+		t.Fatal("SetEnabled(\"../base\", true) = nil, want error")
+	}
+
+	after, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(before.Enabled, after.Enabled) {
+		t.Errorf("settings.Enabled changed: before %v, after %v", before.Enabled, after.Enabled)
 	}
 }
 

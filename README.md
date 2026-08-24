@@ -33,8 +33,9 @@ eval "$(./compy env)"
 ```
 
 `backend enable` already applies and starts the collector; `service install`
-makes that explicit (and is what to run again after switching distros or
-recovering a service that was uninstalled). `eval "$(./compy env)"` exports
+makes that explicit for first-time setup, and again after a `service
+uninstall` — switching distros needs no reinstall, `compy distro use`
+already re-applies. `eval "$(./compy env)"` exports
 `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_PROTOCOL` into your
 shell. For a single command instead: `./compy run -- <cmd>`.
 

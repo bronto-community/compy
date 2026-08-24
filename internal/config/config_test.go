@@ -210,6 +210,29 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRestoreLastGoodFreshInstallErrorsWithoutDeleting(t *testing.T) {
+	dir := setupDir(t) // state.Dir() pre-creates an empty last-good/
+	s := state.Settings{GRPCPort: 14317, HTTPPort: 14318, Enabled: []string{"a"}}
+	if _, err := config.EnsureBase(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	frag, _ := config.Preset("debug", "a", "", "")
+	if err := config.WriteBackend(dir, "a", frag); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := config.RestoreLastGood(dir); err == nil {
+		t.Fatal("RestoreLastGood() = nil on fresh install, want error")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "config", "base.yaml")); err != nil {
+		t.Errorf("base.yaml deleted by RestoreLastGood on fresh install: %v", err)
+	}
+	if _, err := os.Stat(config.BackendPath(dir, "a")); err != nil {
+		t.Errorf("backend fragment deleted by RestoreLastGood on fresh install: %v", err)
+	}
+}
+
 func TestWriteBackendRejectsBadName(t *testing.T) {
 	dir := setupDir(t)
 	if err := config.WriteBackend(dir, "Bad Name!", []byte("exporters:\n  nop:\n")); err == nil {

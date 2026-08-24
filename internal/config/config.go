@@ -154,8 +154,10 @@ func SnapshotLastGood(dir string) error {
 // It errors if no snapshot exists.
 func RestoreLastGood(dir string) error {
 	src := filepath.Join(dir, "last-good")
-	if _, err := os.Stat(src); err != nil {
-		return fmt.Errorf("no last-good snapshot: %w", err)
+	// state.Dir() pre-creates last-good/ empty, so its mere existence proves
+	// nothing; settings.json only lands there via SnapshotLastGood.
+	if _, err := os.Stat(filepath.Join(src, "settings.json")); err != nil {
+		return fmt.Errorf("no last-good snapshot to restore")
 	}
 	if err := os.RemoveAll(filepath.Join(dir, "config")); err != nil {
 		return err
