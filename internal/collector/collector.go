@@ -36,6 +36,7 @@ func Probe(port int, timeout time.Duration) error {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("probe %s: %w", addr, lastErr)
 		}
+		time.Sleep(250 * time.Millisecond)
 	}
 }
 
