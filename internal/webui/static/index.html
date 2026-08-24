@@ -6,19 +6,18 @@
 <title>compy</title>
 <style>
   /* Brand-aligned tokens (bronto.io look): cream ground, white cards,
-     dino-amber signal, serif display. Fonts are referenced as stacks only —
+     dino-amber accent, serif display. Fonts are referenced as stacks only —
      no font or image assets ship in this OSS repo; everything falls back to
-     system faces, and the dotted motif is pure CSS. */
+     system faces. Layout follows standard settings-app anatomy: sidebar
+     sections, grouped cards, label-left/control-right rows. */
   :root {
     --bg: #F7F4EC;
-    --dot: #DDD7C8;
     --panel: #FFFFFF;
     --line: #E5E0D3;
     --ink: #1E1E1C;
     --muted: #6E6A60;
-    --signal: #DE9200;
-    --signal-soft: #F9C338;
-    --signal-tint: #FDF3D5;
+    --accent: #DE9200;
+    --accent-soft: #F9C338;
     --dark: #1E1E1C;
     --ok: #3E9B6E;
     --bad: #C4452F;
@@ -27,76 +26,80 @@
     --sans: Inter, system-ui, -apple-system, sans-serif;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; }
+  html, body { margin: 0; height: 100%; }
   body {
     background: var(--bg);
-    background-image: radial-gradient(var(--dot) 1px, transparent 1px);
-    background-size: 26px 26px;
     color: var(--ink);
     font-family: var(--sans);
-    font-size: 14px;
+    font-size: 13.5px;
     line-height: 1.5;
-    min-height: 100vh;
+    display: flex;
   }
   button { cursor: pointer; font: inherit; }
-  :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  code { font-family: var(--mono); font-size: 0.95em; }
 
-  .label {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--muted);
-  }
-
-  /* ── header: the status bus ─────────────────────────────── */
-  header {
+  /* ── sidebar ────────────────────────────────────────────── */
+  nav {
+    width: 190px;
+    flex: none;
+    border-right: 1px solid var(--line);
+    padding: 18px 12px;
     display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 14px 22px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--line);
-    font-size: 13px;
+    flex-direction: column;
+    gap: 2px;
   }
   .wordmark {
     font-family: var(--serif);
     font-weight: 700;
-    font-size: 19px;
+    font-size: 20px;
+    padding: 0 10px 6px;
   }
-  .led {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--bad);
+  .nav-status {
+    display: flex; align-items: center; gap: 7px;
+    padding: 0 10px 14px;
+    color: var(--muted);
+    font-size: 12px;
   }
+  .led { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); flex: none; }
   .led.on { background: var(--ok); }
-  #status-line { color: var(--muted); }
-  #status-line b { color: var(--ink); font-weight: 600; }
-  .badge {
-    font-family: var(--mono); font-size: 10.5px;
-    letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--signal);
-    background: var(--signal-tint);
-    border: 1px solid var(--signal-soft);
-    border-radius: 999px;
-    padding: 1px 8px;
-    display: none;
-  }
-  header .spacer { flex: 1; }
-  .ghost-btn {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 999px;
+  nav button {
+    text-align: left;
+    background: none;
+    border: none;
+    border-radius: 7px;
+    padding: 7px 10px;
     color: var(--ink);
-    font-size: 12.5px;
-    font-weight: 500;
-    padding: 5px 14px;
+    font-size: 13.5px;
   }
-  .ghost-btn:hover { border-color: var(--muted); }
+  nav button:hover { background: rgba(30, 30, 28, 0.05); }
+  nav button[aria-current="true"] {
+    background: var(--panel);
+    box-shadow: inset 0 0 0 1px var(--line);
+    font-weight: 600;
+  }
 
-  /* ── error console: dark code panel, like the brand's shots ─ */
+  /* ── content ────────────────────────────────────────────── */
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 26px 34px 40px;
+    max-width: 720px;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 4px;
+  }
+  .page-desc { color: var(--muted); margin: 0 0 20px; }
+  .page { display: none; }
+  .page.current { display: block; }
+
+  /* error console */
   #error {
     display: none;
-    margin: 16px 20px 0;
+    margin-bottom: 18px;
     border-left: 3px solid var(--bad);
     border-radius: 8px;
     background: var(--dark);
@@ -105,133 +108,126 @@
     font-family: var(--mono);
     font-size: 12px;
     white-space: pre-wrap;
-    overflow-x: auto;
+    overflow: auto;
     max-height: 200px;
-    overflow-y: auto;
   }
 
-  main { padding: 20px; max-width: 920px; margin: 0 auto; }
-  section { margin-bottom: 26px; }
-  section > .label { display: block; margin-bottom: 10px; }
-
-  /* ── the patch bay ──────────────────────────────────────── */
-  .bay { position: relative; padding-left: 150px; }
-  .bus {
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 150px;
-  }
-  .bus .node {
-    position: sticky; top: 20px;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    background: var(--panel);
-    box-shadow: 0 1px 3px rgba(30, 30, 28, 0.06);
-    padding: 10px 12px;
-    width: 118px;
-    font-family: var(--mono);
+  /* grouped settings card */
+  .group { margin-bottom: 22px; }
+  .group > .group-title {
     font-size: 12px;
-  }
-  .bus .node .label { display: block; margin-bottom: 2px; }
-  /* the vertical bus wire */
-  .bay::before {
-    content: "";
-    position: absolute;
-    left: 130px; top: 34px; bottom: 26px;
-    border-left: 2px solid var(--line);
-  }
-  .rows { display: flex; flex-direction: column; gap: 10px; }
-  .row { position: relative; }
-  /* the wire from bus to row */
-  .row::before {
-    content: "";
-    position: absolute;
-    left: -20px; top: 50%;
-    width: 20px;
-    border-top: 2px dashed var(--line);
-  }
-  .row.live::before {
-    border-top: none;
-    height: 2px;
-    background: repeating-linear-gradient(90deg,
-      var(--signal) 0 6px, color-mix(in srgb, var(--signal) 30%, transparent) 6px 10px);
-    background-size: 10px 2px;
-    animation: flow 0.8s linear infinite;
-  }
-  @keyframes flow { from { background-position: 0 0; } to { background-position: 10px 0; } }
-  @media (prefers-reduced-motion: reduce) {
-    .row.live::before { animation: none; }
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin: 0 0 6px 2px;
   }
   .card {
+    background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 10px;
-    background: var(--panel);
-    box-shadow: 0 1px 3px rgba(30, 30, 28, 0.06);
+    box-shadow: 0 1px 3px rgba(30, 30, 28, 0.05);
+    overflow: hidden;
   }
-  .row.live > .card { border-color: var(--signal-soft); }
-  .row.busy > .card { opacity: 0.55; }
-  .row-head {
+  .srow {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
+    gap: 14px;
+    padding: 12px 16px;
   }
-  .jack {
-    width: 9px; height: 9px; border-radius: 50%;
-    border: 2px solid var(--muted);
+  .srow + .srow, .card > * + .srow, .srow + .card-extra { border-top: 1px solid var(--line); }
+  .srow .grow { flex: 1; min-width: 0; }
+  .srow .title { font-weight: 500; }
+  .srow .desc { color: var(--muted); font-size: 12.5px; }
+  .srow .desc code { word-break: break-all; }
+  .card-extra { padding: 12px 16px; }
+
+  .pill-btn {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--ink);
+    font-size: 12.5px;
+    font-weight: 500;
+    padding: 5px 14px;
     flex: none;
   }
-  .row.live .jack { border-color: var(--signal); background: var(--signal); }
-  .b-name { font-family: var(--mono); font-size: 13px; }
-  .kind {
-    font-family: var(--mono); font-size: 10.5px;
+  .pill-btn:hover { border-color: var(--muted); }
+  .solid-btn {
+    background: var(--dark);
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 6px 16px;
+  }
+  .solid-btn:hover { background: #35342F; }
+  .danger-link {
+    background: none; border: none;
+    color: var(--bad);
+    font-size: 12.5px;
+    padding: 2px 4px;
+  }
+  .danger-link:hover { text-decoration: underline; }
+  .kind-chip {
+    font-family: var(--mono);
+    font-size: 10.5px;
     color: var(--muted);
     border: 1px solid var(--line);
     border-radius: 999px;
     padding: 0 7px;
+    flex: none;
   }
-  .row-head .spacer { flex: 1; }
-  .link-btn {
-    background: none; border: none;
-    color: var(--muted);
-    font-family: var(--mono); font-size: 11.5px;
-    padding: 2px 4px;
-  }
-  .link-btn:hover { color: var(--ink); text-decoration: underline; }
 
-  /* toggle switch */
-  .switch { position: relative; width: 34px; height: 19px; flex: none; }
-  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  /* switch */
+  .switch { position: relative; width: 36px; height: 21px; flex: none; }
+  .switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
   .switch .track {
     position: absolute; inset: 0;
-    border-radius: 10px;
-    background: var(--line);
+    border-radius: 11px;
+    background: #D9D4C7;
     transition: background 0.15s;
   }
   .switch .track::after {
     content: "";
     position: absolute;
     top: 2px; left: 2px;
-    width: 15px; height: 15px;
+    width: 17px; height: 17px;
     border-radius: 50%;
     background: var(--panel);
-    box-shadow: 0 1px 2px rgba(30, 30, 28, 0.25);
+    box-shadow: 0 1px 2px rgba(30, 30, 28, 0.3);
     transition: transform 0.15s;
   }
-  .switch input:checked + .track { background: var(--signal-soft); }
+  .switch input:checked + .track { background: var(--accent-soft); }
   .switch input:checked + .track::after { transform: translateX(15px); }
-  .switch input:focus-visible + .track { outline: 2px solid var(--signal); outline-offset: 2px; }
+  .switch input:disabled + .track { opacity: 0.5; }
 
-  /* expandable editor under a row */
-  .editor {
-    display: none;
-    border-top: 1px solid var(--line);
-    padding: 12px 14px;
+  /* radio rows (distro) */
+  .srow input[type="radio"] { accent-color: var(--accent); width: 15px; height: 15px; flex: none; }
+
+  /* forms */
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
   }
-  .editor.open { display: block; }
+  .form-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+  .form-grid input, .form-grid select, .form-grid label > span + * {
+    background: var(--bg);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 7px 9px;
+  }
+  .form-actions { grid-column: 1 / -1; display: flex; gap: 10px; }
+  .hidden { display: none !important; }
+
   textarea {
     width: 100%;
-    min-height: 11rem;
+    min-height: 12rem;
     background: var(--dark);
     color: #F2EFE7;
     border: 1px solid var(--dark);
@@ -241,168 +237,230 @@
     padding: 10px;
     resize: vertical;
   }
-  .editor-actions { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
-
-  .solid-btn {
-    background: var(--dark);
-    color: #FFFFFF;
-    border: none;
-    border-radius: 999px;
-    font-size: 12.5px;
-    font-weight: 600;
-    padding: 6px 16px;
-  }
-  .solid-btn:hover { background: #35342F; }
-  a { color: var(--signal); }
-
-  /* add backend */
-  .add-row { margin-top: 10px; }
-  .add-row summary {
-    cursor: pointer;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 12px;
-    list-style: none;
-    padding: 8px 14px;
-    border: 1px dashed var(--line);
-    border-radius: 8px;
-  }
-  .add-row summary:hover { color: var(--ink); }
-  .add-row[open] summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-  .add-form {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    padding: 14px;
-    border: 1px solid var(--line);
-    border-top: none;
-    border-radius: 0 0 8px 8px;
+  select {
     background: var(--panel);
-  }
-  .add-form label { display: flex; flex-direction: column; gap: 4px; }
-  .add-form input, .add-form select {
-    background: var(--bg);
     color: var(--ink);
     border: 1px solid var(--line);
-    border-radius: 5px;
-    font-family: var(--mono);
-    font-size: 12.5px;
-    padding: 6px 8px;
+    border-radius: 7px;
+    font: inherit;
+    padding: 5px 8px;
   }
-  .add-form .actions { grid-column: 1 / -1; }
-
-  /* env strip */
-  .env-strip {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    border: 1px solid var(--line);
+  pre.log {
+    background: var(--dark);
+    color: #F2EFE7;
     border-radius: 8px;
-    background: var(--panel);
-    padding: 10px 14px;
     font-family: var(--mono);
-    font-size: 12.5px;
-    flex-wrap: wrap;
+    font-size: 11.5px;
+    padding: 10px 12px;
+    overflow: auto;
+    max-height: 240px;
+    margin: 0;
   }
-  .env-strip code { color: var(--signal); }
-  .env-strip .hint { color: var(--muted); font-family: var(--sans); font-size: 12.5px; }
-
-  /* raw drawer */
-  .raw-head { display: flex; align-items: center; gap: 10px; }
-  .raw-head .hint { color: var(--muted); font-size: 12.5px; }
-  #raw-body { margin-top: 10px; display: none; }
-  #raw-body.open { display: block; }
 
   @media (max-width: 640px) {
-    .bay { padding-left: 0; }
-    .bus { position: static; width: auto; margin-bottom: 14px; }
-    .bus .node { width: auto; position: static; }
-    .bay::before, .row::before { display: none; }
-    .add-form { grid-template-columns: 1fr; }
+    body { flex-direction: column; }
+    nav { width: auto; flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--line); }
+    .wordmark, .nav-status { padding-bottom: 0; }
+    .form-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
 
-<header>
-  <span class="wordmark">compy</span>
-  <span class="led" id="led"></span>
-  <span id="status-line">loading…</span>
-  <span class="badge" id="raw-badge">raw mode</span>
-  <span class="spacer"></span>
-  <button class="ghost-btn" id="rollback-btn" title="Restore the last known-good config">Roll back</button>
-</header>
-
-<div id="error" role="alert"></div>
+<nav>
+  <div class="wordmark">compy</div>
+  <div class="nav-status"><span class="led" id="led"></span><span id="nav-status-text">…</span></div>
+  <button data-page="destinations" aria-current="true">Destinations</button>
+  <button data-page="wiring">Wiring</button>
+  <button data-page="collector">Collector</button>
+  <button data-page="advanced">Advanced</button>
+</nav>
 
 <main>
-  <section>
-    <span class="label">Switchboard</span>
-    <div class="bay">
-      <div class="bus">
-        <div class="node">
-          <span class="label">your apps send to</span>
-          <div id="bus-endpoint">…</div>
+  <div id="error" role="alert"></div>
+
+  <!-- ── Destinations ─────────────────────────────────────── -->
+  <section class="page current" id="page-destinations">
+    <h1>Destinations</h1>
+    <p class="page-desc">Where your telemetry goes. Flip a switch to start or stop sending — apps keep pointing at the same local endpoint either way.</p>
+
+    <div class="group">
+      <div class="card" id="dest-card"></div>
+    </div>
+
+    <div class="group">
+      <button class="pill-btn" id="show-add">+ Add destination</button>
+      <div class="card hidden" id="add-card">
+        <div class="card-extra">
+          <form class="form-grid" id="add-form">
+            <label><span>Type</span>
+              <select name="kind" id="add-kind">
+                <option value="otlp-http">OTLP over HTTP</option>
+                <option value="otlp-grpc">OTLP over gRPC</option>
+                <option value="bronto">Bronto</option>
+                <option value="debug">Debug (collector log only)</option>
+              </select>
+            </label>
+            <label><span>Name</span>
+              <input name="name" placeholder="honeycomb-dev" required pattern="[a-z0-9][a-z0-9-]*" title="lowercase letters, digits, dashes">
+            </label>
+            <label id="add-endpoint-label"><span>Endpoint</span>
+              <input name="endpoint" placeholder="https://api.vendor.com:443">
+            </label>
+            <label id="add-key-label"><span>API key</span>
+              <input name="api_key" type="password" autocomplete="off">
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="solid-btn">Add destination</button>
+              <button type="button" class="pill-btn" id="cancel-add">Cancel</button>
+            </div>
+          </form>
         </div>
       </div>
-      <div class="rows" id="backend-rows"></div>
-      <details class="add-row" id="add-details">
-        <summary>+ add backend</summary>
-        <form class="add-form" id="add-form">
-          <label><span class="label">name</span>
-            <input name="name" placeholder="honeycomb-dev" required pattern="[a-z0-9][a-z0-9-]*">
-          </label>
-          <label><span class="label">kind</span>
-            <select name="kind">
-              <option value="otlp-grpc">otlp-grpc</option>
-              <option value="otlp-http">otlp-http</option>
-              <option value="bronto">bronto</option>
-              <option value="debug">debug</option>
-            </select>
-          </label>
-          <label><span class="label">endpoint</span>
-            <input name="endpoint" placeholder="https://…">
-          </label>
-          <label><span class="label">api key</span>
-            <input name="api_key" type="password" autocomplete="off">
-          </label>
-          <div class="actions"><button type="submit" class="solid-btn">Add backend</button></div>
-        </form>
-      </details>
     </div>
   </section>
 
-  <section>
-    <span class="label">Wire your apps</span>
-    <div class="env-strip">
-      <code id="env-cmd">eval "$(compy env)"</code>
-      <button class="ghost-btn" id="copy-env">Copy</button>
-      <span class="hint">run in a shell, or prefix one-offs with <code>compy run --</code></span>
+  <!-- ── Wiring ───────────────────────────────────────────── -->
+  <section class="page" id="page-wiring">
+    <h1>Wiring</h1>
+    <p class="page-desc">Point your applications at compy once; changing destinations never touches them again.</p>
+
+    <div class="group">
+      <div class="group-title">Local endpoint</div>
+      <div class="card">
+        <div class="srow">
+          <div class="grow">
+            <div class="title">OTLP over HTTP</div>
+            <div class="desc"><code id="ep-http">…</code></div>
+          </div>
+          <button class="pill-btn copy-btn" data-copy-from="ep-http">Copy</button>
+        </div>
+        <div class="srow">
+          <div class="grow">
+            <div class="title">OTLP over gRPC</div>
+            <div class="desc"><code id="ep-grpc">…</code></div>
+          </div>
+          <button class="pill-btn copy-btn" data-copy-from="ep-grpc">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Shell setup</div>
+      <div class="card">
+        <div class="srow">
+          <div class="grow">
+            <div class="title">Current shell</div>
+            <div class="desc">Sets <code>OTEL_*</code> variables for this shell only: <code id="env-line">eval "$(compy env)"</code></div>
+          </div>
+          <button class="pill-btn copy-btn" data-copy-from="env-line">Copy</button>
+        </div>
+        <div class="srow">
+          <div class="grow">
+            <div class="title">Single command</div>
+            <div class="desc">Runs one program with the variables set: <code id="run-line">compy run -- &lt;command&gt;</code></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Automatic</div>
+      <div class="card">
+        <div class="srow">
+          <div class="grow">
+            <div class="title">Set variables system-wide</div>
+            <div class="desc">Injects <code>OTEL_*</code> into the login session so newly started apps pick them up without any shell setup. Already-running apps are unaffected.</div>
+          </div>
+          <span class="switch"><input type="checkbox" id="os-env-toggle" aria-label="Set variables system-wide"><span class="track"></span></span>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section>
-    <span class="label">Raw config</span>
-    <div class="raw-head">
-      <span class="switch">
-        <input type="checkbox" id="raw-mode-checkbox" aria-label="Raw mode">
-        <span class="track"></span>
-      </span>
-      <span class="hint">bypass generated config and run <code>config/custom.yaml</code> as-is</span>
+  <!-- ── Collector ────────────────────────────────────────── -->
+  <section class="page" id="page-collector">
+    <h1>Collector</h1>
+    <p class="page-desc">The OpenTelemetry Collector that compy runs for you as a background service.</p>
+
+    <div class="group">
+      <div class="group-title">Distribution</div>
+      <div class="card" id="distro-card"></div>
+      <p class="desc" style="color: var(--muted); font-size: 12.5px; margin: 6px 2px 0;">
+        Register more with <code>compy distro add &lt;name&gt; &lt;path&gt;</code>.
+      </p>
     </div>
-    <div id="raw-body">
-      <textarea id="raw-textarea" placeholder="custom.yaml" spellcheck="false"></textarea>
-      <div class="editor-actions">
-        <button class="solid-btn" id="save-raw">Save custom.yaml</button>
+
+    <div class="group">
+      <div class="group-title">Service</div>
+      <div class="card">
+        <div class="srow">
+          <div class="grow">
+            <div class="title" id="svc-title">…</div>
+            <div class="desc" id="svc-desc"></div>
+          </div>
+          <button class="pill-btn" id="restart-btn">Restart</button>
+          <button class="pill-btn" id="rollback-btn" title="Restore the last config that ran successfully">Roll back</button>
+        </div>
+        <div class="card-extra">
+          <div class="desc" style="margin-bottom:6px;">Recent collector log</div>
+          <pre class="log" id="log-view">…</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Advanced ─────────────────────────────────────────── -->
+  <section class="page" id="page-advanced">
+    <h1>Advanced</h1>
+    <p class="page-desc">Full control over the collector configuration. Everything here is plain collector YAML.</p>
+
+    <div class="group">
+      <div class="group-title">Destination YAML</div>
+      <div class="card">
+        <div class="srow">
+          <div class="grow">
+            <div class="title">Edit a destination's config fragment</div>
+            <div class="desc">Each destination is one YAML fragment merged into the collector config.</div>
+          </div>
+          <select id="frag-select" aria-label="Destination to edit"></select>
+        </div>
+        <div class="card-extra hidden" id="frag-editor">
+          <textarea id="frag-textarea" spellcheck="false"></textarea>
+          <div class="srow" style="padding: 10px 0 0;">
+            <button class="solid-btn" id="save-frag">Save</button>
+            <a id="otelbin-link" target="_blank">Open in OTelBin</a>
+            <!-- ponytail: otelbin fragment param unverified -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Raw mode</div>
+      <div class="card">
+        <div class="srow">
+          <div class="grow">
+            <div class="title">Run a hand-written config</div>
+            <div class="desc">Bypasses everything compy generates and runs <code>config/custom.yaml</code> exactly as written.</div>
+          </div>
+          <span class="switch"><input type="checkbox" id="raw-mode-checkbox" aria-label="Raw mode"><span class="track"></span></span>
+        </div>
+        <div class="card-extra hidden" id="raw-body">
+          <textarea id="raw-textarea" placeholder="custom.yaml" spellcheck="false"></textarea>
+          <div class="srow" style="padding: 10px 0 0;">
+            <button class="solid-btn" id="save-raw">Save custom.yaml</button>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 </main>
 
 <script>
+/* ── plumbing ─────────────────────────────────────────────── */
 async function api(path, opts) {
-  opts = opts || {};
-  const res = await fetch(path, opts);
+  const res = await fetch(path, opts || {});
   if (!res.ok) {
     let msg = res.statusText;
     try {
@@ -421,169 +479,142 @@ async function showError(msg) {
   let tail = '';
   try {
     const r = await fetch('/api/log');
-    if (r.ok) {
-      const j = await r.json();
-      tail = j.log || '';
-    }
+    if (r.ok) tail = (await r.json()).log || '';
   } catch (e) {}
   box.textContent = msg + (tail ? '\n\n--- collector log ---\n' + tail : '');
   box.style.display = 'block';
 }
+function hideError() { document.getElementById('error').style.display = 'none'; }
 
-function hideError() {
-  document.getElementById('error').style.display = 'none';
+/* ── sidebar navigation ───────────────────────────────────── */
+function showPage(name) {
+  const btn = document.querySelector('nav button[data-page="' + name + '"]');
+  if (!btn) return;
+  for (const b of document.querySelectorAll('nav button[data-page]')) b.removeAttribute('aria-current');
+  btn.setAttribute('aria-current', 'true');
+  for (const p of document.querySelectorAll('.page')) p.classList.remove('current');
+  document.getElementById('page-' + name).classList.add('current');
+  if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+  refresh();
 }
+for (const btn of document.querySelectorAll('nav button[data-page]')) {
+  btn.addEventListener('click', () => showPage(btn.dataset.page));
+}
+window.addEventListener('hashchange', () => showPage(location.hash.slice(1)));
+if (location.hash.length > 1) showPage(location.hash.slice(1));
 
+/* ── status (nav + wiring + service) ──────────────────────── */
 async function loadStatus() {
-  const res = await api('/api/status');
-  const s = await res.json();
+  const s = await (await api('/api/status')).json();
   document.getElementById('led').classList.toggle('on', !!s.running);
-  const line = document.getElementById('status-line');
-  line.innerHTML = '';
-  const b = document.createElement('b');
-  b.textContent = s.distro || 'no distro';
-  line.append(s.running ? 'running · ' : 'stopped · ', b,
-    ' · grpc :' + s.grpc_port + ' · http :' + s.http_port);
-  document.getElementById('bus-endpoint').textContent = ':' + s.grpc_port + ' / :' + s.http_port;
-  document.getElementById('raw-badge').style.display = s.raw_mode ? 'inline' : 'none';
-  const cb = document.getElementById('raw-mode-checkbox');
-  cb.checked = !!s.raw_mode;
-  document.getElementById('raw-body').classList.toggle('open', !!s.raw_mode);
+  document.getElementById('nav-status-text').textContent = s.running ? 'running' : 'stopped';
+  document.getElementById('ep-http').textContent = 'http://127.0.0.1:' + s.http_port;
+  document.getElementById('ep-grpc').textContent = 'http://127.0.0.1:' + s.grpc_port;
+  document.getElementById('os-env-toggle').checked = !!s.os_env;
+  document.getElementById('svc-title').textContent =
+    (s.running ? 'Running' : 'Stopped') + (s.raw_mode ? ' · raw mode' : '');
+  document.getElementById('svc-desc').textContent =
+    s.enabled.length ? 'Sending to: ' + s.enabled.join(', ') : 'No destinations enabled.';
+  document.getElementById('raw-mode-checkbox').checked = !!s.raw_mode;
+  document.getElementById('raw-body').classList.toggle('hidden', !s.raw_mode);
 }
 
-let openEditor = null;   // backend name whose editor is expanded
-let editorDraft = null;  // {name, value}: unsaved YAML preserved across rebuilds
+/* ── destinations ─────────────────────────────────────────── */
+const KIND_LABELS = { 'otlp-http': 'OTLP/HTTP', 'otlp-grpc': 'OTLP/gRPC', bronto: 'Bronto', debug: 'debug' };
 
-async function loadBackends() {
-  const res = await api('/api/backends');
-  const list = await res.json();
-  const rows = document.getElementById('backend-rows');
-  // Every refresh rebuilds the rows; keep any in-progress YAML edit alive.
-  const openTa = rows.querySelector('.editor.open textarea');
-  editorDraft = (openEditor && openTa) ? { name: openEditor, value: openTa.value } : null;
-  rows.innerHTML = '';
-  for (const b of list) rows.appendChild(backendRow(b));
-  if (list.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'hint';
-    empty.style.color = 'var(--muted)';
-    empty.textContent = 'No backends yet — add one below to route telemetry somewhere.';
-    rows.appendChild(empty);
+async function loadDestinations() {
+  const list = await (await api('/api/backends')).json();
+  const card = document.getElementById('dest-card');
+  card.innerHTML = '';
+  if (!list.length) {
+    const row = document.createElement('div');
+    row.className = 'srow';
+    const grow = document.createElement('div');
+    grow.className = 'grow desc';
+    grow.textContent = 'No destinations yet. Add one to route telemetry somewhere.';
+    row.appendChild(grow);
+    card.appendChild(row);
   }
+  for (const b of list) card.appendChild(destRow(b));
+  // Advanced page's fragment picker shares the list.
+  const sel = document.getElementById('frag-select');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">Choose…</option>';
+  for (const b of list) {
+    const o = document.createElement('option');
+    o.value = o.textContent = b.name;
+    sel.appendChild(o);
+  }
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  else document.getElementById('frag-editor').classList.add('hidden');
 }
 
-function backendRow(b) {
+function destRow(b) {
   const row = document.createElement('div');
-  row.className = 'row' + (b.enabled ? ' live' : '');
-
-  const card = document.createElement('div');
-  card.className = 'card';
-  const head = document.createElement('div');
-  head.className = 'row-head';
-
-  const jack = document.createElement('span');
-  jack.className = 'jack';
-  head.appendChild(jack);
-
-  const name = document.createElement('span');
-  name.className = 'b-name';
-  name.textContent = b.name;
-  head.appendChild(name);
-
-  const spacer = document.createElement('span');
-  spacer.className = 'spacer';
-  head.appendChild(spacer);
-
-  const editBtn = document.createElement('button');
-  editBtn.className = 'link-btn';
-  editBtn.textContent = 'yaml';
-  head.appendChild(editBtn);
-
-  const rmBtn = document.createElement('button');
-  rmBtn.className = 'link-btn';
-  rmBtn.textContent = 'remove';
-  rmBtn.addEventListener('click', async () => {
-    await api('/api/backends/' + encodeURIComponent(b.name), { method: 'DELETE' });
-    await refresh();
-  });
-  head.appendChild(rmBtn);
+  row.className = 'srow';
 
   const sw = document.createElement('span');
   sw.className = 'switch';
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.checked = !!b.enabled;
-  cb.setAttribute('aria-label', 'Route telemetry to ' + b.name);
+  cb.setAttribute('aria-label', 'Send telemetry to ' + b.name);
   cb.addEventListener('change', async () => {
-    row.classList.add('busy');
+    cb.disabled = true;
     try {
       await api('/api/backends/' + encodeURIComponent(b.name) + '/enabled', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: cb.checked }),
       });
-    } finally {
-      await refresh();
-    }
+    } finally { await refresh(); }
   });
   const track = document.createElement('span');
   track.className = 'track';
   sw.append(cb, track);
-  head.appendChild(sw);
 
-  card.appendChild(head);
+  const grow = document.createElement('div');
+  grow.className = 'grow';
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.textContent = b.name;
+  const desc = document.createElement('div');
+  desc.className = 'desc';
+  desc.textContent = b.enabled ? 'Receiving your telemetry' : 'Off';
+  grow.append(title, desc);
 
-  const editor = document.createElement('div');
-  editor.className = 'editor';
-  card.appendChild(editor);
+  const chip = document.createElement('span');
+  chip.className = 'kind-chip';
+  chip.textContent = KIND_LABELS[b.kind] || 'custom';
 
-  editBtn.addEventListener('click', async () => {
-    if (editor.classList.contains('open')) {
-      editor.classList.remove('open');
-      openEditor = null;
-      editorDraft = null;
-      return;
-    }
-    const res = await api('/api/backends/' + encodeURIComponent(b.name) + '/fragment');
-    const text = await res.text();
-    editor.innerHTML = '';
-    const ta = document.createElement('textarea');
-    ta.value = (editorDraft && editorDraft.name === b.name) ? editorDraft.value : text;
-    ta.spellcheck = false;
-    const actions = document.createElement('div');
-    actions.className = 'editor-actions';
-    const save = document.createElement('button');
-    save.className = 'solid-btn';
-    save.textContent = 'Save';
-    save.addEventListener('click', async () => {
-      await api('/api/backends/' + encodeURIComponent(b.name) + '/fragment', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'text/plain' },
-        body: ta.value,
-      });
-      editorDraft = null; // saved: the server copy is the draft now
-      await refresh();
-    });
-    const otelbin = document.createElement('a');
-    otelbin.target = '_blank';
-    otelbin.textContent = 'open in OTelBin';
-    // ponytail: otelbin fragment param unverified
-    const setLink = () => {
-      otelbin.href = 'https://www.otelbin.io/#config=' + encodeURIComponent(ta.value);
-    };
-    setLink();
-    ta.addEventListener('input', setLink);
-    actions.append(save, otelbin);
-    editor.append(ta, actions);
-    editor.classList.add('open');
-    openEditor = b.name;
+  const rm = document.createElement('button');
+  rm.className = 'danger-link';
+  rm.textContent = 'Remove';
+  rm.addEventListener('click', async () => {
+    if (!confirm('Remove destination "' + b.name + '"? Its YAML fragment is deleted.')) return;
+    await api('/api/backends/' + encodeURIComponent(b.name), { method: 'DELETE' });
+    await refresh();
   });
 
-  if (openEditor === b.name) editBtn.click();
-
-  row.appendChild(card);
+  row.append(sw, grow, chip, rm);
   return row;
 }
+
+/* add form: only show fields the chosen type uses */
+const addCard = document.getElementById('add-card');
+document.getElementById('show-add').addEventListener('click', () => {
+  addCard.classList.toggle('hidden');
+});
+document.getElementById('cancel-add').addEventListener('click', () => {
+  addCard.classList.add('hidden');
+});
+function syncAddFields() {
+  const kind = document.getElementById('add-kind').value;
+  document.getElementById('add-endpoint-label').classList.toggle('hidden', kind === 'debug');
+  document.getElementById('add-key-label').classList.toggle('hidden', kind === 'debug');
+}
+document.getElementById('add-kind').addEventListener('change', syncAddFields);
+syncAddFields();
 
 document.getElementById('add-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -592,21 +623,119 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      name: f.name.value,
-      kind: f.kind.value,
-      endpoint: f.endpoint.value,
-      api_key: f.api_key.value,
+      name: f.name.value, kind: f.kind.value,
+      endpoint: f.endpoint.value, api_key: f.api_key.value,
     }),
   });
   f.reset();
-  document.getElementById('add-details').open = false;
+  syncAddFields();
+  addCard.classList.add('hidden');
   await refresh();
 });
 
-document.getElementById('copy-env').addEventListener('click', (e) => {
-  navigator.clipboard.writeText('eval "$(compy env)"');
-  e.target.textContent = 'Copied';
-  setTimeout(() => { e.target.textContent = 'Copy'; }, 1500);
+/* ── wiring ───────────────────────────────────────────────── */
+for (const btn of document.querySelectorAll('.copy-btn')) {
+  btn.addEventListener('click', () => {
+    navigator.clipboard.writeText(document.getElementById(btn.dataset.copyFrom).textContent);
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+}
+document.getElementById('os-env-toggle').addEventListener('change', async (e) => {
+  await api('/api/os-env', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ on: e.target.checked }),
+  });
+  await refresh();
+});
+
+/* ── collector ────────────────────────────────────────────── */
+async function loadDistros() {
+  const list = await (await api('/api/distros')).json();
+  const card = document.getElementById('distro-card');
+  card.innerHTML = '';
+  if (!list.length) {
+    const row = document.createElement('div');
+    row.className = 'srow';
+    const grow = document.createElement('div');
+    grow.className = 'grow desc';
+    grow.textContent = 'No distributions registered yet.';
+    row.appendChild(grow);
+    card.appendChild(row);
+  }
+  for (const d of list) {
+    const row = document.createElement('div');
+    row.className = 'srow';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'distro';
+    radio.checked = !!d.selected;
+    radio.setAttribute('aria-label', 'Use ' + d.name);
+    radio.addEventListener('change', async () => {
+      radio.disabled = true;
+      try {
+        await api('/api/distros/' + encodeURIComponent(d.name) + '/use', { method: 'POST' });
+      } finally { await refresh(); }
+    });
+    const grow = document.createElement('div');
+    grow.className = 'grow';
+    const title = document.createElement('div');
+    title.className = 'title';
+    title.textContent = d.name;
+    const desc = document.createElement('div');
+    desc.className = 'desc';
+    desc.textContent = d.path;
+    grow.append(title, desc);
+    row.append(radio, grow);
+    card.appendChild(row);
+  }
+}
+
+async function loadLog() {
+  try {
+    const j = await (await fetch('/api/log')).json();
+    document.getElementById('log-view').textContent = j.log || '(empty)';
+  } catch (e) {}
+}
+
+document.getElementById('restart-btn').addEventListener('click', async (e) => {
+  e.target.disabled = true;
+  try { await api('/api/apply', { method: 'POST' }); }
+  finally { e.target.disabled = false; await refresh(); }
+});
+document.getElementById('rollback-btn').addEventListener('click', async (e) => {
+  e.target.disabled = true;
+  try { await api('/api/rollback', { method: 'POST' }); }
+  finally { e.target.disabled = false; await refresh(); }
+});
+
+/* ── advanced ─────────────────────────────────────────────── */
+const fragSel = document.getElementById('frag-select');
+const fragTa = document.getElementById('frag-textarea');
+fragSel.addEventListener('change', async () => {
+  if (!fragSel.value) {
+    document.getElementById('frag-editor').classList.add('hidden');
+    return;
+  }
+  const text = await (await api('/api/backends/' + encodeURIComponent(fragSel.value) + '/fragment')).text();
+  fragTa.value = text;
+  updateOtelbin();
+  document.getElementById('frag-editor').classList.remove('hidden');
+});
+function updateOtelbin() {
+  document.getElementById('otelbin-link').href =
+    'https://www.otelbin.io/#config=' + encodeURIComponent(fragTa.value);
+}
+fragTa.addEventListener('input', updateOtelbin);
+document.getElementById('save-frag').addEventListener('click', async () => {
+  if (!fragSel.value) return;
+  await api('/api/backends/' + encodeURIComponent(fragSel.value) + '/fragment', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/plain' },
+    body: fragTa.value,
+  });
+  await refresh();
 });
 
 document.getElementById('raw-mode-checkbox').addEventListener('change', async (e) => {
@@ -617,12 +746,9 @@ document.getElementById('raw-mode-checkbox').addEventListener('change', async (e
   });
   await refresh();
 });
-
 async function loadRaw() {
-  const res = await api('/api/raw');
-  document.getElementById('raw-textarea').value = await res.text();
+  document.getElementById('raw-textarea').value = await (await api('/api/raw')).text();
 }
-
 document.getElementById('save-raw').addEventListener('click', async () => {
   await api('/api/raw', {
     method: 'PUT',
@@ -632,17 +758,15 @@ document.getElementById('save-raw').addEventListener('click', async () => {
   await refresh();
 });
 
-document.getElementById('rollback-btn').addEventListener('click', async () => {
-  await api('/api/rollback', { method: 'POST' });
-  await refresh();
-});
-
+/* ── refresh: only reload what the visible page needs, and never
+   clobber an editor the user is typing in ─────────────────── */
 async function refresh() {
   await loadStatus();
-  await loadBackends();
-  await loadRaw();
+  const page = document.querySelector('nav button[aria-current]').dataset.page;
+  if (page === 'destinations' || page === 'advanced') await loadDestinations();
+  if (page === 'collector') { await loadDistros(); await loadLog(); }
+  if (page === 'advanced' && document.activeElement !== document.getElementById('raw-textarea')) await loadRaw();
 }
-
 refresh();
 </script>
 </body>

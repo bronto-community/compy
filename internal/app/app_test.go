@@ -391,3 +391,30 @@ func TestSetRawModeSeedsCustomYAML(t *testing.T) {
 		t.Error("RawMode not persisted")
 	}
 }
+
+func TestBackendsReportsKind(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, kind := range map[string]string{"a-grpc": "otlp-grpc", "b-http": "otlp-http", "c-dbg": "debug"} {
+		if err := a.AddBackend(name, kind, "http://x:1", "k"); err != nil {
+			t.Fatal(name, err)
+		}
+	}
+	list, err := a.Backends()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, b := range list {
+		got[b["name"].(string)] = b["kind"].(string)
+	}
+	want := map[string]string{"a-grpc": "otlp-grpc", "b-http": "otlp-http", "c-dbg": "debug"}
+	for n, k := range want {
+		if got[n] != k {
+			t.Errorf("%s: kind = %q, want %q", n, got[n], k)
+		}
+	}
+}

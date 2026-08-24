@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bronto-io/compy/internal/collector"
@@ -38,6 +39,7 @@ type Status struct {
 	HTTPPort int      `json:"http_port"`
 	Enabled  []string `json:"enabled"`
 	RawMode  bool     `json:"raw_mode"`
+	OSEnv    bool     `json:"os_env"`
 }
 
 // New resolves the state dir and makes sure config/base.yaml exists.
@@ -162,6 +164,7 @@ func (a *App) Status() (Status, error) {
 		HTTPPort: s.HTTPPort,
 		Enabled:  s.Enabled,
 		RawMode:  s.RawMode,
+		OSEnv:    s.OSEnv,
 	}, nil
 }
 
@@ -177,9 +180,29 @@ func (a *App) Backends() ([]map[string]any, error) {
 	}
 	out := make([]map[string]any, 0, len(names))
 	for _, n := range names {
-		out = append(out, map[string]any{"name": n, "enabled": slices.Contains(s.Enabled, n)})
+		frag, _ := os.ReadFile(config.BackendPath(a.Dir, n))
+		out = append(out, map[string]any{
+			"name":    n,
+			"enabled": slices.Contains(s.Enabled, n),
+			"kind":    sniffKind(string(frag), n),
+		})
 	}
 	return out, nil
+}
+
+// sniffKind infers a fragment's transport from its exporter component ID.
+// Hand-written fragments that match no preset shape report "custom".
+func sniffKind(frag, name string) string {
+	for prefix, kind := range map[string]string{
+		"otlphttp/": "otlp-http", // bronto preset also uses otlphttp: transport is what we can honestly report
+		"otlp/":     "otlp-grpc",
+		"debug/":    "debug",
+	} {
+		if strings.Contains(frag, "  "+prefix+name+":") {
+			return kind
+		}
+	}
+	return "custom"
 }
 
 // AddBackend renders a preset fragment for a new backend. It does not
@@ -415,6 +438,7 @@ func (a *App) statusMap() (map[string]any, error) {
 		"endpoint":  fmt.Sprintf("http://127.0.0.1:%d", st.HTTPPort),
 		"enabled":   st.Enabled,
 		"raw_mode":  st.RawMode,
+		"os_env":    st.OSEnv,
 	}, nil
 }
 
@@ -434,5 +458,27 @@ func (a *App) WebUIAPI() webui.API {
 		ReadRaw:       a.ReadRaw,
 		WriteRaw:      a.WriteRaw,
 		LastError:     func() (string, error) { return collector.TailLog(a.LogPath(), 50) },
+		Distros:       a.Distros,
+		UseDistro:     a.UseDistro,
+		SetOSEnv:      a.SetOSEnv,
 	}
+}
+
+// Distros lists registered distributions, flagging the selected one.
+func (a *App) Distros() ([]map[string]any, error) {
+	distros, err := state.LoadDistros()
+	if err != nil {
+		return nil, err
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(distros))
+	for _, d := range distros {
+		out = append(out, map[string]any{
+			"name": d.Name, "path": d.Path, "selected": d.Name == s.Distro,
+		})
+	}
+	return out, nil
 }

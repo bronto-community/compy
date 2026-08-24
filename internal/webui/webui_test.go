@@ -27,6 +27,53 @@ func fakeAPI() API {
 		ReadRaw:       func() (string, error) { return "", nil },
 		WriteRaw:      func(content string) error { return nil },
 		LastError:     func() (string, error) { return "", nil },
+		Distros:       func() ([]map[string]any, error) { return []map[string]any{}, nil },
+		UseDistro:     func(name string) error { return nil },
+		SetOSEnv:      func(on bool) error { return nil },
+	}
+}
+
+func TestDistrosRoutes(t *testing.T) {
+	api := fakeAPI()
+	api.Distros = func() ([]map[string]any, error) {
+		return []map[string]any{{"name": "core", "selected": true}}, nil
+	}
+	var used string
+	api.UseDistro = func(name string) error { used = name; return nil }
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/distros")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET distros: %v %v", resp.StatusCode, err)
+	}
+	var list []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil || len(list) != 1 || list[0]["name"] != "core" {
+		t.Fatalf("distros body wrong: %v %v", list, err)
+	}
+
+	resp, err = http.Post(srv.URL+"/api/distros/contrib/use", "application/json", nil)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST use: %v %v", resp.StatusCode, err)
+	}
+	if used != "contrib" {
+		t.Fatalf("UseDistro got %q, want contrib", used)
+	}
+}
+
+func TestOSEnvRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotOn bool
+	api.SetOSEnv = func(on bool) error { gotOn = on; return nil }
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/api/os-env", "application/json", strings.NewReader(`{"on":true}`))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST os-env: %v %v", resp.StatusCode, err)
+	}
+	if !gotOn {
+		t.Fatal("SetOSEnv got on=false, want true")
 	}
 }
 

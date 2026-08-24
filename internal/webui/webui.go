@@ -32,6 +32,9 @@ type API struct {
 	ReadRaw       func() (string, error)           // config/custom.yaml content ("" if missing)
 	WriteRaw      func(content string) error       // write custom.yaml (+apply if raw mode on)
 	LastError     func() (string, error)           // tail of collector log
+	Distros       func() ([]map[string]any, error) // [{"name":..., "path":..., "selected":bool}]
+	UseDistro     func(name string) error          // switch distro (implies apply)
+	SetOSEnv      func(on bool) error              // OS-level env injection toggle
 }
 
 // Handler builds the mux: host-check middleware wrapping /api/* routes and
@@ -50,6 +53,9 @@ func Handler(api API) http.Handler {
 	mux.HandleFunc("POST /api/rollback", handleRollback(api))
 	mux.HandleFunc("GET /api/log", handleLog(api))
 	mux.HandleFunc("POST /api/raw-mode", handleSetRawMode(api))
+	mux.HandleFunc("GET /api/distros", handleDistros(api))
+	mux.HandleFunc("POST /api/distros/{name}/use", handleUseDistro(api))
+	mux.HandleFunc("POST /api/os-env", handleSetOSEnv(api))
 	mux.HandleFunc("GET /api/raw", handleReadRaw(api))
 	mux.HandleFunc("PUT /api/raw", handleWriteRaw(api))
 
@@ -252,6 +258,44 @@ func handleLog(api API) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"log": tail})
+	}
+}
+
+func handleDistros(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		list, err := api.Distros()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, list)
+	}
+}
+
+func handleUseDistro(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.UseDistro(r.PathValue("name")); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleSetOSEnv(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			On bool `json:"on"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := api.SetOSEnv(body.On); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
 }
 
