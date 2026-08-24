@@ -25,6 +25,7 @@ import (
 	"github.com/bronto-io/compy/internal/state"
 	"github.com/bronto-io/compy/internal/tray"
 	"github.com/bronto-io/compy/internal/webui"
+	"github.com/bronto-io/compy/internal/window"
 )
 
 const usage = `compy — local OpenTelemetry Collector manager
@@ -44,6 +45,7 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy raw on|off|edit
   compy ui [--port N]
   compy tray [install|uninstall]
+  compy window
 `
 
 func main() {
@@ -91,6 +93,8 @@ func run(args []string) error {
 		return cmdRaw(rest)
 	case "ui":
 		return cmdUI(rest)
+	case "window":
+		return withApp(window.Run)
 	case "tray":
 		return cmdTray(rest)
 	default:

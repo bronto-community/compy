@@ -1,0 +1,39 @@
+//go:build darwin
+
+// Package window opens compy's UI in a standalone native window (WKWebView
+// via webview_go) instead of a browser tab. It runs as its own process: the
+// tray owns its process's main thread for systray, and the webview needs a
+// main thread of its own. State is file-based, so this process serves the
+// same UI over its own ephemeral localhost listener.
+package window
+
+import (
+	"fmt"
+	"net"
+	"net/http"
+
+	webview "github.com/webview/webview_go"
+
+	"github.com/bronto-io/compy/internal/app"
+	"github.com/bronto-io/compy/internal/webui"
+)
+
+// Run serves the web UI on an ephemeral localhost port and blocks in a
+// native window showing it. Returning (window closed) ends the process,
+// which also tears the listener down.
+func Run(a *app.App) error {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	go func() { _ = http.Serve(ln, webui.Handler(a.WebUIAPI())) }()
+
+	w := webview.New(false)
+	defer w.Destroy()
+	w.SetTitle("compy")
+	w.SetSize(960, 680, webview.HintNone)
+	w.Navigate(fmt.Sprintf("http://127.0.0.1:%d/", ln.Addr().(*net.TCPAddr).Port))
+	w.Run()
+	return nil
+}
