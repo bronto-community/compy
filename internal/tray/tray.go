@@ -68,7 +68,11 @@ func onReady(a *app.App) {
 		t := time.NewTicker(refreshInterval)
 		defer t.Stop()
 		for range t.C {
+			// m.mu also guards the menu-item maps sync() mutates: act()
+			// calls sync() under the same lock from click goroutines.
+			m.mu.Lock()
 			m.sync()
+			m.mu.Unlock()
 		}
 	}()
 	go func() {
