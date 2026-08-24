@@ -26,7 +26,8 @@ no metrics UI).
 - Remote config: only what the collector's confmap already supports
   (file/env/yaml/http/https URIs). Nothing custom.
 - Single developer, own machine. No team/sharing features.
-- Nonstandard OTLP ports by default (4700 gRPC / 4701 HTTP), configurable.
+- Nonstandard OTLP ports by default: standard ports + 10000, i.e. 14317 gRPC /
+  14318 HTTP, configurable. Keeps the familiar 4317/4318 mnemonic.
 - Stack: **one Go binary** — CLI, tray icon, embedded localhost web UI
   (the Datadog Agent interaction model). macOS first; Linux must be fully
   usable with no tray (CLI + browser URL).
