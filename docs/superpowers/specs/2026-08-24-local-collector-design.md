@@ -196,13 +196,15 @@ compy ui
 
 ## Risks / verify-first items
 
-- **R1 (design-level):** confmap list-merge semantics. Additive backends
-  require pipeline `exporters:` arrays to *append* across `--config` files;
-  historically confmap replaces lists, and append behavior arrived behind a
-  merge-append option gate in recent collector versions. **Verify before any
-  other work.** Fallback if append isn't reliable across supported distros:
-  fragments stay pure YAML, but compy renders the `service:` section itself
-  into a small generated overlay file — contained change, same UX.
+- **R1 — RESOLVED (verified 2026-08-24 on core v0.135.0, darwin/arm64):**
+  default confmap merge REPLACES lists (last backend's `exporters:` wins);
+  with `--feature-gates=confmap.enableMergeAppendOption` lists APPEND across
+  `--config` files (verified result: `[nop, debug, otlphttp/b]`). compy
+  always passes this gate. A distro too old to know the gate fails loudly at
+  the validate step — acceptable. Also verified: curl-downloaded upstream
+  darwin binaries run as-is (Go link-time ad-hoc signature, no quarantine
+  xattr from curl). The base pipeline keeps a permanent `nop` exporter so
+  zero-enabled-backends is still a valid config.
 - **R2:** OTelBin URL-fragment format and size limits.
 - **R3:** `launchctl setenv` behavior on current macOS (SIP-era quirks).
 - **R4:** systray library choice for Go (fyne-io/systray vs alternatives)
