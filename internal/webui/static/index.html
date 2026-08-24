@@ -436,12 +436,16 @@ async function loadStatus() {
   document.getElementById('raw-body').classList.toggle('open', !!s.raw_mode);
 }
 
-let openEditor = null; // backend name whose editor is expanded
+let openEditor = null;   // backend name whose editor is expanded
+let editorDraft = null;  // {name, value}: unsaved YAML preserved across rebuilds
 
 async function loadBackends() {
   const res = await api('/api/backends');
   const list = await res.json();
   const rows = document.getElementById('backend-rows');
+  // Every refresh rebuilds the rows; keep any in-progress YAML edit alive.
+  const openTa = rows.querySelector('.editor.open textarea');
+  editorDraft = (openEditor && openTa) ? { name: openEditor, value: openTa.value } : null;
   rows.innerHTML = '';
   for (const b of list) rows.appendChild(backendRow(b));
   if (list.length === 0) {
@@ -522,13 +526,14 @@ function backendRow(b) {
     if (editor.classList.contains('open')) {
       editor.classList.remove('open');
       openEditor = null;
+      editorDraft = null;
       return;
     }
     const res = await api('/api/backends/' + encodeURIComponent(b.name) + '/fragment');
     const text = await res.text();
     editor.innerHTML = '';
     const ta = document.createElement('textarea');
-    ta.value = text;
+    ta.value = (editorDraft && editorDraft.name === b.name) ? editorDraft.value : text;
     ta.spellcheck = false;
     const actions = document.createElement('div');
     actions.className = 'editor-actions';
@@ -541,6 +546,7 @@ function backendRow(b) {
         headers: { 'Content-Type': 'text/plain' },
         body: ta.value,
       });
+      editorDraft = null; // saved: the server copy is the draft now
       await refresh();
     });
     const otelbin = document.createElement('a');
