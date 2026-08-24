@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+
+	"github.com/bronto-io/compy/internal/state"
 )
 
 // Label is the launchd job label used for the plist filename and identity.
@@ -88,7 +90,7 @@ func Install(bin string, args []string, logPath string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, RenderPlist(bin, args, logPath), 0o644); err != nil {
+	if err := state.WriteFileAtomic(path, RenderPlist(bin, args, logPath), 0o644); err != nil {
 		return err
 	}
 
