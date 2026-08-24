@@ -30,10 +30,10 @@ func TestScriptShells(t *testing.T) {
 		shell string
 		want  string
 	}{
-		{"sh", "export OTEL_EXPORTER_OTLP_ENDPOINT=\"http://127.0.0.1:14318\"\nexport OTEL_EXPORTER_OTLP_PROTOCOL=\"http/protobuf\"\n"},
-		{"", "export OTEL_EXPORTER_OTLP_ENDPOINT=\"http://127.0.0.1:14318\"\nexport OTEL_EXPORTER_OTLP_PROTOCOL=\"http/protobuf\"\n"},
-		{"fish", "set -gx OTEL_EXPORTER_OTLP_ENDPOINT \"http://127.0.0.1:14318\"\nset -gx OTEL_EXPORTER_OTLP_PROTOCOL \"http/protobuf\"\n"},
-		{"pwsh", "$env:OTEL_EXPORTER_OTLP_ENDPOINT = \"http://127.0.0.1:14318\"\n$env:OTEL_EXPORTER_OTLP_PROTOCOL = \"http/protobuf\"\n"},
+		{"sh", "export OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:14318'\nexport OTEL_EXPORTER_OTLP_PROTOCOL='http/protobuf'\n"},
+		{"", "export OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:14318'\nexport OTEL_EXPORTER_OTLP_PROTOCOL='http/protobuf'\n"},
+		{"fish", "set -gx OTEL_EXPORTER_OTLP_ENDPOINT 'http://127.0.0.1:14318'\nset -gx OTEL_EXPORTER_OTLP_PROTOCOL 'http/protobuf'\n"},
+		{"pwsh", "$env:OTEL_EXPORTER_OTLP_ENDPOINT = 'http://127.0.0.1:14318'\n$env:OTEL_EXPORTER_OTLP_PROTOCOL = 'http/protobuf'\n"},
 	}
 	for _, c := range cases {
 		got, err := Script(vars, c.shell)
@@ -48,6 +48,87 @@ func TestScriptShells(t *testing.T) {
 
 	if _, err := Script(vars, "bogus"); err == nil {
 		t.Error("Script(shell=\"bogus\") expected error, got nil")
+	}
+}
+
+func TestScriptHostileValues(t *testing.T) {
+	cases := []struct {
+		name     string
+		value    string
+		wantSh   string
+		wantFish string
+		wantPwsh string
+	}{
+		{
+			name:     "command substitution",
+			value:    "$(whoami)",
+			wantSh:   "export K='$(whoami)'\n",
+			wantFish: "set -gx K '$(whoami)'\n",
+			wantPwsh: "$env:K = '$(whoami)'\n",
+		},
+		{
+			name:     "single quote",
+			value:    "it's a test",
+			wantSh:   `export K='it'\''s a test'` + "\n",
+			wantFish: `set -gx K 'it\'s a test'` + "\n",
+			wantPwsh: "$env:K = 'it''s a test'\n",
+		},
+		{
+			name:     "double quote",
+			value:    `say "hi"`,
+			wantSh:   `export K='say "hi"'` + "\n",
+			wantFish: `set -gx K 'say "hi"'` + "\n",
+			wantPwsh: "$env:K = 'say \"hi\"'\n",
+		},
+	}
+
+	for _, c := range cases {
+		vars := map[string]string{"K": c.value}
+		for _, s := range []struct {
+			shell string
+			want  string
+		}{
+			{"sh", c.wantSh},
+			{"fish", c.wantFish},
+			{"pwsh", c.wantPwsh},
+		} {
+			got, err := Script(vars, s.shell)
+			if err != nil {
+				t.Errorf("%s: Script(shell=%q) unexpected error: %v", c.name, s.shell, err)
+				continue
+			}
+			if got != s.want {
+				t.Errorf("%s: Script(shell=%q) = %q, want %q", c.name, s.shell, got, s.want)
+			}
+		}
+	}
+}
+
+func TestScriptShRoundTrip(t *testing.T) {
+	hostileValues := []string{
+		"$(whoami)",
+		"it's a test",
+		`say "hi"`,
+		"`echo pwned`",
+		"$HOME and $(rm -rf /)",
+	}
+
+	for _, v := range hostileValues {
+		script, err := Script(map[string]string{"K": v}, "sh")
+		if err != nil {
+			t.Fatalf("Script(%q) unexpected error: %v", v, err)
+		}
+
+		// script already ends in a newline, which terminates the export
+		// statement, so no separating ";" is needed before printf.
+		cmd := exec.Command("/bin/sh", "-c", script+`printf %s "$K"`)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("running script for value %q: %v", v, err)
+		}
+		if string(out) != v {
+			t.Errorf("round-trip for %q: sh printed %q", v, string(out))
+		}
 	}
 }
 
