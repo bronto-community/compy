@@ -118,8 +118,16 @@ async function loadStatus() {
     '<div>running: <code>' + running + '</code></div>' +
     '<div>endpoint: <code>' + endpoint + '</code></div>' +
     '<div>raw mode: <code>' + (s.raw_mode ? 'on' : 'off') + '</code></div>' +
-    '<div>env: <code>eval "$(compy env)"</code> ' +
-    '<button onclick="navigator.clipboard.writeText(\'eval \\"$(compy env)\\"\')">copy</button></div>';
+    '<div id="env-line">env: <code>eval "$(compy env)"</code> </div>';
+  // Built via createElement + addEventListener (not an inline onclick string):
+  // the copy text contains a `"` that an HTML attribute-string parser cuts
+  // short, silently truncating any onclick="...\"..." markup.
+  const copyBtn = document.createElement('button');
+  copyBtn.textContent = 'copy';
+  copyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText('eval "$(compy env)"');
+  });
+  document.getElementById('env-line').appendChild(copyBtn);
   document.getElementById('raw-mode-checkbox').checked = !!s.raw_mode;
 }
 
