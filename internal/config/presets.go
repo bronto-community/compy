@@ -6,11 +6,9 @@ import (
 	"text/template"
 )
 
-// presetData is the template input for a rendered backend fragment.
-// ponytail: Preset takes no backend name, so Name is set to kind — two
-// enabled backends of the same kind share one exporter component ID (last
-// WriteBackend wins if their endpoint/apiKey differ). Upgrade: thread the
-// backend name through Preset if same-kind multi-backend setups are needed.
+// presetData is the template input for a rendered backend fragment. Name
+// is the backend name, keeping exporter component IDs unique per backend
+// even when two backends share a kind.
 type presetData struct {
 	Name     string
 	Endpoint string
@@ -76,8 +74,10 @@ service:
 const brontoYAML = `exporters:
   otlphttp/{{.Name}}:
     endpoint: {{.Endpoint}}
+{{- if .APIKey}}
     headers:
       X-BRONTO-API-KEY: {{.APIKey}}
+{{- end}}
 service:
   pipelines:
     traces:
@@ -88,8 +88,9 @@ service:
       exporters: [otlphttp/{{.Name}}]
 `
 
-// Preset renders a backend config fragment for the given kind.
-func Preset(kind, endpoint, apiKey string) ([]byte, error) {
+// Preset renders a backend config fragment for the given kind and backend
+// name.
+func Preset(kind, name, endpoint, apiKey string) ([]byte, error) {
 	tmpl, ok := map[string]*template.Template{
 		"otlp-grpc": otlpGRPCTemplate,
 		"otlp-http": otlpHTTPTemplate,
@@ -99,7 +100,7 @@ func Preset(kind, endpoint, apiKey string) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown preset kind %q", kind)
 	}
-	data := presetData{Name: kind, Endpoint: endpoint, APIKey: apiKey}
+	data := presetData{Name: name, Endpoint: endpoint, APIKey: apiKey}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return nil, err

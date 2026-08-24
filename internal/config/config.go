@@ -66,7 +66,7 @@ func EnsureBase(dir string, s state.Settings) (string, error) {
 	if err := baseTemplate.Execute(&buf, s); err != nil {
 		return "", err
 	}
-	if err := state.WriteFileAtomic(path, buf.Bytes(), 0o644); err != nil {
+	if err := state.WriteFileAtomic(path, buf.Bytes(), 0o600); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -83,7 +83,7 @@ func WriteBackend(dir, name string, yaml []byte) error {
 	if !state.ValidBackendName(name) {
 		return fmt.Errorf("invalid backend name %q", name)
 	}
-	return state.WriteFileAtomic(BackendPath(dir, name), yaml, 0o644)
+	return state.WriteFileAtomic(BackendPath(dir, name), yaml, 0o600)
 }
 
 // ListBackends returns the sorted names of all backend fragments on disk.
@@ -103,9 +103,16 @@ func ListBackends(dir string) ([]string, error) {
 	return names, nil
 }
 
-// DeleteBackend removes a backend's config fragment.
+// DeleteBackend removes a backend's config fragment. It rejects invalid
+// backend names (guards against path traversal via BackendPath).
 func DeleteBackend(dir, name string) error {
-	return os.Remove(BackendPath(dir, name))
+	if !state.ValidBackendName(name) {
+		return fmt.Errorf("invalid backend name %q", name)
+	}
+	if err := os.Remove(BackendPath(dir, name)); err != nil {
+		return fmt.Errorf("delete backend %q: %w", name, err)
+	}
+	return nil
 }
 
 // Args returns the full collector argument list for the given settings.
@@ -176,7 +183,7 @@ func copyTree(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		return copyFile(path, target, 0o644)
+		return copyFile(path, target, 0o600)
 	})
 }
 

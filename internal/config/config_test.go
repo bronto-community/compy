@@ -31,7 +31,7 @@ func TestArgsManagedMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, n := range []string{"a", "b"} {
-		frag, _ := config.Preset("debug", "", "")
+		frag, _ := config.Preset("debug", n, "", "")
 		if err := config.WriteBackend(dir, n, frag); err != nil {
 			t.Fatal(err)
 		}
@@ -101,7 +101,7 @@ func TestEnsureBaseIdempotent(t *testing.T) {
 }
 
 func TestPresetOtlpGRPCContainsEndpointAndHeader(t *testing.T) {
-	frag, err := config.Preset("otlp-grpc", "collector.example.com:4317", "sekret")
+	frag, err := config.Preset("otlp-grpc", "jaeger-local", "collector.example.com:4317", "sekret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +112,42 @@ func TestPresetOtlpGRPCContainsEndpointAndHeader(t *testing.T) {
 	if !strings.Contains(s, "x-api-key") || !strings.Contains(s, "sekret") {
 		t.Fatalf("missing header/key in %q", s)
 	}
+	if !strings.Contains(s, "otlp/jaeger-local") {
+		t.Fatalf("exporter ID not scoped to backend name in %q", s)
+	}
+}
+
+func TestPresetBronto(t *testing.T) {
+	withKey, err := config.Preset("bronto", "b", "https://ingestion.eu.bronto.io/v1/traces", "sekret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(withKey)
+	if !strings.Contains(s, "X-BRONTO-API-KEY") || !strings.Contains(s, "sekret") {
+		t.Fatalf("missing bronto auth header in %q", s)
+	}
+
+	noKey, err := config.Preset("bronto", "b", "https://ingestion.eu.bronto.io/v1/traces", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(noKey), "headers") {
+		t.Fatalf("expected no headers block when apiKey is empty, got %q", noKey)
+	}
+}
+
+func TestPresetDifferentNamesSameKindDoNotCollide(t *testing.T) {
+	a, err := config.Preset("otlp-grpc", "a", "127.0.0.1:1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := config.Preset("otlp-grpc", "b", "127.0.0.1:2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(a), "otlp/a") || !strings.Contains(string(b), "otlp/b") {
+		t.Fatalf("expected distinct component IDs, got %q and %q", a, b)
+	}
 }
 
 func TestSnapshotRestoreRoundTrip(t *testing.T) {
@@ -120,7 +156,7 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	if _, err := config.EnsureBase(dir, s); err != nil {
 		t.Fatal(err)
 	}
-	frag, _ := config.Preset("debug", "", "")
+	frag, _ := config.Preset("debug", "a", "", "")
 	if err := config.WriteBackend(dir, "a", frag); err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +217,24 @@ func TestWriteBackendRejectsBadName(t *testing.T) {
 	}
 }
 
+func TestDeleteBackendRejectsPathTraversal(t *testing.T) {
+	dir := setupDir(t)
+	// plant a sentinel file outside config/backends/ that traversal would
+	// otherwise be able to reach and delete.
+	sentinel := filepath.Join(dir, "config", "sentinel.yaml")
+	if err := os.WriteFile(sentinel, []byte("do-not-delete\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := config.DeleteBackend(dir, "../sentinel"); err == nil {
+		t.Fatal("expected error for path-traversal backend name")
+	}
+
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("sentinel file was affected by traversal attempt: %v", err)
+	}
+}
+
 func TestValidateAgainstRealCollector(t *testing.T) {
 	bin := os.Getenv("OTELCOL_BIN")
 	if bin == "" {
@@ -191,11 +245,11 @@ func TestValidateAgainstRealCollector(t *testing.T) {
 	if _, err := config.EnsureBase(dir, s); err != nil {
 		t.Fatal(err)
 	}
-	fragA, _ := config.Preset("otlp-grpc", "127.0.0.1:5317", "")
+	fragA, _ := config.Preset("otlp-grpc", "a", "127.0.0.1:5317", "")
 	if err := config.WriteBackend(dir, "a", fragA); err != nil {
 		t.Fatal(err)
 	}
-	fragB, _ := config.Preset("debug", "", "")
+	fragB, _ := config.Preset("debug", "b", "", "")
 	if err := config.WriteBackend(dir, "b", fragB); err != nil {
 		t.Fatal(err)
 	}
