@@ -2,76 +2,387 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>compy</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.3rem; }
-  section { margin-bottom: 2rem; }
-  table { width: 100%; border-collapse: collapse; }
-  td, th { text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid #ddd; }
-  textarea { width: 100%; height: 12rem; font-family: monospace; }
-  input, select { padding: 0.2rem; }
-  code { background: #f0f0f0; padding: 0.1rem 0.3rem; }
-  #error { display: none; background: #fee; border: 1px solid #c00; padding: 0.5rem; white-space: pre-wrap; }
-  button { cursor: pointer; }
+  :root {
+    --bg: #0F1317;
+    --panel: #171D24;
+    --panel-2: #1C242D;
+    --line: #2A343F;
+    --ink: #E8EDF2;
+    --muted: #76838F;
+    --signal: #FFB454;
+    --signal-dim: #8A6A3F;
+    --ok: #7DD491;
+    --bad: #E06C60;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --sans: system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  button { cursor: pointer; font: inherit; }
+  :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+  .label {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ── header: the status bus ─────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+  .wordmark { font-weight: 700; font-size: 14px; letter-spacing: 0.04em; }
+  .led {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--bad);
+    box-shadow: 0 0 6px 0 var(--bad);
+  }
+  .led.on { background: var(--ok); box-shadow: 0 0 6px 0 var(--ok); }
+  #status-line { color: var(--muted); }
+  #status-line b { color: var(--ink); font-weight: 500; }
+  .badge {
+    font-family: var(--mono); font-size: 10.5px;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--signal);
+    border: 1px solid var(--signal-dim);
+    border-radius: 3px;
+    padding: 1px 6px;
+    display: none;
+  }
+  header .spacer { flex: 1; }
+  .ghost-btn {
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 4px 10px;
+  }
+  .ghost-btn:hover { color: var(--ink); border-color: var(--muted); }
+
+  /* ── error console ──────────────────────────────────────── */
+  #error {
+    display: none;
+    margin: 16px 20px 0;
+    border: 1px solid var(--bad);
+    border-left-width: 3px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bad) 7%, var(--panel));
+    padding: 10px 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  main { padding: 20px; max-width: 920px; margin: 0 auto; }
+  section { margin-bottom: 26px; }
+  section > .label { display: block; margin-bottom: 10px; }
+
+  /* ── the patch bay ──────────────────────────────────────── */
+  .bay { position: relative; padding-left: 150px; }
+  .bus {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 150px;
+  }
+  .bus .node {
+    position: sticky; top: 20px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    padding: 10px 12px;
+    width: 118px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .bus .node .label { display: block; margin-bottom: 2px; }
+  /* the vertical bus wire */
+  .bay::before {
+    content: "";
+    position: absolute;
+    left: 130px; top: 34px; bottom: 26px;
+    border-left: 2px solid var(--line);
+  }
+  .rows { display: flex; flex-direction: column; gap: 10px; }
+  .row { position: relative; }
+  /* the wire from bus to row */
+  .row::before {
+    content: "";
+    position: absolute;
+    left: -20px; top: 50%;
+    width: 20px;
+    border-top: 2px dashed var(--line);
+  }
+  .row.live::before {
+    border-top: none;
+    height: 2px;
+    background: repeating-linear-gradient(90deg,
+      var(--signal) 0 6px, color-mix(in srgb, var(--signal) 35%, transparent) 6px 10px);
+    background-size: 10px 2px;
+    animation: flow 0.8s linear infinite;
+  }
+  @keyframes flow { from { background-position: 0 0; } to { background-position: 10px 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .row.live::before { animation: none; }
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  .row.live > .card { border-color: var(--signal-dim); }
+  .row.busy > .card { opacity: 0.55; }
+  .row-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+  }
+  .jack {
+    width: 9px; height: 9px; border-radius: 50%;
+    border: 2px solid var(--muted);
+    flex: none;
+  }
+  .row.live .jack { border-color: var(--signal); background: var(--signal); }
+  .b-name { font-family: var(--mono); font-size: 13px; }
+  .kind {
+    font-family: var(--mono); font-size: 10.5px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 0 5px;
+  }
+  .row-head .spacer { flex: 1; }
+  .link-btn {
+    background: none; border: none;
+    color: var(--muted);
+    font-family: var(--mono); font-size: 11.5px;
+    padding: 2px 4px;
+  }
+  .link-btn:hover { color: var(--ink); text-decoration: underline; }
+
+  /* toggle switch */
+  .switch { position: relative; width: 34px; height: 19px; flex: none; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .switch .track {
+    position: absolute; inset: 0;
+    border-radius: 10px;
+    background: var(--line);
+    transition: background 0.15s;
+  }
+  .switch .track::after {
+    content: "";
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 15px; height: 15px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform 0.15s, background 0.15s;
+  }
+  .switch input:checked + .track { background: var(--signal-dim); }
+  .switch input:checked + .track::after { transform: translateX(15px); background: var(--signal); }
+  .switch input:focus-visible + .track { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+  /* expandable editor under a row */
+  .editor {
+    display: none;
+    border-top: 1px solid var(--line);
+    padding: 12px 14px;
+  }
+  .editor.open { display: block; }
+  textarea {
+    width: 100%;
+    min-height: 11rem;
+    background: var(--bg);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 10px;
+    resize: vertical;
+  }
+  .editor-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+
+  .solid-btn {
+    background: var(--signal);
+    color: #1A1206;
+    border: none;
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 12px;
+  }
+  .solid-btn:hover { filter: brightness(1.08); }
+  a { color: var(--signal); }
+
+  /* add backend */
+  .add-row { margin-top: 10px; }
+  .add-row summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    list-style: none;
+    padding: 8px 14px;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+  }
+  .add-row summary:hover { color: var(--ink); }
+  .add-row[open] summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .add-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    background: var(--panel);
+  }
+  .add-form label { display: flex; flex-direction: column; gap: 4px; }
+  .add-form input, .add-form select {
+    background: var(--bg);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 6px 8px;
+  }
+  .add-form .actions { grid-column: 1 / -1; }
+
+  /* env strip */
+  .env-strip {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    padding: 10px 14px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    flex-wrap: wrap;
+  }
+  .env-strip code { color: var(--signal); }
+  .env-strip .hint { color: var(--muted); font-family: var(--sans); font-size: 12.5px; }
+
+  /* raw drawer */
+  .raw-head { display: flex; align-items: center; gap: 10px; }
+  .raw-head .hint { color: var(--muted); font-size: 12.5px; }
+  #raw-body { margin-top: 10px; display: none; }
+  #raw-body.open { display: block; }
+
+  @media (max-width: 640px) {
+    .bay { padding-left: 0; }
+    .bus { position: static; width: auto; margin-bottom: 14px; }
+    .bus .node { width: auto; position: static; }
+    .bay::before, .row::before { display: none; }
+    .add-form { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
-<h1>compy</h1>
 
-<div id="error"></div>
+<header>
+  <span class="wordmark">compy</span>
+  <span class="led" id="led"></span>
+  <span id="status-line">loading…</span>
+  <span class="badge" id="raw-badge">raw mode</span>
+  <span class="spacer"></span>
+  <button class="ghost-btn" id="rollback-btn" title="Restore the last known-good config">Roll back</button>
+</header>
 
-<section id="status">
-  <h2>Status</h2>
-  <div id="status-body">loading...</div>
-</section>
+<div id="error" role="alert"></div>
 
-<section id="backends">
-  <h2>Backends</h2>
-  <table>
-    <thead><tr><th>Enabled</th><th>Name</th><th></th></tr></thead>
-    <tbody id="backend-rows"></tbody>
-  </table>
-</section>
+<main>
+  <section>
+    <span class="label">Switchboard</span>
+    <div class="bay">
+      <div class="bus">
+        <div class="node">
+          <span class="label">your apps send to</span>
+          <div id="bus-endpoint">…</div>
+        </div>
+      </div>
+      <div class="rows" id="backend-rows"></div>
+      <details class="add-row" id="add-details">
+        <summary>+ add backend</summary>
+        <form class="add-form" id="add-form">
+          <label><span class="label">name</span>
+            <input name="name" placeholder="honeycomb-dev" required pattern="[a-z0-9][a-z0-9-]*">
+          </label>
+          <label><span class="label">kind</span>
+            <select name="kind">
+              <option value="otlp-grpc">otlp-grpc</option>
+              <option value="otlp-http">otlp-http</option>
+              <option value="bronto">bronto</option>
+              <option value="debug">debug</option>
+            </select>
+          </label>
+          <label><span class="label">endpoint</span>
+            <input name="endpoint" placeholder="https://…">
+          </label>
+          <label><span class="label">api key</span>
+            <input name="api_key" type="password" autocomplete="off">
+          </label>
+          <div class="actions"><button type="submit" class="solid-btn">Add backend</button></div>
+        </form>
+      </details>
+    </div>
+  </section>
 
-<section id="add-backend">
-  <h2>Add backend</h2>
-  <form id="add-form">
-    <input name="name" placeholder="name" required>
-    <select name="kind">
-      <option value="otlp-grpc">otlp-grpc</option>
-      <option value="otlp-http">otlp-http</option>
-      <option value="bronto">bronto</option>
-      <option value="debug">debug</option>
-    </select>
-    <input name="endpoint" placeholder="endpoint">
-    <input name="api_key" placeholder="api key" type="password">
-    <button type="submit">Add</button>
-  </form>
-</section>
+  <section>
+    <span class="label">Wire your apps</span>
+    <div class="env-strip">
+      <code id="env-cmd">eval "$(compy env)"</code>
+      <button class="ghost-btn" id="copy-env">Copy</button>
+      <span class="hint">run in a shell, or prefix one-offs with <code>compy run --</code></span>
+    </div>
+  </section>
 
-<section id="edit">
-  <h2>Edit fragment: <span id="edit-name"></span></h2>
-  <textarea id="edit-textarea" placeholder="select a backend to edit its YAML fragment"></textarea>
-  <div>
-    <button id="save-fragment">Save</button>
-    <a id="otelbin-link" href="#" target="_blank">Open in OTelBin</a>
-    <!-- ponytail: otelbin fragment param unverified -->
-  </div>
-</section>
-
-<section id="raw-mode">
-  <h2>Raw mode</h2>
-  <label><input type="checkbox" id="raw-mode-checkbox"> Enable raw mode (bypass generated config, use config/custom.yaml directly)</label>
-  <div>
-    <textarea id="raw-textarea" placeholder="custom.yaml"></textarea>
-    <div><button id="save-raw">Save custom.yaml</button></div>
-  </div>
-</section>
-
-<section id="actions">
-  <button id="rollback-btn">Rollback</button>
-</section>
+  <section>
+    <span class="label">Raw config</span>
+    <div class="raw-head">
+      <span class="switch">
+        <input type="checkbox" id="raw-mode-checkbox" aria-label="Raw mode">
+        <span class="track"></span>
+      </span>
+      <span class="hint">bypass generated config and run <code>config/custom.yaml</code> as-is</span>
+    </div>
+    <div id="raw-body">
+      <textarea id="raw-textarea" placeholder="custom.yaml" spellcheck="false"></textarea>
+      <div class="editor-actions">
+        <button class="solid-btn" id="save-raw">Save custom.yaml</button>
+      </div>
+    </div>
+  </section>
+</main>
 
 <script>
 async function api(path, opts) {
@@ -100,7 +411,7 @@ async function showError(msg) {
       tail = j.log || '';
     }
   } catch (e) {}
-  box.textContent = msg + (tail ? '\n\n--- log tail ---\n' + tail : '');
+  box.textContent = msg + (tail ? '\n\n--- collector log ---\n' + tail : '');
   box.style.display = 'block';
 }
 
@@ -111,102 +422,147 @@ function hideError() {
 async function loadStatus() {
   const res = await api('/api/status');
   const s = await res.json();
-  const running = s.running ? 'yes' : 'no';
-  const endpoint = s.endpoint || '';
-  document.getElementById('status-body').innerHTML =
-    '<div>distro: <code>' + (s.distro || '(none)') + '</code></div>' +
-    '<div>running: <code>' + running + '</code></div>' +
-    '<div>endpoint: <code>' + endpoint + '</code></div>' +
-    '<div>raw mode: <code>' + (s.raw_mode ? 'on' : 'off') + '</code></div>' +
-    '<div id="env-line">env: <code>eval "$(compy env)"</code> </div>';
-  // Built via createElement + addEventListener (not an inline onclick string):
-  // the copy text contains a `"` that an HTML attribute-string parser cuts
-  // short, silently truncating any onclick="...\"..." markup.
-  const copyBtn = document.createElement('button');
-  copyBtn.textContent = 'copy';
-  copyBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText('eval "$(compy env)"');
-  });
-  document.getElementById('env-line').appendChild(copyBtn);
-  document.getElementById('raw-mode-checkbox').checked = !!s.raw_mode;
+  document.getElementById('led').classList.toggle('on', !!s.running);
+  const line = document.getElementById('status-line');
+  line.innerHTML = '';
+  const b = document.createElement('b');
+  b.textContent = s.distro || 'no distro';
+  line.append(s.running ? 'running · ' : 'stopped · ', b,
+    ' · grpc :' + s.grpc_port + ' · http :' + s.http_port);
+  document.getElementById('bus-endpoint').textContent = ':' + s.grpc_port + ' / :' + s.http_port;
+  document.getElementById('raw-badge').style.display = s.raw_mode ? 'inline' : 'none';
+  const cb = document.getElementById('raw-mode-checkbox');
+  cb.checked = !!s.raw_mode;
+  document.getElementById('raw-body').classList.toggle('open', !!s.raw_mode);
 }
 
-let currentFragmentName = null;
+let openEditor = null; // backend name whose editor is expanded
 
 async function loadBackends() {
   const res = await api('/api/backends');
   const list = await res.json();
   const rows = document.getElementById('backend-rows');
   rows.innerHTML = '';
-  for (const b of list) {
-    const tr = document.createElement('tr');
+  for (const b of list) rows.appendChild(backendRow(b));
+  if (list.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'hint';
+    empty.style.color = 'var(--muted)';
+    empty.textContent = 'No backends yet — add one below to route telemetry somewhere.';
+    rows.appendChild(empty);
+  }
+}
 
-    const tdEnabled = document.createElement('td');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = !!b.enabled;
-    cb.onchange = async () => {
+function backendRow(b) {
+  const row = document.createElement('div');
+  row.className = 'row' + (b.enabled ? ' live' : '');
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  const head = document.createElement('div');
+  head.className = 'row-head';
+
+  const jack = document.createElement('span');
+  jack.className = 'jack';
+  head.appendChild(jack);
+
+  const name = document.createElement('span');
+  name.className = 'b-name';
+  name.textContent = b.name;
+  head.appendChild(name);
+
+  const spacer = document.createElement('span');
+  spacer.className = 'spacer';
+  head.appendChild(spacer);
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'link-btn';
+  editBtn.textContent = 'yaml';
+  head.appendChild(editBtn);
+
+  const rmBtn = document.createElement('button');
+  rmBtn.className = 'link-btn';
+  rmBtn.textContent = 'remove';
+  rmBtn.addEventListener('click', async () => {
+    await api('/api/backends/' + encodeURIComponent(b.name), { method: 'DELETE' });
+    await refresh();
+  });
+  head.appendChild(rmBtn);
+
+  const sw = document.createElement('span');
+  sw.className = 'switch';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = !!b.enabled;
+  cb.setAttribute('aria-label', 'Route telemetry to ' + b.name);
+  cb.addEventListener('change', async () => {
+    row.classList.add('busy');
+    try {
       await api('/api/backends/' + encodeURIComponent(b.name) + '/enabled', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: cb.checked }),
       });
+    } finally {
       await refresh();
-    };
-    tdEnabled.appendChild(cb);
-    tr.appendChild(tdEnabled);
-
-    const tdName = document.createElement('td');
-    tdName.textContent = b.name;
-    tr.appendChild(tdName);
-
-    const tdActions = document.createElement('td');
-    const editBtn = document.createElement('button');
-    editBtn.textContent = 'edit YAML';
-    editBtn.onclick = () => editFragment(b.name);
-    tdActions.appendChild(editBtn);
-
-    const rmBtn = document.createElement('button');
-    rmBtn.textContent = 'remove';
-    rmBtn.onclick = async () => {
-      await api('/api/backends/' + encodeURIComponent(b.name), { method: 'DELETE' });
-      await refresh();
-    };
-    tdActions.appendChild(rmBtn);
-
-    tr.appendChild(tdActions);
-    rows.appendChild(tr);
-  }
-}
-
-async function editFragment(name) {
-  currentFragmentName = name;
-  document.getElementById('edit-name').textContent = name;
-  const res = await api('/api/backends/' + encodeURIComponent(name) + '/fragment');
-  const text = await res.text();
-  document.getElementById('edit-textarea').value = text;
-  updateOtelbinLink(text);
-}
-
-function updateOtelbinLink(text) {
-  document.getElementById('otelbin-link').href =
-    'https://www.otelbin.io/#config=' + encodeURIComponent(text);
-}
-
-document.getElementById('edit-textarea').addEventListener('input', (e) => {
-  updateOtelbinLink(e.target.value);
-});
-
-document.getElementById('save-fragment').onclick = async () => {
-  if (!currentFragmentName) return;
-  const text = document.getElementById('edit-textarea').value;
-  await api('/api/backends/' + encodeURIComponent(currentFragmentName) + '/fragment', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/plain' },
-    body: text,
+    }
   });
-  await refresh();
-};
+  const track = document.createElement('span');
+  track.className = 'track';
+  sw.append(cb, track);
+  head.appendChild(sw);
+
+  card.appendChild(head);
+
+  const editor = document.createElement('div');
+  editor.className = 'editor';
+  card.appendChild(editor);
+
+  editBtn.addEventListener('click', async () => {
+    if (editor.classList.contains('open')) {
+      editor.classList.remove('open');
+      openEditor = null;
+      return;
+    }
+    const res = await api('/api/backends/' + encodeURIComponent(b.name) + '/fragment');
+    const text = await res.text();
+    editor.innerHTML = '';
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.spellcheck = false;
+    const actions = document.createElement('div');
+    actions.className = 'editor-actions';
+    const save = document.createElement('button');
+    save.className = 'solid-btn';
+    save.textContent = 'Save';
+    save.addEventListener('click', async () => {
+      await api('/api/backends/' + encodeURIComponent(b.name) + '/fragment', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/plain' },
+        body: ta.value,
+      });
+      await refresh();
+    });
+    const otelbin = document.createElement('a');
+    otelbin.target = '_blank';
+    otelbin.textContent = 'open in OTelBin';
+    // ponytail: otelbin fragment param unverified
+    const setLink = () => {
+      otelbin.href = 'https://www.otelbin.io/#config=' + encodeURIComponent(ta.value);
+    };
+    setLink();
+    ta.addEventListener('input', setLink);
+    actions.append(save, otelbin);
+    editor.append(ta, actions);
+    editor.classList.add('open');
+    openEditor = b.name;
+  });
+
+  if (openEditor === b.name) editBtn.click();
+
+  row.appendChild(card);
+  return row;
+}
 
 document.getElementById('add-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -222,7 +578,14 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
     }),
   });
   f.reset();
+  document.getElementById('add-details').open = false;
   await refresh();
+});
+
+document.getElementById('copy-env').addEventListener('click', (e) => {
+  navigator.clipboard.writeText('eval "$(compy env)"');
+  e.target.textContent = 'Copied';
+  setTimeout(() => { e.target.textContent = 'Copy'; }, 1500);
 });
 
 document.getElementById('raw-mode-checkbox').addEventListener('change', async (e) => {
@@ -236,24 +599,22 @@ document.getElementById('raw-mode-checkbox').addEventListener('change', async (e
 
 async function loadRaw() {
   const res = await api('/api/raw');
-  const text = await res.text();
-  document.getElementById('raw-textarea').value = text;
+  document.getElementById('raw-textarea').value = await res.text();
 }
 
-document.getElementById('save-raw').onclick = async () => {
-  const text = document.getElementById('raw-textarea').value;
+document.getElementById('save-raw').addEventListener('click', async () => {
   await api('/api/raw', {
     method: 'PUT',
     headers: { 'Content-Type': 'text/plain' },
-    body: text,
+    body: document.getElementById('raw-textarea').value,
   });
   await refresh();
-};
+});
 
-document.getElementById('rollback-btn').onclick = async () => {
+document.getElementById('rollback-btn').addEventListener('click', async () => {
   await api('/api/rollback', { method: 'POST' });
   await refresh();
-};
+});
 
 async function refresh() {
   await loadStatus();
