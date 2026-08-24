@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>compy</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.3rem; }
+  section { margin-bottom: 2rem; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid #ddd; }
+  textarea { width: 100%; height: 12rem; font-family: monospace; }
+  input, select { padding: 0.2rem; }
+  code { background: #f0f0f0; padding: 0.1rem 0.3rem; }
+  #error { display: none; background: #fee; border: 1px solid #c00; padding: 0.5rem; white-space: pre-wrap; }
+  button { cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>compy</h1>
+
+<div id="error"></div>
+
+<section id="status">
+  <h2>Status</h2>
+  <div id="status-body">loading...</div>
+</section>
+
+<section id="backends">
+  <h2>Backends</h2>
+  <table>
+    <thead><tr><th>Enabled</th><th>Name</th><th></th></tr></thead>
+    <tbody id="backend-rows"></tbody>
+  </table>
+</section>
+
+<section id="add-backend">
+  <h2>Add backend</h2>
+  <form id="add-form">
+    <input name="name" placeholder="name" required>
+    <select name="kind">
+      <option value="otlp-grpc">otlp-grpc</option>
+      <option value="otlp-http">otlp-http</option>
+      <option value="bronto">bronto</option>
+      <option value="debug">debug</option>
+    </select>
+    <input name="endpoint" placeholder="endpoint">
+    <input name="api_key" placeholder="api key" type="password">
+    <button type="submit">Add</button>
+  </form>
+</section>
+
+<section id="edit">
+  <h2>Edit fragment: <span id="edit-name"></span></h2>
+  <textarea id="edit-textarea" placeholder="select a backend to edit its YAML fragment"></textarea>
+  <div>
+    <button id="save-fragment">Save</button>
+    <a id="otelbin-link" href="#" target="_blank">Open in OTelBin</a>
+    <!-- ponytail: otelbin fragment param unverified -->
+  </div>
+</section>
+
+<section id="raw-mode">
+  <h2>Raw mode</h2>
+  <label><input type="checkbox" id="raw-mode-checkbox"> Enable raw mode (bypass generated config, use config/custom.yaml directly)</label>
+  <div>
+    <textarea id="raw-textarea" placeholder="custom.yaml"></textarea>
+    <div><button id="save-raw">Save custom.yaml</button></div>
+  </div>
+</section>
+
+<section id="actions">
+  <button id="rollback-btn">Rollback</button>
+</section>
+
+<script>
+async function api(path, opts) {
+  opts = opts || {};
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    let msg = res.statusText;
+    try {
+      const body = await res.clone().json();
+      if (body.error) msg = body.error;
+    } catch (e) {}
+    await showError(msg);
+    throw new Error(msg);
+  }
+  hideError();
+  return res;
+}
+
+async function showError(msg) {
+  const box = document.getElementById('error');
+  let tail = '';
+  try {
+    const r = await fetch('/api/log');
+    if (r.ok) {
+      const j = await r.json();
+      tail = j.log || '';
+    }
+  } catch (e) {}
+  box.textContent = msg + (tail ? '\n\n--- log tail ---\n' + tail : '');
+  box.style.display = 'block';
+}
+
+function hideError() {
+  document.getElementById('error').style.display = 'none';
+}
+
+async function loadStatus() {
+  const res = await api('/api/status');
+  const s = await res.json();
+  const running = s.running ? 'yes' : 'no';
+  const endpoint = s.endpoint || '';
+  document.getElementById('status-body').innerHTML =
+    '<div>distro: <code>' + (s.distro || '(none)') + '</code></div>' +
+    '<div>running: <code>' + running + '</code></div>' +
+    '<div>endpoint: <code>' + endpoint + '</code></div>' +
+    '<div>raw mode: <code>' + (s.raw_mode ? 'on' : 'off') + '</code></div>' +
+    '<div>env: <code>eval "$(compy env)"</code> ' +
+    '<button onclick="navigator.clipboard.writeText(\'eval \\"$(compy env)\\"\')">copy</button></div>';
+  document.getElementById('raw-mode-checkbox').checked = !!s.raw_mode;
+}
+
+let currentFragmentName = null;
+
+async function loadBackends() {
+  const res = await api('/api/backends');
+  const list = await res.json();
+  const rows = document.getElementById('backend-rows');
+  rows.innerHTML = '';
+  for (const b of list) {
+    const tr = document.createElement('tr');
+
+    const tdEnabled = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!b.enabled;
+    cb.onchange = async () => {
+      await api('/api/backends/' + encodeURIComponent(b.name) + '/enabled', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: cb.checked }),
+      });
+      await refresh();
+    };
+    tdEnabled.appendChild(cb);
+    tr.appendChild(tdEnabled);
+
+    const tdName = document.createElement('td');
+    tdName.textContent = b.name;
+    tr.appendChild(tdName);
+
+    const tdActions = document.createElement('td');
+    const editBtn = document.createElement('button');
+    editBtn.textContent = 'edit YAML';
+    editBtn.onclick = () => editFragment(b.name);
+    tdActions.appendChild(editBtn);
+
+    const rmBtn = document.createElement('button');
+    rmBtn.textContent = 'remove';
+    rmBtn.onclick = async () => {
+      await api('/api/backends/' + encodeURIComponent(b.name), { method: 'DELETE' });
+      await refresh();
+    };
+    tdActions.appendChild(rmBtn);
+
+    tr.appendChild(tdActions);
+    rows.appendChild(tr);
+  }
+}
+
+async function editFragment(name) {
+  currentFragmentName = name;
+  document.getElementById('edit-name').textContent = name;
+  const res = await api('/api/backends/' + encodeURIComponent(name) + '/fragment');
+  const text = await res.text();
+  document.getElementById('edit-textarea').value = text;
+  updateOtelbinLink(text);
+}
+
+function updateOtelbinLink(text) {
+  document.getElementById('otelbin-link').href =
+    'https://www.otelbin.io/#config=' + encodeURIComponent(text);
+}
+
+document.getElementById('edit-textarea').addEventListener('input', (e) => {
+  updateOtelbinLink(e.target.value);
+});
+
+document.getElementById('save-fragment').onclick = async () => {
+  if (!currentFragmentName) return;
+  const text = document.getElementById('edit-textarea').value;
+  await api('/api/backends/' + encodeURIComponent(currentFragmentName) + '/fragment', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/plain' },
+    body: text,
+  });
+  await refresh();
+};
+
+document.getElementById('add-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  await api('/api/backends', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: f.name.value,
+      kind: f.kind.value,
+      endpoint: f.endpoint.value,
+      api_key: f.api_key.value,
+    }),
+  });
+  f.reset();
+  await refresh();
+});
+
+document.getElementById('raw-mode-checkbox').addEventListener('change', async (e) => {
+  await api('/api/raw-mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ on: e.target.checked }),
+  });
+  await refresh();
+});
+
+async function loadRaw() {
+  const res = await api('/api/raw');
+  const text = await res.text();
+  document.getElementById('raw-textarea').value = text;
+}
+
+document.getElementById('save-raw').onclick = async () => {
+  const text = document.getElementById('raw-textarea').value;
+  await api('/api/raw', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/plain' },
+    body: text,
+  });
+  await refresh();
+};
+
+document.getElementById('rollback-btn').onclick = async () => {
+  await api('/api/rollback', { method: 'POST' });
+  await refresh();
+};
+
+async function refresh() {
+  await loadStatus();
+  await loadBackends();
+  await loadRaw();
+}
+
+refresh();
+</script>
+</body>
+</html>
