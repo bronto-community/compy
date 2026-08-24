@@ -62,11 +62,12 @@ compy env set-os | unset-os
 compy run -- <cmd...>
 compy raw on|off|edit
 compy ui [--port N]
-compy tray
+compy tray [install|uninstall]
 ```
 
 `compy ui` serves a localhost-only web UI (status, backend list/add/edit,
-raw-mode toggle). `compy tray` is a macOS menu-bar icon; every capability it
-exposes also exists in the CLI and web UI. Backends are additive — multiple
+raw-mode toggle). `compy tray` is a macOS menu-bar icon (`compy tray install` registers it as
+a login LaunchAgent so it appears at every login; `uninstall` removes it);
+every capability it exposes also exists in the CLI and web UI. Backends are additive — multiple
 named backends can be enabled at once. Default OTLP ports are 14317 (gRPC)
 and 14318 (HTTP), configurable via `settings.json`.
