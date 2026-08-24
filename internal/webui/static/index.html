@@ -5,24 +5,33 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>compy</title>
 <style>
+  /* Brand-aligned tokens (bronto.io look): cream ground, white cards,
+     dino-amber signal, serif display. Fonts are referenced as stacks only —
+     no font or image assets ship in this OSS repo; everything falls back to
+     system faces, and the dotted motif is pure CSS. */
   :root {
-    --bg: #0F1317;
-    --panel: #171D24;
-    --panel-2: #1C242D;
-    --line: #2A343F;
-    --ink: #E8EDF2;
-    --muted: #76838F;
-    --signal: #FFB454;
-    --signal-dim: #8A6A3F;
-    --ok: #7DD491;
-    --bad: #E06C60;
-    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
-    --sans: system-ui, -apple-system, sans-serif;
+    --bg: #F7F4EC;
+    --dot: #DDD7C8;
+    --panel: #FFFFFF;
+    --line: #E5E0D3;
+    --ink: #1E1E1C;
+    --muted: #6E6A60;
+    --signal: #DE9200;
+    --signal-soft: #F9C338;
+    --signal-tint: #FDF3D5;
+    --dark: #1E1E1C;
+    --ok: #3E9B6E;
+    --bad: #C4452F;
+    --serif: "Source Serif 4", "Source Serif Pro", Georgia, serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: Inter, system-ui, -apple-system, sans-serif;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   body {
     background: var(--bg);
+    background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+    background-size: 26px 26px;
     color: var(--ink);
     font-family: var(--sans);
     font-size: 14px;
@@ -45,50 +54,54 @@
     display: flex;
     align-items: center;
     gap: 14px;
-    padding: 12px 20px;
+    padding: 14px 22px;
+    background: var(--bg);
     border-bottom: 1px solid var(--line);
-    font-family: var(--mono);
-    font-size: 12.5px;
+    font-size: 13px;
   }
-  .wordmark { font-weight: 700; font-size: 14px; letter-spacing: 0.04em; }
+  .wordmark {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 19px;
+  }
   .led {
     width: 8px; height: 8px; border-radius: 50%;
     background: var(--bad);
-    box-shadow: 0 0 6px 0 var(--bad);
   }
-  .led.on { background: var(--ok); box-shadow: 0 0 6px 0 var(--ok); }
+  .led.on { background: var(--ok); }
   #status-line { color: var(--muted); }
-  #status-line b { color: var(--ink); font-weight: 500; }
+  #status-line b { color: var(--ink); font-weight: 600; }
   .badge {
     font-family: var(--mono); font-size: 10.5px;
     letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--signal);
-    border: 1px solid var(--signal-dim);
-    border-radius: 3px;
-    padding: 1px 6px;
+    background: var(--signal-tint);
+    border: 1px solid var(--signal-soft);
+    border-radius: 999px;
+    padding: 1px 8px;
     display: none;
   }
   header .spacer { flex: 1; }
   .ghost-btn {
-    background: none;
+    background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: 5px;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 12px;
-    padding: 4px 10px;
+    border-radius: 999px;
+    color: var(--ink);
+    font-size: 12.5px;
+    font-weight: 500;
+    padding: 5px 14px;
   }
-  .ghost-btn:hover { color: var(--ink); border-color: var(--muted); }
+  .ghost-btn:hover { border-color: var(--muted); }
 
-  /* ── error console ──────────────────────────────────────── */
+  /* ── error console: dark code panel, like the brand's shots ─ */
   #error {
     display: none;
     margin: 16px 20px 0;
-    border: 1px solid var(--bad);
-    border-left-width: 3px;
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--bad) 7%, var(--panel));
-    padding: 10px 14px;
+    border-left: 3px solid var(--bad);
+    border-radius: 8px;
+    background: var(--dark);
+    color: #F2EFE7;
+    padding: 12px 16px;
     font-family: var(--mono);
     font-size: 12px;
     white-space: pre-wrap;
@@ -111,8 +124,9 @@
   .bus .node {
     position: sticky; top: 20px;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--panel);
+    box-shadow: 0 1px 3px rgba(30, 30, 28, 0.06);
     padding: 10px 12px;
     width: 118px;
     font-family: var(--mono);
@@ -140,7 +154,7 @@
     border-top: none;
     height: 2px;
     background: repeating-linear-gradient(90deg,
-      var(--signal) 0 6px, color-mix(in srgb, var(--signal) 35%, transparent) 6px 10px);
+      var(--signal) 0 6px, color-mix(in srgb, var(--signal) 30%, transparent) 6px 10px);
     background-size: 10px 2px;
     animation: flow 0.8s linear infinite;
   }
@@ -150,10 +164,11 @@
   }
   .card {
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--panel);
+    box-shadow: 0 1px 3px rgba(30, 30, 28, 0.06);
   }
-  .row.live > .card { border-color: var(--signal-dim); }
+  .row.live > .card { border-color: var(--signal-soft); }
   .row.busy > .card { opacity: 0.55; }
   .row-head {
     display: flex;
@@ -172,8 +187,8 @@
     font-family: var(--mono); font-size: 10.5px;
     color: var(--muted);
     border: 1px solid var(--line);
-    border-radius: 3px;
-    padding: 0 5px;
+    border-radius: 999px;
+    padding: 0 7px;
   }
   .row-head .spacer { flex: 1; }
   .link-btn {
@@ -199,11 +214,12 @@
     top: 2px; left: 2px;
     width: 15px; height: 15px;
     border-radius: 50%;
-    background: var(--muted);
-    transition: transform 0.15s, background 0.15s;
+    background: var(--panel);
+    box-shadow: 0 1px 2px rgba(30, 30, 28, 0.25);
+    transition: transform 0.15s;
   }
-  .switch input:checked + .track { background: var(--signal-dim); }
-  .switch input:checked + .track::after { transform: translateX(15px); background: var(--signal); }
+  .switch input:checked + .track { background: var(--signal-soft); }
+  .switch input:checked + .track::after { transform: translateX(15px); }
   .switch input:focus-visible + .track { outline: 2px solid var(--signal); outline-offset: 2px; }
 
   /* expandable editor under a row */
@@ -216,28 +232,27 @@
   textarea {
     width: 100%;
     min-height: 11rem;
-    background: var(--bg);
-    color: var(--ink);
-    border: 1px solid var(--line);
-    border-radius: 6px;
+    background: var(--dark);
+    color: #F2EFE7;
+    border: 1px solid var(--dark);
+    border-radius: 8px;
     font-family: var(--mono);
     font-size: 12px;
     padding: 10px;
     resize: vertical;
   }
-  .editor-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+  .editor-actions { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
 
   .solid-btn {
-    background: var(--signal);
-    color: #1A1206;
+    background: var(--dark);
+    color: #FFFFFF;
     border: none;
-    border-radius: 5px;
-    font-family: var(--mono);
-    font-size: 12px;
+    border-radius: 999px;
+    font-size: 12.5px;
     font-weight: 600;
-    padding: 5px 12px;
+    padding: 6px 16px;
   }
-  .solid-btn:hover { filter: brightness(1.08); }
+  .solid-btn:hover { background: #35342F; }
   a { color: var(--signal); }
 
   /* add backend */
