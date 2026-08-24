@@ -24,6 +24,39 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveSettingsDoesNotMutateCaller(t *testing.T) {
+	t.Setenv("COMPY_HOME", t.TempDir())
+	s := Settings{Enabled: []string{"zeta", "alpha"}}
+	if err := SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(s.Enabled, []string{"zeta", "alpha"}) {
+		t.Fatalf("caller's slice was mutated: got %v", s.Enabled)
+	}
+}
+
+func TestBaseDir(t *testing.T) {
+	cases := []struct {
+		name        string
+		goos        string
+		xdgDataHome string
+		home        string
+		want        string
+	}{
+		{"darwin", "darwin", "", "/Users/x", "/Users/x/Library/Application Support/compy"},
+		{"darwin ignores XDG_DATA_HOME", "darwin", "/custom/data", "/Users/x", "/Users/x/Library/Application Support/compy"},
+		{"linux with XDG_DATA_HOME", "linux", "/custom/data", "/home/x", "/custom/data/compy"},
+		{"linux without XDG_DATA_HOME", "linux", "", "/home/x", "/home/x/.local/share/compy"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := baseDir(c.goos, c.xdgDataHome, c.home); got != c.want {
+				t.Errorf("baseDir(%q, %q, %q) = %q, want %q", c.goos, c.xdgDataHome, c.home, got, c.want)
+			}
+		})
+	}
+}
+
 func TestValidBackendName(t *testing.T) {
 	for name, want := range map[string]bool{
 		"jaeger": true, "my-backend2": true, "": false, "-x": false,
