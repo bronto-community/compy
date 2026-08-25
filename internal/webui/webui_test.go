@@ -535,6 +535,16 @@ func TestUpdateMetaRoute(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("closure error status = %d, want 500", rec.Code)
 	}
+
+	// A BadRequest-marked unknown-distro error (app.UpdateConfigMeta's real
+	// behavior) reports 400, not the default 500.
+	api.PutConfigMeta = func(name string, distro, remoteURL *string) error {
+		return BadRequest(errWithMessage(`no such distro "bogus"`))
+	}
+	rec = call(handlePutConfigMeta(api), http.MethodPut, `{"distro":"bogus"}`, pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown distro (BadRequest-marked) status = %d, want 400", rec.Code)
+	}
 }
 
 func TestAddDistroRoute(t *testing.T) {

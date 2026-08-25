@@ -340,7 +340,7 @@ func (a *App) UpdateConfigMeta(name string, distroP, remoteURLP *string) error {
 				return err
 			}
 			if !slices.ContainsFunc(reg, func(d state.Distro) bool { return d.Name == *distroP }) {
-				return fmt.Errorf("no such distro %q", *distroP)
+				return webui.BadRequest(fmt.Errorf("no such distro %q", *distroP))
 			}
 		}
 		m.Distro = *distroP
@@ -610,7 +610,7 @@ func selectDistroIfNone(name string) error {
 // AddDistro registers a collector binary, selecting it if it is the first.
 func (a *App) AddDistro(name, path string) error {
 	if !state.ValidBackendName(name) {
-		return fmt.Errorf("invalid distro name %q", name)
+		return webui.BadRequest(fmt.Errorf("invalid distro name %q: use lowercase letters, digits, dashes", name))
 	}
 	abs, err := validateDistroBinary(path)
 	if err != nil {
@@ -638,7 +638,7 @@ func (a *App) AddDistro(name, path string) error {
 // warning AddDistro's stderr line carries, as a response field instead.
 func (a *App) SetDistroPath(name, path string) (string, error) {
 	if !state.ValidBackendName(name) {
-		return "", webui.BadRequest(fmt.Errorf("invalid distro name %q", name))
+		return "", webui.BadRequest(fmt.Errorf("invalid distro name %q: use lowercase letters, digits, dashes", name))
 	}
 	abs, err := validateDistroBinary(path)
 	if err != nil {

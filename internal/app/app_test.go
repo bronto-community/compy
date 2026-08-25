@@ -440,8 +440,8 @@ func TestUpdateConfigMetaPartialAndDistroValidation(t *testing.T) {
 	}
 
 	bogus := "no-such-distro"
-	if err := a.UpdateConfigMeta("mine", &bogus, nil); err == nil {
-		t.Fatal("UpdateConfigMeta with unknown distro: want error, got nil")
+	if err := a.UpdateConfigMeta("mine", &bogus, nil); err == nil || !webui.IsBadRequest(err) {
+		t.Fatalf("UpdateConfigMeta with unknown distro: err=%v, want a webui.BadRequest-marked error", err)
 	}
 	info, _, err = cfgstore.Get(a.Dir, "mine")
 	if err != nil {
@@ -699,11 +699,16 @@ func TestSetDistroPath(t *testing.T) {
 		t.Fatalf("settings.Distro = %q, want core (already selected by the first SetDistroPath)", s.Distro)
 	}
 
-	if _, err := a.SetDistroPath("Bad Name!", bin1); err == nil || !webui.IsBadRequest(err) {
-		t.Fatalf("SetDistroPath with an invalid name: err=%v, want a webui.BadRequest-marked error", err)
+	wantMsg := `invalid distro name "Bad Name!": use lowercase letters, digits, dashes`
+	if _, err := a.SetDistroPath("Bad Name!", bin1); err == nil || !webui.IsBadRequest(err) || err.Error() != wantMsg {
+		t.Fatalf("SetDistroPath with an invalid name: err=%v, want a webui.BadRequest-marked error %q", err, wantMsg)
 	}
 	if _, err := a.SetDistroPath("whatever", filepath.Join(t.TempDir(), "missing")); err == nil || !webui.IsBadRequest(err) {
 		t.Fatalf("SetDistroPath with a nonexistent path: err=%v, want a webui.BadRequest-marked error", err)
+	}
+
+	if err := a.AddDistro("Bad Name!", bin1); err == nil || !webui.IsBadRequest(err) || err.Error() != wantMsg {
+		t.Fatalf("AddDistro with an invalid name: err=%v, want a webui.BadRequest-marked error %q", err, wantMsg)
 	}
 }
 
