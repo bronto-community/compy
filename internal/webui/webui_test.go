@@ -10,10 +10,10 @@ import (
 // fakeAPI builds an API with no-op closures, overridable per test.
 func fakeAPI() API {
 	return API{
-		Status:    func() (map[string]any, error) { return map[string]any{"running": true}, nil },
-		Configs:   func() (any, error) { return []map[string]any{}, nil },
-		Activate:  func(name string) error { return nil },
-		LastError: func() (string, error) { return "", nil },
+		Status:   func() (map[string]any, error) { return map[string]any{"running": true}, nil },
+		Configs:  func() (any, error) { return []map[string]any{}, nil },
+		Activate: func(name string) error { return nil },
+		Log:      func() (string, error) { return "", nil },
 	}
 }
 
@@ -47,7 +47,7 @@ func TestConfigsRoutes(t *testing.T) {
 
 func TestLogRoute(t *testing.T) {
 	api := fakeAPI()
-	api.LastError = func() (string, error) { return "boom\n", nil }
+	api.Log = func() (string, error) { return "boom\n", nil }
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
@@ -174,6 +174,28 @@ func TestCSRFAllowsRequestsWithoutOriginOrSecFetchSite(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestUnimplementedRouteReturns501(t *testing.T) {
+	api := fakeAPI()
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/distros")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501", resp.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "not implemented" {
+		t.Fatalf("body = %v, want error=\"not implemented\"", body)
 	}
 }
 
