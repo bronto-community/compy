@@ -704,11 +704,14 @@ async function saveInline(info) {
   const p = S.inline;
   const target = slug(S.inlineName) || p.preset;
   if (!target) { showError(new Error("a preset needs a name")); return; }
-  if (p.isNew && presetsOf(info).indexOf(target) > -1) { note("a preset called " + target + " already exists", 3000); return; }
+  if ((p.isNew || target !== p.preset) && presetsOf(info).indexOf(target) > -1) { note("a preset called " + target + " already exists", 3000); return; }
   const values = S.inlineDraft || {};
   try {
-    await apiJSON(cfgURL(info.name) + "/presets/" + enc(target), "PUT", { values });
+    // Rename before writing values: PUT-to-target-first would create the
+    // target as a duplicate (or clobber an existing preset's values) and
+    // then fail the rename against it.
     if (!p.isNew && target !== p.preset) await apiJSON(cfgURL(info.name) + "/presets/" + enc(p.preset) + "/rename", "POST", { to: target });
+    await apiJSON(cfgURL(info.name) + "/presets/" + enc(target), "PUT", { values });
     S.inline = null; S.inlineDraft = null;
     S.presetSel[info.name] = target;
     await loadCore();
