@@ -438,10 +438,14 @@ func (a *App) isActive(name string) bool {
 	return err == nil && s.ActiveConfig == name
 }
 
-// reactivateIf re-applies when name is the active configuration.
+// reactivateIf re-applies when name is the active configuration AND the
+// collector is running: a stopped collector stays stopped — editing,
+// resetting, or resyncing the active config must not start it.
 func (a *App) reactivateIf(name string) error {
 	if a.isActive(name) {
-		return a.Activate(name, "")
+		if running, _ := launchd.Running(); running {
+			return a.Activate(name, "")
+		}
 	}
 	return nil
 }

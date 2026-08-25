@@ -317,7 +317,7 @@ func TestDeleteActiveConfigErrors(t *testing.T) {
 }
 
 func TestWriteYAMLReactivatesWhenActive(t *testing.T) {
-	calls := setup(t, "")
+	calls := setup(t, "state = running")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
 
@@ -356,7 +356,7 @@ func TestWriteYAMLReactivatesWhenActive(t *testing.T) {
 }
 
 func TestResetReactivatesWhenActive(t *testing.T) {
-	calls := setup(t, "")
+	calls := setup(t, "state = running")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
 
@@ -478,7 +478,7 @@ func TestRenameRunningConfigReapplies(t *testing.T) {
 }
 
 func TestReplacePresetReactivatesWhenActivePreset(t *testing.T) {
-	calls := setup(t, "")
+	calls := setup(t, "state = running")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
 
@@ -581,7 +581,7 @@ func TestUpdateConfigMetaRemoteURL(t *testing.T) {
 }
 
 func TestUpdateConfigMetaReactivatesWhenActive(t *testing.T) {
-	calls := setup(t, "")
+	calls := setup(t, "state = running")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
 
@@ -1865,6 +1865,23 @@ func TestRecencyIsCapped(t *testing.T) {
 func TestEditingTheRunningConfigIntoAFailureRestoresIt(t *testing.T) {
 	setup(t, "")
 	fakeDistro(t, "exit 0") // validates anything; nothing ever listens
+
+	// Staged launchd: print #1 is reactivateIf's guard (the collector IS
+	// running, so the edit re-applies), #2 is the failing activation's
+	// probe fallback (not running: the start failed), everything after is
+	// the restore coming up.
+	prints := 0
+	origExec := launchd.Exec
+	launchd.Exec = func(args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "print" {
+			prints++
+			if prints != 2 {
+				return []byte("state = running"), nil
+			}
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { launchd.Exec = origExec })
 	port := listenPort(t)
 
 	a, err := app.New()
@@ -1889,12 +1906,12 @@ func TestEditingTheRunningConfigIntoAFailureRestoresIt(t *testing.T) {
 	}
 
 	broken := good + "\n# valid yaml the collector accepts but cannot run\n"
-	err = a.WriteConfigYAML("debug", broken)
-	if err == nil {
+	werr := a.WriteConfigYAML("debug", broken)
+	if werr == nil {
 		t.Fatal("WriteConfigYAML with a start-failing config = nil, want an error")
 	}
-	if state.IsBadRequest(err) {
-		t.Errorf("startup failure marked BadRequest (400), want a 500: %v", err)
+	if state.IsBadRequest(werr) {
+		t.Errorf("startup failure marked BadRequest (400), want a 500: %v", werr)
 	}
 
 	_, onDisk, err := a.Config("debug")
@@ -1905,11 +1922,44 @@ func TestEditingTheRunningConfigIntoAFailureRestoresIt(t *testing.T) {
 		t.Errorf("the broken edit survived the restore:\n%q\nwant the pre-edit YAML:\n%q", onDisk, good)
 	}
 
-	// Nothing is running (launchd says so), so the error must NOT claim
-	// anything still is.
+	// The restore put debug · prod back and launchd reports it running, so
+	// the error must say so (the not-running side of the honesty gate is
+	// TestStillRunningOnlyWhenItActuallyIs).
 	var sr interface{ StillRunning() string }
-	if errors.As(err, &sr) {
-		t.Errorf("error claims %q is still running, but launchd reports nothing running", sr.StillRunning())
+	if !errors.As(werr, &sr) || sr.StillRunning() != "debug · prod" {
+		t.Errorf("err = %v, want a still-running claim of %q", werr, "debug · prod")
+	}
+}
+
+// TestEditingTheStoppedActiveConfigStaysStopped pins reactivateIf's guard:
+// editing the active config while the collector is stopped writes the edit
+// and leaves the collector stopped — no bootstrap, no error.
+func TestEditingTheStoppedActiveConfigStaysStopped(t *testing.T) {
+	calls := setup(t, "")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	if err := a.WriteConfigYAML("debug", "receivers: {}\n# edited while stopped\n"); err != nil {
+		t.Fatalf("WriteConfigYAML while stopped: %v", err)
+	}
+	if called(*calls, "bootstrap") || called(*calls, "kickstart") {
+		t.Errorf("editing the stopped active config started the collector: %v", *calls)
+	}
+	_, yaml, err := cfgstore.Get(a.Dir, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(yaml, "# edited while stopped") {
+		t.Errorf("yaml not written: %q", yaml)
 	}
 }
 

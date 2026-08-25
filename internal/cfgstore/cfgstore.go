@@ -450,8 +450,12 @@ func Reset(root, name string) error {
 	return writeMeta(root, name, m)
 }
 
-// Rename moves a configuration from -> to, keeping its YAML, provenance,
-// and presets. It refuses a missing source and an existing target.
+// Rename moves a configuration from -> to, keeping its YAML and presets.
+// It refuses a missing source and an existing target. A shipped config
+// becomes local under its new name (like Copy): shipped identity is bound
+// to the name — Reset and the upgrade path read defaults/<name>.yaml — so
+// carrying the pristine hash to another name would reset or upgrade it
+// against the wrong shipped YAML.
 func Rename(root, from, to string) error {
 	if err := validateName(from); err != nil {
 		return err
@@ -465,7 +469,18 @@ func Rename(root, from, to string) error {
 	if exists(root, to) {
 		return userErrf("config %q already exists", to)
 	}
-	return os.Rename(configDir(root, from), configDir(root, to))
+	m, err := readMeta(root, from)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(configDir(root, from), configDir(root, to)); err != nil {
+		return err
+	}
+	if provenanceFor(m) == "shipped" {
+		m.PristineSHA256 = ""
+		return writeMeta(root, to, m)
+	}
+	return nil
 }
 
 // SetVar sets a key/value pair in a preset, creating the preset on first
@@ -719,6 +734,9 @@ func MaterializeDefaults(root string) error {
 		info, currentYAML, err := buildInfo(root, name)
 		if err != nil {
 			return err
+		}
+		if info.Provenance != "shipped" {
+			continue // a local or remote config on this name is the user's, never upgraded
 		}
 		if info.Modified {
 			continue // leave untouched
