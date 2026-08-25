@@ -896,7 +896,10 @@ function applyLogFilter() {
   const pre = document.getElementById("log-view");
   if (!pre) return;
   const note = document.getElementById("log-note");
-  const all = lastLogText ? lastLogText.split("\n") : [];
+  // Trim the trailing newline before splitting, or the count is one too
+  // high and the panel shows a blank final line.
+  const text = lastLogText.replace(/\n$/, "");
+  const all = text ? text.split("\n") : [];
   const q = state.logFilter.toLowerCase();
   const lines = q ? all.filter((l) => l.toLowerCase().includes(q)) : all;
   pre.textContent = lines.length ? lines.join("\n") : (q ? "(no matching lines)" : "(empty)");

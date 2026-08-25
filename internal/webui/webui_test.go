@@ -539,7 +539,7 @@ func TestUpdateMetaRoute(t *testing.T) {
 	// A BadRequest-marked unknown-distro error (app.UpdateConfigMeta's real
 	// behavior) reports 400, not the default 500.
 	api.PutConfigMeta = func(name string, distro, remoteURL *string) error {
-		return BadRequest(errWithMessage(`no such distro "bogus"`))
+		return markBadRequest(errWithMessage(`no such distro "bogus"`))
 	}
 	rec = call(handlePutConfigMeta(api), http.MethodPut, `{"distro":"bogus"}`, pv)
 	if rec.Code != http.StatusBadRequest {
@@ -668,7 +668,7 @@ func TestSetDistroPathRoute(t *testing.T) {
 	// A BadRequest-marked validation failure (app.SetDistroPath's bad path or
 	// invalid name) must map to 400, same as handleRemoveDistro's.
 	api.SetDistroPath = func(name, path string) (string, error) {
-		return "", BadRequest(errWithMessage("not executable"))
+		return "", markBadRequest(errWithMessage("not executable"))
 	}
 	rec = call(handleSetDistroPath(api), http.MethodPut, `{"path":"/nope"}`, pv)
 	if rec.Code != http.StatusBadRequest {
@@ -700,7 +700,7 @@ func TestRemoveDistroRoute(t *testing.T) {
 	}
 
 	api.RemoveDistro = func(name string) (bool, error) {
-		return false, BadRequest(errWithMessage("no user distro entry named \"x\""))
+		return false, markBadRequest(errWithMessage("no user distro entry named \"x\""))
 	}
 	rec = call(handleRemoveDistro(api), http.MethodDelete, "", pv)
 	if rec.Code != http.StatusBadRequest {
@@ -874,3 +874,12 @@ func TestNoNativeDialogsInAppJS(t *testing.T) {
 		t.Error("app.js is missing the ask() dialog helper")
 	}
 }
+
+// markBadRequest stands in for internal/state.BadRequest: webui recognises a
+// marked error structurally (a BadRequest() bool method), so these tests
+// don't need — and this package must not have — the import.
+type badRequestFake struct{ error }
+
+func (badRequestFake) BadRequest() bool { return true }
+
+func markBadRequest(err error) error { return badRequestFake{err} }

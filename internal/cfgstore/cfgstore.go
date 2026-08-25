@@ -21,7 +21,6 @@ import (
 
 	"github.com/bronto-io/compy/internal/state"
 	"github.com/bronto-io/compy/internal/vars"
-	"github.com/bronto-io/compy/internal/webui"
 )
 
 // Meta is the persisted metadata for a configuration (meta.json).
@@ -154,13 +153,13 @@ func writeYAMLFile(root, name, yaml string) error {
 	return state.WriteFileAtomic(yamlPath(root, name), []byte(yaml), 0o600)
 }
 
-// userErrf builds a webui.BadRequest-marked error: a caller mistake (a bad
+// userErrf builds a state.BadRequest-marked error: a caller mistake (a bad
 // name, a missing or duplicate configuration, a set that isn't there) the
 // REST layer answers 400 for, rather than a failure of the store itself
 // (500). The web UI dumps a collector log tail onto a 5xx and nothing else,
 // so mis-classifying a user mistake buries its own message.
 func userErrf(format string, a ...any) error {
-	return webui.BadRequest(fmt.Errorf(format, a...))
+	return state.BadRequest(fmt.Errorf(format, a...))
 }
 
 func validateName(name string) error {
@@ -276,7 +275,7 @@ func CreateFromURL(root, name, url string, fetch Fetch) error {
 	}
 	content, err := fetch(url)
 	if err != nil {
-		return webui.BadRequest(err) // the URL is the user's; a log tail says nothing about it
+		return state.BadRequest(err) // the URL is the user's; a log tail says nothing about it
 	}
 	yaml := string(content)
 	if err := createDir(root, name); err != nil {
@@ -370,7 +369,7 @@ func refetch(root, name string, fetch Fetch) error {
 	}
 	content, err := fetch(m.RemoteURL)
 	if err != nil {
-		return webui.BadRequest(err) // the URL is the user's; a log tail says nothing about it
+		return state.BadRequest(err) // the URL is the user's; a log tail says nothing about it
 	}
 	yaml := string(content)
 	if err := writeYAMLFile(root, name, yaml); err != nil {
