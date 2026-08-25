@@ -33,6 +33,7 @@ type API struct {
 	GetSettings func() (map[string]any, error)
 	PutSettings func(grpcPort, httpPort *int) error // partial: nil = unchanged
 
+	Health   func() (any, error) // collector's own metrics; {"available": false} when stopped
 	Apply    func() error
 	Stop     func() error // stop the collector; the active configuration stays named
 	Start    func() error // run the active configuration again
@@ -107,6 +108,8 @@ func routes() []route {
 
 		{"GET", "/api/settings", handleGetSettings},
 		{"PUT", "/api/settings", handlePutSettings},
+
+		{"GET", "/api/collector/health", handleHealth},
 
 		{"POST", "/api/service/apply", handleApply},
 		{"POST", "/api/service/stop", handleStop},
@@ -412,6 +415,17 @@ func handleApply(api API) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleHealth(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		health, err := api.Health()
+		if err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, health)
 	}
 }
 
