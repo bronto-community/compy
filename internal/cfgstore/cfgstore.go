@@ -212,6 +212,9 @@ func List(root string) ([]Info, error) {
 
 // Get returns the configuration's info and its config.yaml content.
 func Get(root, name string) (Info, string, error) {
+	if err := validateName(name); err != nil {
+		return Info{}, "", err
+	}
 	return buildInfo(root, name)
 }
 
@@ -260,6 +263,12 @@ func CreateFromURL(root, name, url string, fetch Fetch) error {
 // Copy duplicates src's YAML and variable sets into a new local
 // configuration dst; provenance (remote URL / pristine hash) is dropped.
 func Copy(root, src, dst string) error {
+	if err := validateName(src); err != nil {
+		return err
+	}
+	if err := validateName(dst); err != nil {
+		return err
+	}
 	yaml, err := readYAML(root, src)
 	if err != nil {
 		return err
@@ -287,6 +296,9 @@ func Copy(root, src, dst string) error {
 
 // Delete removes a configuration entirely.
 func Delete(root, name string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
 	if !exists(root, name) {
 		return fmt.Errorf("config %q not found", name)
 	}
@@ -296,6 +308,9 @@ func Delete(root, name string) error {
 // WriteYAML overwrites a configuration's config.yaml. Modified status is
 // derived from the pristine hash, not tracked separately.
 func WriteYAML(root, name, yaml string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
 	if !exists(root, name) {
 		return fmt.Errorf("config %q not found", name)
 	}
@@ -304,6 +319,9 @@ func WriteYAML(root, name, yaml string) error {
 
 // WriteMeta overwrites a configuration's meta.json.
 func WriteMeta(root, name string, m Meta) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
 	if !exists(root, name) {
 		return fmt.Errorf("config %q not found", name)
 	}
@@ -333,6 +351,9 @@ func refetch(root, name string, fetch Fetch) error {
 // Sync refetches a remote configuration's YAML and updates the pristine
 // hash. It errors if the configuration has been locally modified.
 func Sync(root, name string, fetch Fetch) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
 	info, _, err := buildInfo(root, name)
 	if err != nil {
 		return err
@@ -346,12 +367,18 @@ func Sync(root, name string, fetch Fetch) error {
 // Resync forcibly refetches a remote configuration, discarding any local
 // edits.
 func Resync(root, name string, fetch Fetch) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
 	return refetch(root, name, fetch)
 }
 
 // SetVar sets a key/value pair in a variable set, creating the set on first
 // write.
 func SetVar(root, name, set, key, value string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
 	m, err := readMeta(root, name)
 	if err != nil {
 		return err
@@ -372,6 +399,9 @@ func SetVar(root, name, set, key, value string) error {
 // DeleteSet removes a variable set. It errors if the set is the active set
 // or does not exist.
 func DeleteSet(root, name, set string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
 	m, err := readMeta(root, name)
 	if err != nil {
 		return err
@@ -392,6 +422,9 @@ func DeleteSet(root, name, set string) error {
 // UseSet makes set the active variable set. It errors if the set does not
 // exist.
 func UseSet(root, name, set string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
 	m, err := readMeta(root, name)
 	if err != nil {
 		return err
