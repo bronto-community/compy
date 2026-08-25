@@ -14,6 +14,7 @@ import (
 
 	"github.com/bronto-io/compy/internal/app"
 	"github.com/bronto-io/compy/internal/cfgstore"
+	"github.com/bronto-io/compy/internal/distro"
 	"github.com/bronto-io/compy/internal/launchd"
 	"github.com/bronto-io/compy/internal/state"
 	"github.com/bronto-io/compy/internal/webui"
@@ -563,6 +564,62 @@ func TestFetchDistro(t *testing.T) {
 	}
 	if err := a.FetchDistro("no-such-distro"); err == nil {
 		t.Fatal("FetchDistro(no-such-distro): want error, got nil")
+	}
+}
+
+// TestDistrosUserEntry covers the "user_entry" field Distros() rows carry:
+// false for a shipped definition that's merely been downloaded to its
+// default path (no distros.json entry — DELETE would 400), true once that
+// name is overridden with SetDistroPath (a real distros.json entry).
+func TestDistrosUserEntry(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	def := distro.Defs()[0] // "core"
+	binDir := filepath.Join(a.Dir, "distros", def.Name+"-"+def.Version)
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(binDir, def.Binary)
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	findRow := func(rows []map[string]any, name string) map[string]any {
+		for _, r := range rows {
+			if r["name"] == name {
+				return r
+			}
+		}
+		t.Fatalf("no row named %q in %v", name, rows)
+		return nil
+	}
+
+	rows, err := a.Distros()
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := findRow(rows, def.Name)
+	if row["downloaded"] != true {
+		t.Fatalf("downloaded = %v, want true (binary present at default path)", row["downloaded"])
+	}
+	if row["user_entry"] != false {
+		t.Fatalf("user_entry = %v, want false (downloaded but not overridden)", row["user_entry"])
+	}
+
+	if _, err := a.SetDistroPath(def.Name, binPath); err != nil {
+		t.Fatalf("SetDistroPath: %v", err)
+	}
+	rows, err = a.Distros()
+	if err != nil {
+		t.Fatal(err)
+	}
+	row = findRow(rows, def.Name)
+	if row["user_entry"] != true {
+		t.Fatalf("user_entry = %v after SetDistroPath, want true", row["user_entry"])
 	}
 }
 

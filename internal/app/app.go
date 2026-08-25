@@ -494,6 +494,10 @@ func (a *App) FetchDistro(name string) error {
 
 // Distros lists the distro registry: shipped definitions (flagged available
 // for this platform and whether they are downloaded) plus user entries.
+// "user_entry" distinguishes an actual registry override/custom distro (in
+// state.LoadDistros/distros.json — DELETE-able) from a shipped definition
+// that's merely been downloaded to its default path but never overridden
+// (not DELETE-able: there's no registry entry to remove).
 func (a *App) Distros() ([]map[string]any, error) {
 	reg, err := distro.Registry(a.Dir)
 	if err != nil {
@@ -502,6 +506,14 @@ func (a *App) Distros() ([]map[string]any, error) {
 	s, err := state.LoadSettings()
 	if err != nil {
 		return nil, err
+	}
+	userDistros, err := state.LoadDistros()
+	if err != nil {
+		return nil, err
+	}
+	isUserEntry := make(map[string]bool, len(userDistros))
+	for _, u := range userDistros {
+		isUserEntry[u.Name] = true
 	}
 	defs := map[string]distro.Def{}
 	for _, d := range distro.Defs() {
@@ -517,6 +529,7 @@ func (a *App) Distros() ([]map[string]any, error) {
 			"definition": isDef,
 			"available":  !isDef || distro.Available(def),
 			"downloaded": d.Path != "",
+			"user_entry": isUserEntry[d.Name],
 		})
 	}
 	return out, nil

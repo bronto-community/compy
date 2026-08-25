@@ -115,6 +115,7 @@ h1 {
   max-width: 760px;
 }
 .error-strip.hidden { display: none; }
+.error-strip.info { border-left-color: var(--accent); }
 .error-strip pre {
   white-space: pre-wrap;
   overflow: auto;
