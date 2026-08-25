@@ -210,6 +210,10 @@ function fmtCount(n) {
 }
 
 /* ── transient notes (the design's ~3s one-liners) ────────────────── */
+function noteStrip() {
+  if (!S.note) return null;
+  return el("div", { class: "strip-wrap" }, [el("div", { class: "note", text: S.note })]);
+}
 function note(text, ms) {
   S.note = text;
   if (S.noteTimer) clearTimeout(S.noteTimer);
@@ -830,6 +834,28 @@ async function syncAll() {
   } catch (e) { showError(e); }
 }
 
+/* "empty means a blank config" has to mean the same thing here as it does
+   in `compy config create` (cmd/compy's blankConfig): enough shape to edit,
+   on compy's own ports. An actually-empty file is not a config the
+   collector will ever start. */
+const BLANK_CONFIG = [
+  "receivers:",
+  "  otlp:",
+  "    protocols:",
+  "      grpc:",
+  "        endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}",
+  "      http:",
+  "        endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}",
+  "exporters:",
+  "  debug:",
+  "service:",
+  "  pipelines:",
+  "    traces: {receivers: [otlp], exporters: [debug]}",
+  "    metrics: {receivers: [otlp], exporters: [debug]}",
+  "    logs: {receivers: [otlp], exporters: [debug]}",
+  "",
+].join("\n");
+
 function openNew() {
   S.newOpen = true; S.newName = ""; S.newUrl = ""; S.newErr = null; S.fetching = false;
   render();
@@ -876,7 +902,7 @@ async function createNew() {
   const url = S.newUrl.trim();
   if (!url) {
     try {
-      await apiJSON("/api/configs", "POST", { name, yaml: "" });
+      await apiJSON("/api/configs", "POST", { name, yaml: BLANK_CONFIG });
       S.newOpen = false; S.newName = ""; S.newUrl = "";
       await loadCore();
       render();
@@ -949,8 +975,8 @@ function screenEditor() {
       on: { change: (e) => setRemoteURL(info, e.target.value) },
     }) : null,
     el("span", { class: "grow" }),
-    S.renameNote ? span("ed-hint", S.renameNote) : null,
-    S.saving ? el("span", { class: "ed-hint busy-word", text: "asking the collector…" }) : null,
+    S.saving ? el("span", { class: "ed-hint busy-word", text: "asking the collector…" })
+      : S.renameNote ? span("ed-hint", S.renameNote) : null,
     showReset ? el("button", {
       class: "btn withicon", title: origin === "url" && !info.modified ? "in sync with " + host : "your version",
       on: { click: () => headerResync(info, origin) },
@@ -961,6 +987,9 @@ function screenEditor() {
       on: { click: () => saveConfig(info) },
     }),
   ]));
+
+  const noteEl = noteStrip();
+  if (noteEl) wrap.appendChild(noteEl);
 
   /* presets band */
   const band = el("div", { class: "band" });
@@ -994,9 +1023,12 @@ function screenEditor() {
   const values = ((info.meta.presets || {})[S.preset]) || {};
   band.appendChild(valueCards(info, values, (k, v) => queueValue(info, k, v), "ed"));
 
+  /* Row three appears only when something is wrong, and it is a real "is
+     any required value missing" check — the key's own name, not a
+     name-specific special case. */
   const missing = (info.vars || []).filter((v) => !v.has_default && !/^COMPY_/.test(v.name) && !(values[v.name] || "").trim());
   if (S.preset && missing.length) {
-    const what = missing.map((v) => v.description || v.name).join(", ");
+    const what = missing.map((v) => v.name).join(", ");
     band.appendChild(el("div", { class: "warn sans", text: S.preset + " has no " + what + ". activating with it will fail." }));
   }
   wrap.appendChild(band);
@@ -1234,6 +1266,8 @@ function screenCollector() {
     tiles(stopped),
   ]));
 
+  const cn = noteStrip();
+  if (cn) wrap.appendChild(cn);
   wrap.appendChild(healthStrip(stopped));
   wrap.appendChild(logPane(stopped));
   if (lastError) wrap.appendChild(el("div", { class: "strip-wrap" }, [errorStrip()]));
@@ -1344,6 +1378,8 @@ async function stopCollector() {
 /* ── screen 4: settings ───────────────────────────────────────────── */
 function screenSettings() {
   const wrap = el("div", { class: "settings" });
+  const sn = noteStrip();
+  if (sn) wrap.appendChild(sn);
 
   wrap.appendChild(el("div", { class: "sec" }, [
     span("title", "app"),
