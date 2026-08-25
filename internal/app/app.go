@@ -461,6 +461,9 @@ func (a *App) AddDistro(name, path string) error {
 	if slices.ContainsFunc(distros, func(d state.Distro) bool { return d.Name == name }) {
 		return fmt.Errorf("distro %q already exists", name)
 	}
+	if slices.ContainsFunc(distro.Defs(), func(d distro.Def) bool { return d.Name == name }) {
+		fmt.Fprintf(os.Stderr, "compy: %q is a shipped distro definition; this path overrides it\n", name)
+	}
 	if err := state.SaveDistros(append(distros, state.Distro{Name: name, Path: abs})); err != nil {
 		return err
 	}

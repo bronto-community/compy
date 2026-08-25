@@ -266,6 +266,9 @@ func cmdConfig(args []string) error {
 			case "resync":
 				return a.Resync(name)
 			default:
+				if !state.ValidBackendName(name) {
+					return fmt.Errorf("invalid config name %q", name)
+				}
 				return editThen(a.ConfigPath(name),
 					func(s string) error { return a.WriteConfigYAML(name, s) })
 			}
@@ -298,10 +301,9 @@ func listConfigs(a *app.App) error {
 	if err != nil {
 		return err
 	}
-	active, _, err := a.ActiveConfig()
-	if err != nil {
-		return err
-	}
+	// A broken active config (e.g. deleted out from under settings.json)
+	// shouldn't stop the list from rendering; it just won't be marked active.
+	active, _, _ := a.ActiveConfig()
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	for _, c := range configs {
 		mark := " "

@@ -262,6 +262,10 @@ Webui stopgap (P3 rebuilds it): replace API struct with `Status`, `Configs`, `Ac
 - README/CLAUDE.md: v2 CLI surface, config model paragraph, migration note.
 - [ ] Steps: e2e first (RED without code changes? — it exercises T5 surface; write, run with OTELCOL_BIN, make pass), docs, full suite green, Commit `feat: shipped default configs + v2 e2e + docs`
 
+## Post-review notes
+
+- `ebpf-profiler` is deliberately LISTED as unavailable on non-linux (`compy distro list` shows it with "unavailable on this platform") rather than hidden — a deviation from the spec's "hidden on darwin"; visibility was chosen so darwin users can see the distro exists instead of wondering why it's missing.
+
 ## Execution notes (for the coordinator)
 
 - Wave A: T1, T2, T3, T4 PARALLEL in isolated worktrees (T2's repo-wide break is contained to its branch; merge T2 together with T5). Merge order: T1, T3, T4 → main-line branch; T2 merges into T5's working branch before T5 starts (T5 fixes all launchd call sites).
