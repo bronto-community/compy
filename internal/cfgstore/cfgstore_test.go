@@ -720,6 +720,68 @@ func TestRenameConfig(t *testing.T) {
 	}
 }
 
+// TestRenameShippedBecomesLocal: shipped identity is name-bound (Reset and
+// the upgrade path read defaults/<name>.yaml), so a renamed builtin must
+// become local — carrying the pristine hash to another name would reset or
+// upgrade it against the wrong shipped YAML.
+func TestRenameShippedBecomesLocal(t *testing.T) {
+	root := t.TempDir()
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetVar(root, "debug", "prod", "K", "V"); err != nil {
+		t.Fatal(err)
+	}
+	_, shipped, err := Get(root, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Rename(root, "debug", "my-debug"); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	info, yaml, err := Get(root, "my-debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Provenance != "local" || info.Modified {
+		t.Errorf("renamed builtin = provenance %q modified %v, want a local config", info.Provenance, info.Modified)
+	}
+	if yaml != shipped || info.Meta.Presets["prod"]["K"] != "V" {
+		t.Errorf("yaml/presets not kept across rename")
+	}
+	if err := Reset(root, "my-debug"); err == nil || !state.IsBadRequest(err) {
+		t.Errorf("Reset on the renamed config = %v, want BadRequest (it is local now)", err)
+	}
+}
+
+// TestMaterializeDefaultsLeavesNonShippedOnBuiltinName: a local (or remote)
+// config occupying a builtin name — freed by delete or rename — is the
+// user's; the upgrade path must never overwrite it.
+func TestMaterializeDefaultsLeavesNonShippedOnBuiltinName(t *testing.T) {
+	root := t.TempDir()
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := Delete(root, "otlp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Create(root, "otlp", "receivers: {}\n# mine\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err := Get(root, "otlp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(yaml, "# mine") || info.Provenance != "local" {
+		t.Errorf("materialize overwrote the user's config on a builtin name: provenance %q yaml %q", info.Provenance, yaml)
+	}
+}
+
 // TestReadMetaAcceptsLegacyKeys proves a v2 meta.json (variable_sets /
 // active_set, plus a per-config distro that v3 dropped) still yields its
 // presets, and that the distro key is silently ignored rather than
