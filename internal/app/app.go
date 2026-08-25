@@ -302,6 +302,36 @@ func (a *App) SetDistro(name, distroName string) error {
 	return a.reactivateIf(name)
 }
 
+// UpdateConfigMeta partially updates a configuration's distro and/or remote
+// URL (nil = unchanged), re-activating if it is the running one. A non-empty
+// distro must name an entry in the distro registry.
+func (a *App) UpdateConfigMeta(name string, distroP, remoteURLP *string) error {
+	info, _, err := cfgstore.Get(a.Dir, name)
+	if err != nil {
+		return err
+	}
+	m := info.Meta
+	if distroP != nil {
+		if *distroP != "" {
+			reg, err := distro.Registry(a.Dir)
+			if err != nil {
+				return err
+			}
+			if !slices.ContainsFunc(reg, func(d state.Distro) bool { return d.Name == *distroP }) {
+				return fmt.Errorf("no such distro %q", *distroP)
+			}
+		}
+		m.Distro = *distroP
+	}
+	if remoteURLP != nil {
+		m.RemoteURL = *remoteURLP
+	}
+	if err := cfgstore.WriteMeta(a.Dir, name, m); err != nil {
+		return err
+	}
+	return a.reactivateIf(name)
+}
+
 // Sync refetches a remote configuration (refusing if locally modified).
 func (a *App) Sync(name string) error {
 	if err := cfgstore.Sync(a.Dir, name, cfgstore.HTTPFetch); err != nil {
@@ -342,6 +372,22 @@ func (a *App) SyncAll() ([]string, error) {
 // set is the running one.
 func (a *App) SetVar(name, set, key, value string) error {
 	if err := cfgstore.SetVar(a.Dir, name, set, key, value); err != nil {
+		return err
+	}
+	info, _, err := cfgstore.Get(a.Dir, name)
+	if err != nil {
+		return err
+	}
+	if info.Meta.ActiveSet == set {
+		return a.reactivateIf(name)
+	}
+	return nil
+}
+
+// ReplaceSet creates or replaces a variable set's entire contents,
+// re-activating if the configuration is active and set is its active_set.
+func (a *App) ReplaceSet(name, set string, values map[string]string) error {
+	if err := cfgstore.WriteSet(a.Dir, name, set, values); err != nil {
 		return err
 	}
 	info, _, err := cfgstore.Get(a.Dir, name)
@@ -438,6 +484,21 @@ func (a *App) Distros() ([]map[string]any, error) {
 	return out, nil
 }
 
+// distroOverrideWarning returns the warning text AddDistro prints when name
+// collides with a shipped distro definition, or "" if it doesn't.
+func distroOverrideWarning(name string) string {
+	if slices.ContainsFunc(distro.Defs(), func(d distro.Def) bool { return d.Name == name }) {
+		return fmt.Sprintf("%q is a shipped distro definition; this path overrides it", name)
+	}
+	return ""
+}
+
+// AddDistroWarning reports the warning AddDistro would print for name (the
+// shipped-definition-override text), or "" if none applies. It lets the
+// REST surface return the same warning as a response field instead of only
+// a stderr line.
+func (a *App) AddDistroWarning(name string) string { return distroOverrideWarning(name) }
+
 // AddDistro registers a collector binary, selecting it if it is the first.
 func (a *App) AddDistro(name, path string) error {
 	if !state.ValidBackendName(name) {
@@ -461,8 +522,8 @@ func (a *App) AddDistro(name, path string) error {
 	if slices.ContainsFunc(distros, func(d state.Distro) bool { return d.Name == name }) {
 		return fmt.Errorf("distro %q already exists", name)
 	}
-	if slices.ContainsFunc(distro.Defs(), func(d distro.Def) bool { return d.Name == name }) {
-		fmt.Fprintf(os.Stderr, "compy: %q is a shipped distro definition; this path overrides it\n", name)
+	if w := distroOverrideWarning(name); w != "" {
+		fmt.Fprintf(os.Stderr, "compy: %s\n", w)
 	}
 	if err := state.SaveDistros(append(distros, state.Distro{Name: name, Path: abs})); err != nil {
 		return err
@@ -505,6 +566,50 @@ func (a *App) Vars() (map[string]string, error) {
 		return nil, err
 	}
 	return envvars.Vars(s), nil
+}
+
+// EnvInfo returns the OTEL_* environment variables plus their rendering as a
+// POSIX sh script (what `compy env` prints).
+func (a *App) EnvInfo() (map[string]string, string, error) {
+	vars, err := a.Vars()
+	if err != nil {
+		return nil, "", err
+	}
+	script, err := envvars.Script(vars, "sh")
+	if err != nil {
+		return nil, "", err
+	}
+	return vars, script, nil
+}
+
+// GetSettings returns compy's global settings.
+func (a *App) GetSettings() (state.Settings, error) { return state.LoadSettings() }
+
+// PutSettings partially updates compy's global settings (nil = unchanged);
+// grpcP/httpP must be in 1-65535. Port changes take effect on the next
+// Apply/Activate, not immediately.
+func (a *App) PutSettings(grpcP, httpP *int, menuSwapP *bool) error {
+	s, err := state.LoadSettings()
+	if err != nil {
+		return err
+	}
+	validPort := func(p int) bool { return p >= 1 && p <= 65535 }
+	if grpcP != nil {
+		if !validPort(*grpcP) {
+			return fmt.Errorf("grpc port %d out of range 1-65535", *grpcP)
+		}
+		s.GRPCPort = *grpcP
+	}
+	if httpP != nil {
+		if !validPort(*httpP) {
+			return fmt.Errorf("http port %d out of range 1-65535", *httpP)
+		}
+		s.HTTPPort = *httpP
+	}
+	if menuSwapP != nil {
+		s.MenuDistroSwap = *menuSwapP
+	}
+	return state.SaveSettings(s)
 }
 
 // SetOSEnv sets or clears the launchd user environment and records it.

@@ -408,6 +408,26 @@ func SetVar(root, name, set, key, value string) error {
 	return writeMeta(root, name, m)
 }
 
+// WriteSet creates or replaces a variable set's entire contents (the set
+// need not already exist).
+func WriteSet(root, name, set string, values map[string]string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	m, err := readMeta(root, name)
+	if err != nil {
+		return err
+	}
+	if !exists(root, name) {
+		return fmt.Errorf("config %q not found", name)
+	}
+	if m.VariableSets == nil {
+		m.VariableSets = map[string]map[string]string{}
+	}
+	m.VariableSets[set] = maps.Clone(values)
+	return writeMeta(root, name, m)
+}
+
 // DeleteSet removes a variable set. It errors if the set is the active set
 // or does not exist.
 func DeleteSet(root, name, set string) error {

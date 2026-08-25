@@ -282,6 +282,237 @@ func TestWriteYAMLReactivatesWhenActive(t *testing.T) {
 	}
 }
 
+func TestReplaceSetReactivatesWhenActiveSet(t *testing.T) {
+	calls := setup(t, "")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("other", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetVar("other", "prod", "K", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	// Replacing a set on an inactive config must not re-apply.
+	if err := a.ReplaceSet("other", "prod", map[string]string{"K": "v2"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("replacing a set on an inactive config re-applied: %v", *calls)
+	}
+
+	// Give "debug" a set and activate it so it becomes the active config AND
+	// active set together.
+	if err := a.SetVar("debug", "prod", "K", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", "prod"); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	if err := a.ReplaceSet("debug", "prod", map[string]string{"K": "v2"}); err != nil {
+		t.Fatalf("ReplaceSet: %v", err)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("replacing the active set did not re-activate: %v", *calls)
+	}
+	info, _, err := cfgstore.Get(a.Dir, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Meta.VariableSets["prod"]["K"] != "v2" {
+		t.Errorf("VariableSets = %+v, want K=v2", info.Meta.VariableSets)
+	}
+
+	*calls = nil
+	// Replacing a *different, non-active* set on the active config must not
+	// re-apply.
+	if err := a.ReplaceSet("debug", "staging", map[string]string{"K": "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("replacing a non-active set on the active config re-applied: %v", *calls)
+	}
+}
+
+func TestUpdateConfigMetaPartialAndDistroValidation(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	url := "https://example.com/c.yaml"
+	if err := a.UpdateConfigMeta("mine", nil, &url); err != nil {
+		t.Fatalf("UpdateConfigMeta (remote only): %v", err)
+	}
+	info, _, err := cfgstore.Get(a.Dir, "mine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Meta.RemoteURL != url {
+		t.Errorf("RemoteURL = %q, want %q", info.Meta.RemoteURL, url)
+	}
+	if info.Meta.Distro != "" {
+		t.Errorf("Distro = %q, want unchanged (nil param)", info.Meta.Distro)
+	}
+
+	// distro must exist in the registry (shipped def "core" always does).
+	distroName := "core"
+	if err := a.UpdateConfigMeta("mine", &distroName, nil); err != nil {
+		t.Fatalf("UpdateConfigMeta (known distro): %v", err)
+	}
+	info, _, err = cfgstore.Get(a.Dir, "mine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Meta.Distro != "core" {
+		t.Errorf("Distro = %q, want core", info.Meta.Distro)
+	}
+	if info.Meta.RemoteURL != url {
+		t.Errorf("RemoteURL = %q, want unchanged", info.Meta.RemoteURL)
+	}
+
+	bogus := "no-such-distro"
+	if err := a.UpdateConfigMeta("mine", &bogus, nil); err == nil {
+		t.Fatal("UpdateConfigMeta with unknown distro: want error, got nil")
+	}
+	info, _, err = cfgstore.Get(a.Dir, "mine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Meta.Distro != "core" {
+		t.Errorf("Distro = %q after rejected update, want unchanged core", info.Meta.Distro)
+	}
+
+	// "" clears back to the global default.
+	empty := ""
+	if err := a.UpdateConfigMeta("mine", &empty, nil); err != nil {
+		t.Fatalf("UpdateConfigMeta (clear distro): %v", err)
+	}
+	info, _, err = cfgstore.Get(a.Dir, "mine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Meta.Distro != "" {
+		t.Errorf("Distro = %q, want cleared", info.Meta.Distro)
+	}
+}
+
+func TestUpdateConfigMetaReactivatesWhenActive(t *testing.T) {
+	calls := setup(t, "")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	url := "https://example.com/c.yaml"
+	if err := a.UpdateConfigMeta("debug", nil, &url); err != nil {
+		t.Fatalf("UpdateConfigMeta: %v", err)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("updating the active config's meta did not re-activate: %v", *calls)
+	}
+}
+
+func TestGetPutSettings(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := a.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.GRPCPort != 14317 || s.HTTPPort != 14318 {
+		t.Fatalf("GetSettings() = %+v, want default ports", s)
+	}
+
+	grpc := 5000
+	swap := true
+	if err := a.PutSettings(&grpc, nil, &swap); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+	s, err = a.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.GRPCPort != 5000 || s.HTTPPort != 14318 || !s.MenuDistroSwap {
+		t.Errorf("GetSettings() after partial PutSettings = %+v", s)
+	}
+
+	bad := 70000
+	if err := a.PutSettings(&bad, nil, nil); err == nil {
+		t.Fatal("PutSettings with out-of-range port: want error, got nil")
+	}
+	s, err = a.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.GRPCPort != 5000 {
+		t.Errorf("GRPCPort = %d after rejected update, want unchanged 5000", s.GRPCPort)
+	}
+
+	zero := 0
+	if err := a.PutSettings(nil, &zero, nil); err == nil {
+		t.Fatal("PutSettings with port 0: want error, got nil")
+	}
+}
+
+func TestEnvInfo(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, script, err := a.EnvInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vars["OTEL_EXPORTER_OTLP_ENDPOINT"] != "http://127.0.0.1:14318" {
+		t.Errorf("vars = %+v", vars)
+	}
+	if !strings.Contains(script, "export OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:14318'") {
+		t.Errorf("script = %q", script)
+	}
+}
+
+func TestAddDistroWarning(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := a.AddDistroWarning("core"); w == "" || !strings.Contains(w, "core") || !strings.Contains(w, "overrides") {
+		t.Errorf("AddDistroWarning(core) = %q, want an override warning", w)
+	}
+	if w := a.AddDistroWarning("brand-new-name"); w != "" {
+		t.Errorf("AddDistroWarning(brand-new-name) = %q, want empty", w)
+	}
+}
+
 func TestRollbackRestoresAndApplies(t *testing.T) {
 	calls := setup(t, "")
 	fakeDistro(t, "exit 0")
