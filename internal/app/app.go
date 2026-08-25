@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bronto-io/compy/internal/cfgstore"
@@ -442,6 +443,31 @@ func (a *App) RenameSet(name, from, to string) error {
 // Log returns the last n lines of the collector log.
 func (a *App) Log(n int) (string, error) { return collector.TailLog(a.LogPath(), n) }
 
+// LogStats counts collector log lines, among the last `lines` lines, whose
+// level field is "error" or "warn". Collector zap lines are tab-separated
+// (timestamp, level, caller, message); strings.Fields tolerates a
+// space-delimited log the same way. A missing log file counts as zero, not
+// an error.
+func (a *App) LogStats(lines int) (errors, warnings int, err error) {
+	tail, err := collector.TailLog(a.LogPath(), lines)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, line := range strings.Split(tail, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		switch fields[1] {
+		case "error":
+			errors++
+		case "warn":
+			warnings++
+		}
+	}
+	return errors, warnings, nil
+}
+
 // httpFetch is distro.Fetch over plain HTTP(S); the caller closes the body.
 func httpFetch(url string) (io.ReadCloser, error) {
 	resp, err := http.Get(url)
@@ -612,11 +638,11 @@ func (a *App) AddDistro(name, path string) error {
 // warning AddDistro's stderr line carries, as a response field instead.
 func (a *App) SetDistroPath(name, path string) (string, error) {
 	if !state.ValidBackendName(name) {
-		return "", fmt.Errorf("invalid distro name %q", name)
+		return "", webui.BadRequest(fmt.Errorf("invalid distro name %q", name))
 	}
 	abs, err := validateDistroBinary(path)
 	if err != nil {
-		return "", err
+		return "", webui.BadRequest(err)
 	}
 	distros, err := state.LoadDistros()
 	if err != nil {

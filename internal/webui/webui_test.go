@@ -649,10 +649,20 @@ func TestSetDistroPathRoute(t *testing.T) {
 		t.Fatalf("malformed body status = %d, want 400", rec.Code)
 	}
 
-	api.SetDistroPath = func(name, path string) (string, error) { return "", errWithMessage("not executable") }
+	api.SetDistroPath = func(name, path string) (string, error) { return "", errWithMessage("disk error") }
 	rec = call(handleSetDistroPath(api), http.MethodPut, `{"path":"/nope"}`, pv)
 	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("closure error status = %d, want 500", rec.Code)
+		t.Fatalf("plain closure error status = %d, want 500", rec.Code)
+	}
+
+	// A BadRequest-marked validation failure (app.SetDistroPath's bad path or
+	// invalid name) must map to 400, same as handleRemoveDistro's.
+	api.SetDistroPath = func(name, path string) (string, error) {
+		return "", BadRequest(errWithMessage("not executable"))
+	}
+	rec = call(handleSetDistroPath(api), http.MethodPut, `{"path":"/nope"}`, pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("BadRequest-marked closure error status = %d, want 400", rec.Code)
 	}
 }
 

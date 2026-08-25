@@ -218,6 +218,19 @@ func writeErr(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
 
+// writeClosureErr reports an error returned by an App closure: a
+// webui.BadRequest-marked one (e.g. SetDistroPath's or RemoveDistro's
+// validation failures) as 400, everything else as the default 500. Every
+// handler routes its closure's error through here so any closure gets 400
+// just by marking its error, with no per-handler check.
+func writeClosureErr(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if IsBadRequest(err) {
+		status = http.StatusBadRequest
+	}
+	writeErr(w, status, err)
+}
+
 // writeBodyErr reports a request-body error: 413 if it's the request
 // exceeding the body-size cap (http.MaxBytesError, from the MaxBytesReader
 // Handler wraps every request body in), 400 for any other decode/read
@@ -235,7 +248,7 @@ func handleStatus(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		status, err := api.Status()
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, status)
@@ -246,7 +259,7 @@ func handleConfigs(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		configs, err := api.Configs()
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, configs)
@@ -266,7 +279,7 @@ func handleActivate(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.Activate(r.PathValue("name"), body.Set); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -276,7 +289,7 @@ func handleActivate(api API) http.HandlerFunc {
 func handleValidateConfig(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.ValidateConfig(r.PathValue("name")); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -305,7 +318,7 @@ func handleLog(api API) http.HandlerFunc {
 		}
 		tail, err := api.Log(n)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"log": tail})
@@ -316,7 +329,7 @@ func handleEnv(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars, script, err := api.Env()
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"vars": vars, "script": script})
@@ -333,7 +346,7 @@ func handleSetOSEnv(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.SetOSEnv(body.On); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -344,7 +357,7 @@ func handleGetSettings(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		settings, err := api.GetSettings()
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, settings)
@@ -366,12 +379,12 @@ func handlePutSettings(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.PutSettings(body.GRPCPort, body.HTTPPort, body.MenuDistroSwap); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		settings, err := api.GetSettings()
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, settings)
@@ -381,7 +394,7 @@ func handlePutSettings(api API) http.HandlerFunc {
 func handleApply(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.Apply(); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -391,7 +404,7 @@ func handleApply(api API) http.HandlerFunc {
 func handleRollback(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.Rollback(); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -401,7 +414,7 @@ func handleRollback(api API) http.HandlerFunc {
 func handleValidate(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.Validate(); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -419,7 +432,7 @@ func handleCreateConfig(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.CreateConfig(body.Name, body.Yaml); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -437,7 +450,7 @@ func handleCreateFromURL(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.CreateFromURL(body.Name, body.URL); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -448,7 +461,7 @@ func handleGetConfig(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		detail, err := api.GetConfig(r.PathValue("name"))
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, detail)
@@ -469,7 +482,7 @@ func handlePutConfigYAML(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.PutConfigYAML(r.PathValue("name"), string(data)); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -487,7 +500,7 @@ func handlePutConfigMeta(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.PutConfigMeta(r.PathValue("name"), body.Distro, body.RemoteURL); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -497,7 +510,7 @@ func handlePutConfigMeta(api API) http.HandlerFunc {
 func handleDeleteConfig(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.DeleteConfig(r.PathValue("name")); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -514,7 +527,7 @@ func handleCopyConfig(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.CopyConfig(r.PathValue("name"), body.Dst); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -524,7 +537,7 @@ func handleCopyConfig(api API) http.HandlerFunc {
 func handleSync(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.Sync(r.PathValue("name")); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -534,7 +547,7 @@ func handleSync(api API) http.HandlerFunc {
 func handleResync(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.Resync(r.PathValue("name")); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -545,7 +558,7 @@ func handleSyncAll(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		synced, err := api.SyncAll()
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"synced": synced})
@@ -572,7 +585,7 @@ func handlePutSet(api API) http.HandlerFunc {
 			body.Values = map[string]string{}
 		}
 		if err := api.PutSet(r.PathValue("name"), set, body.Values); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -587,7 +600,7 @@ func handleDeleteSet(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.DeleteSet(r.PathValue("name"), set); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -602,7 +615,7 @@ func handleUseSet(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.UseSet(r.PathValue("name"), set); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -626,7 +639,7 @@ func handleRenameSet(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.RenameSet(r.PathValue("name"), set, body.To); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -637,7 +650,7 @@ func handleDistros(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		distros, err := api.Distros()
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, distros)
@@ -656,7 +669,7 @@ func handleAddDistro(api API) http.HandlerFunc {
 		}
 		warning, err := api.AddDistro(body.Name, body.Path)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"warning": warning})
@@ -674,25 +687,22 @@ func handleSetDistroPath(api API) http.HandlerFunc {
 		}
 		warning, err := api.SetDistroPath(r.PathValue("name"), body.Path)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"warning": warning})
 	}
 }
 
-// handleRemoveDistro reports a webui.BadRequest-marked closure error as 400
-// (the selected distro, or a pure definition name with no user entry);
-// every other error is the usual 500.
+// handleRemoveDistro's closure error goes through writeClosureErr, so a
+// webui.BadRequest-marked one (the selected distro, or a pure definition
+// name with no user entry) reports as 400; every other error is the usual
+// 500.
 func handleRemoveDistro(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		reverted, err := api.RemoveDistro(r.PathValue("name"))
 		if err != nil {
-			status := http.StatusInternalServerError
-			if IsBadRequest(err) {
-				status = http.StatusBadRequest
-			}
-			writeErr(w, status, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"reverted": reverted})
@@ -702,7 +712,7 @@ func handleRemoveDistro(api API) http.HandlerFunc {
 func handleUseDistro(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.UseDistro(r.PathValue("name")); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -712,7 +722,7 @@ func handleUseDistro(api API) http.HandlerFunc {
 func handleFetchDistro(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.FetchDistro(r.PathValue("name")); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
+			writeClosureErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

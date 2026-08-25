@@ -699,11 +699,11 @@ func TestSetDistroPath(t *testing.T) {
 		t.Fatalf("settings.Distro = %q, want core (already selected by the first SetDistroPath)", s.Distro)
 	}
 
-	if _, err := a.SetDistroPath("Bad Name!", bin1); err == nil {
-		t.Fatal("SetDistroPath with an invalid name: want error, got nil")
+	if _, err := a.SetDistroPath("Bad Name!", bin1); err == nil || !webui.IsBadRequest(err) {
+		t.Fatalf("SetDistroPath with an invalid name: err=%v, want a webui.BadRequest-marked error", err)
 	}
-	if _, err := a.SetDistroPath("whatever", filepath.Join(t.TempDir(), "missing")); err == nil {
-		t.Fatal("SetDistroPath with a nonexistent path: want error, got nil")
+	if _, err := a.SetDistroPath("whatever", filepath.Join(t.TempDir(), "missing")); err == nil || !webui.IsBadRequest(err) {
+		t.Fatalf("SetDistroPath with a nonexistent path: err=%v, want a webui.BadRequest-marked error", err)
 	}
 }
 
@@ -809,6 +809,46 @@ func TestLog(t *testing.T) {
 	}
 	if got != "two\nthree\n" {
 		t.Fatalf("Log(2) = %q, want the last two lines", got)
+	}
+}
+
+// TestLogStats covers a synthetic zap-shaped log: it must count by the level
+// token (2nd tab-separated field, tolerating a space-delimited log), not by
+// substring — a message containing the word "error" at level info must not
+// count — and a missing log file must report zero, zero, nil.
+func TestLogStats(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	errs, warns, err := a.LogStats(500)
+	if err != nil || errs != 0 || warns != 0 {
+		t.Fatalf("LogStats with no log file = %d, %d, %v, want 0, 0, nil", errs, warns, err)
+	}
+
+	log := strings.Join([]string{
+		"2026-08-25T14:32:01.000+0200\tinfo\tservice@v0.135.0/service.go:1\tstarting",
+		"2026-08-25T14:32:02.000+0200\twarn\tservice@v0.135.0/service.go:2\tqueue nearly full",
+		"2026-08-25T14:32:03.000+0200\terror\tservice@v0.135.0/service.go:3\texporter send failed",
+		"2026-08-25T14:32:04.000+0200\tinfo\tservice@v0.135.0/service.go:4\tan error occurred downstream, ignore",
+		"2026-08-25T14:32:05.000+0200 error service@v0.135.0/service.go:5 space-delimited line",
+		"",
+	}, "\n")
+	if err := os.MkdirAll(filepath.Dir(a.LogPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.LogPath(), []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	errs, warns, err = a.LogStats(500)
+	if err != nil {
+		t.Fatalf("LogStats: %v", err)
+	}
+	if errs != 2 || warns != 1 {
+		t.Fatalf("LogStats = errors=%d warnings=%d, want 2, 1 (info line mentioning \"error\" must not count)", errs, warns)
 	}
 }
 
