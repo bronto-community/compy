@@ -1366,3 +1366,50 @@ func TestBadRequestSurvivesWrapping(t *testing.T) {
 		t.Errorf("BadRequest must not hide the error it marks from errors.Is")
 	}
 }
+
+// TestUseDistroReportsApplyFailureWithoutLosingTheSelection covers the
+// 2026-08-25 report that a self-added collector "can only be removed":
+// selecting one whose binary rejects the active configuration used to
+// return the collector's bare diagnostics as a 500 (log tail and all),
+// which reads as "picking my own collector failed" even though the default
+// had in fact been switched. The default sticks — a global default is not
+// hostage to one configuration — and the error says exactly that.
+func TestUseDistroReportsApplyFailureWithoutLosingTheSelection(t *testing.T) {
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("mine", ""); err != nil {
+		t.Fatal(err)
+	}
+	mine := filepath.Join(t.TempDir(), "otelcol")
+	if err := os.WriteFile(mine, []byte("#!/bin/sh\necho 'unknown type: \"nope\"' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AddDistro("mine-own", mine); err != nil {
+		t.Fatal(err)
+	}
+
+	err = a.UseDistro("mine-own")
+	if err == nil {
+		t.Fatal("UseDistro = nil, want the apply failure reported")
+	}
+	if !webui.IsBadRequest(err) {
+		t.Errorf("UseDistro error = %v, want webui.BadRequest-marked (no collector log tail)", err)
+	}
+	if !strings.Contains(err.Error(), "mine-own") || !strings.Contains(err.Error(), "unknown type") {
+		t.Errorf("UseDistro error = %q, want it to name the distro and carry the collector's own diagnostics", err)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Distro != "mine-own" {
+		t.Errorf("settings.Distro = %q after a failed apply, want mine-own: the default is the user's choice, not the active config's", s.Distro)
+	}
+}
