@@ -107,6 +107,17 @@
           }
         }
       },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "available": { "type": "boolean" },
+          "received": { "type": "integer" },
+          "exported": { "type": "integer" },
+          "queue": { "type": "integer" },
+          "dropped": { "type": "integer" }
+        },
+        "required": ["available"]
+      },
       "Ok": {
         "type": "object",
         "properties": { "ok": { "type": "boolean" } }
@@ -236,6 +247,22 @@
           "413": {
             "description": "Body too large",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/collector/health": {
+      "get": {
+        "summary": "The collector's own metrics, scraped from localhost:8888/metrics",
+        "description": "Four numbers for the Collector screen. A stopped or unscrapable collector answers 200 with available:false and zeroes, never an error. Sources (otelcol 0.135, counters matched with or without a _total suffix): received = otelcol_receiver_accepted_{spans,metric_points,log_records}; exported = otelcol_exporter_sent_{spans,metric_points,log_records}; queue = otelcol_exporter_queue_size; dropped = otelcol_receiver_refused_*, otelcol_exporter_send_failed_*, otelcol_exporter_enqueue_failed_*.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" } } }
           },
           "500": {
             "description": "Error",

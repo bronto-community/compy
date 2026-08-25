@@ -487,6 +487,12 @@ func (a *App) RenamePreset(name, from, to string) error {
 	return cfgstore.RenamePreset(a.Dir, name, from, to)
 }
 
+// Health reports what the running collector's own telemetry says about the
+// data moving through it. It never fails: a stopped or unreachable collector
+// answers {"available": false}, which is what the Collector screen shows as
+// dashes.
+func (a *App) Health() (any, error) { return collector.Scrape(), nil }
+
 // Log returns the last n lines of the collector log.
 func (a *App) Log(n int) (string, error) { return collector.TailLog(a.LogPath(), n) }
 
@@ -888,6 +894,7 @@ func (a *App) WebUIAPI() webui.API {
 		GetSettings: a.settingsMap,
 		PutSettings: a.PutSettings,
 
+		Health:   a.Health,
 		Apply:    a.Apply,
 		Stop:     a.Stop,
 		Start:    a.Start,

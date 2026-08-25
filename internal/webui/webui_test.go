@@ -22,6 +22,7 @@ func fakeAPI() API {
 		GetSettings: func() (map[string]any, error) { return map[string]any{}, nil },
 		PutSettings: func(grpcPort, httpPort *int) error { return nil },
 
+		Health:   func() (any, error) { return map[string]any{"available": false}, nil },
 		Apply:    func() error { return nil },
 		Stop:     func() error { return nil },
 		Start:    func() error { return nil },
