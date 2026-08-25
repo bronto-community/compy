@@ -1454,8 +1454,12 @@ function distroRow(b) {
   const blocked = b.definition && !b.available;
   const mine = b.user_entry && !b.definition;
 
+  // A real fetch failure is a Go error with a URL in it — too long for a
+  // 1fr cell. The row shows one short line; the whole thing is the tooltip.
+  const reason = (d.error || "").split("\n")[0].replace(/^distro [^:]+: /, "");
+  const short = reason.length > 46 ? reason.slice(0, 45) + "…" : reason;
   const state = busy ? "downloading… " + (d.pct == null ? "" : d.pct + "%")
-    : failed ? "download failed · " + (d.error || "checksum mismatch")
+    : failed ? (short ? "download failed · " + short : "download failed")
       : inUse ? "in use"
         : blocked ? "not available on macOS"
           : here ? (mine ? "added by you" : "installed")
@@ -1467,7 +1471,7 @@ function distroRow(b) {
     el("span", { class: "ic" + (blocked ? " off" : ""), title: state }, [icon(glyph, 13)]),
     el("span", { class: "nm", text: b.name, title: b.path || (blocked ? "not available on macOS" : "not downloaded yet") }),
     el("span", { class: "bin-state" }, [
-      el("span", { class: "s" + stateCls, text: state }),
+      el("span", { class: "s" + stateCls, text: state, title: failed ? d.error : null }),
       busy && d.pct != null ? el("span", { class: "pbar" }, [el("i", { attrs: { style: "width:" + d.pct + "%" } })]) : null,
     ]),
     el("span", { class: "bin-actions" }, [
