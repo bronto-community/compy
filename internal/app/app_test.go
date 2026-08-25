@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/bronto-io/compy/internal/cfgstore"
 	"github.com/bronto-io/compy/internal/launchd"
 	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-io/compy/internal/webui"
 )
 
 // setup points COMPY_HOME and HOME at temp dirs (HOME too: launchd.Install
@@ -575,6 +577,181 @@ func TestAddDistroWarning(t *testing.T) {
 	}
 	if w := a.AddDistroWarning("brand-new-name"); w != "" {
 		t.Errorf("AddDistroWarning(brand-new-name) = %q, want empty", w)
+	}
+}
+
+// TestSetDistroPath covers registering a brand-new distro path, updating an
+// existing entry's path in place (no duplicate), the shipped-definition
+// override warning, and the invalid-name/invalid-path error cases.
+func TestSetDistroPath(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin1 := filepath.Join(t.TempDir(), "otelcol1")
+	if err := os.WriteFile(bin1, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin2 := filepath.Join(t.TempDir(), "otelcol2")
+	if err := os.WriteFile(bin2, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// "core" is a shipped distro.Defs() name: overriding it warns.
+	warning, err := a.SetDistroPath("core", bin1)
+	if err != nil {
+		t.Fatalf("SetDistroPath(core, bin1): %v", err)
+	}
+	if warning == "" || !strings.Contains(warning, "core") {
+		t.Fatalf("warning = %q, want an override warning naming core", warning)
+	}
+	distros, err := state.LoadDistros()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(distros) != 1 || distros[0].Name != "core" || distros[0].Path != bin1 {
+		t.Fatalf("distros = %+v, want a single core entry pointing at bin1", distros)
+	}
+
+	// Updating the same name's path replaces it in place, no duplicate.
+	if _, err := a.SetDistroPath("core", bin2); err != nil {
+		t.Fatalf("SetDistroPath(core, bin2): %v", err)
+	}
+	distros, err = state.LoadDistros()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(distros) != 1 || distros[0].Path != bin2 {
+		t.Fatalf("distros = %+v, want the single core entry updated to bin2", distros)
+	}
+
+	// A brand-new name: no warning, becomes the default (none selected yet).
+	warning, err = a.SetDistroPath("brand-new", bin1)
+	if err != nil {
+		t.Fatalf("SetDistroPath(brand-new): %v", err)
+	}
+	if warning != "" {
+		t.Fatalf("warning = %q, want empty for a brand-new name", warning)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Distro != "core" {
+		t.Fatalf("settings.Distro = %q, want core (already selected by the first SetDistroPath)", s.Distro)
+	}
+
+	if _, err := a.SetDistroPath("Bad Name!", bin1); err == nil {
+		t.Fatal("SetDistroPath with an invalid name: want error, got nil")
+	}
+	if _, err := a.SetDistroPath("whatever", filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("SetDistroPath with a nonexistent path: want error, got nil")
+	}
+}
+
+// TestRemoveDistro covers removing a plain user entry (reverted:false),
+// removing a shipped-definition override (reverted:true), and the two
+// webui.BadRequest-marked 400 cases: the selected distro, and a pure
+// definition name with no user entry.
+func TestRemoveDistro(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0") // registers + selects "fake"
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "otelcol")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.AddDistro("extra", bin); err != nil {
+		t.Fatalf("AddDistro(extra): %v", err)
+	}
+	reverted, err := a.RemoveDistro("extra")
+	if err != nil {
+		t.Fatalf("RemoveDistro(extra): %v", err)
+	}
+	if reverted {
+		t.Fatal("RemoveDistro(extra) reverted = true, want false (no shipped definition named extra)")
+	}
+	distros, err := state.LoadDistros()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(distros, func(d state.Distro) bool { return d.Name == "extra" }) {
+		t.Fatalf("distros = %+v, extra should be gone", distros)
+	}
+
+	if err := a.AddDistro("core", bin); err != nil { // "core" is a shipped definition
+		t.Fatalf("AddDistro(core): %v", err)
+	}
+	reverted, err = a.RemoveDistro("core")
+	if err != nil {
+		t.Fatalf("RemoveDistro(core): %v", err)
+	}
+	if !reverted {
+		t.Fatal("RemoveDistro(core) reverted = false, want true (core is a shipped definition)")
+	}
+
+	if _, err := a.RemoveDistro("fake"); err == nil || !webui.IsBadRequest(err) {
+		t.Fatalf("RemoveDistro(fake) [selected]: err=%v, want a webui.BadRequest-marked error", err)
+	}
+	if _, err := a.RemoveDistro("contrib"); err == nil || !webui.IsBadRequest(err) {
+		t.Fatalf("RemoveDistro(contrib) [pure definition, no user entry]: err=%v, want a webui.BadRequest-marked error", err)
+	}
+}
+
+func TestRenameSetApp(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("cfg", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetVar("cfg", "prod", "HOST", "example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.UseSet("cfg", "prod"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.RenameSet("cfg", "prod", "production"); err != nil {
+		t.Fatalf("RenameSet: %v", err)
+	}
+	info, _, err := a.Config("cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Meta.ActiveSet != "production" || info.Meta.VariableSets["production"]["HOST"] != "example.com" {
+		t.Fatalf("info.Meta = %+v, want the active set renamed with its values intact", info.Meta)
+	}
+
+	if err := a.RenameSet("cfg", "no-such-set", "x"); err == nil {
+		t.Fatal("RenameSet from a nonexistent set: want error, got nil")
+	}
+}
+
+func TestLog(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(a.LogPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.LogPath(), []byte("one\ntwo\nthree\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.Log(2)
+	if err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+	if got != "two\nthree\n" {
+		t.Fatalf("Log(2) = %q, want the last two lines", got)
 	}
 }
 

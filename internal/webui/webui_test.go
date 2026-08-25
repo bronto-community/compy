@@ -14,7 +14,7 @@ func fakeAPI() API {
 		Status:   func() (map[string]any, error) { return map[string]any{"running": true}, nil },
 		Configs:  func() (any, error) { return []map[string]any{}, nil },
 		Activate: func(name, set string) error { return nil },
-		Log:      func() (string, error) { return "", nil },
+		Log:      func(lines int) (string, error) { return "", nil },
 
 		Env:      func() (map[string]string, string, error) { return map[string]string{}, "", nil },
 		SetOSEnv: func(on bool) error { return nil },
@@ -41,11 +41,14 @@ func fakeAPI() API {
 		PutSet:    func(name, set string, values map[string]string) error { return nil },
 		DeleteSet: func(name, set string) error { return nil },
 		UseSet:    func(name, set string) error { return nil },
+		RenameSet: func(name, from, to string) error { return nil },
 
-		Distros:     func() (any, error) { return []map[string]any{}, nil },
-		AddDistro:   func(name, path string) (string, error) { return "", nil },
-		UseDistro:   func(name string) error { return nil },
-		FetchDistro: func(name string) error { return nil },
+		Distros:       func() (any, error) { return []map[string]any{}, nil },
+		AddDistro:     func(name, path string) (string, error) { return "", nil },
+		SetDistroPath: func(name, path string) (string, error) { return "", nil },
+		RemoveDistro:  func(name string) (bool, error) { return false, nil },
+		UseDistro:     func(name string) error { return nil },
+		FetchDistro:   func(name string) error { return nil },
 	}
 }
 
@@ -79,7 +82,8 @@ func TestConfigsRoutes(t *testing.T) {
 
 func TestLogRoute(t *testing.T) {
 	api := fakeAPI()
-	api.Log = func() (string, error) { return "boom\n", nil }
+	var gotLines int
+	api.Log = func(lines int) (string, error) { gotLines = lines; return "boom\n", nil }
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
@@ -94,6 +98,49 @@ func TestLogRoute(t *testing.T) {
 	}
 	if body["log"] != "boom\n" {
 		t.Fatalf("body = %v, want the log tail", body)
+	}
+	// no-param behavior must stay 50 (the stopgap page relies on it).
+	if gotLines != 50 {
+		t.Fatalf("Log got lines=%d, want the default 50", gotLines)
+	}
+}
+
+// TestLogRouteLines covers the ?lines=N query param: a valid value passes
+// through, an over-cap value clamps to 2000, and junk is a 400.
+func TestLogRouteLines(t *testing.T) {
+	api := fakeAPI()
+	var gotLines int
+	api.Log = func(lines int) (string, error) { gotLines = lines; return "", nil }
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/log?lines=10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || gotLines != 10 {
+		t.Fatalf("lines=10: status=%d gotLines=%d, want 200/10", resp.StatusCode, gotLines)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/log?lines=999999")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || gotLines != 2000 {
+		t.Fatalf("lines=999999: status=%d gotLines=%d, want 200/2000 (clamped)", resp.StatusCode, gotLines)
+	}
+
+	for _, junk := range []string{"abc", "-5", "0"} {
+		resp, err = http.Get(srv.URL + "/api/log?lines=" + junk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("lines=%q: status=%d, want 400", junk, resp.StatusCode)
+		}
 	}
 }
 
@@ -536,6 +583,114 @@ func TestAddDistroRoute(t *testing.T) {
 	}
 	if w, ok := body["warning"]; !ok || w != "" {
 		t.Fatalf("body = %v, want warning=\"\"", body)
+	}
+}
+
+func TestRenameSetRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotName, gotFrom, gotTo string
+	api.RenameSet = func(name, from, to string) error {
+		gotName, gotFrom, gotTo = name, from, to
+		return nil
+	}
+	pv := map[string]string{"name": "debug", "set": "prod"}
+
+	rec := call(handleRenameSet(api), http.MethodPost, `{"to":"production"}`, pv)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotName != "debug" || gotFrom != "prod" || gotTo != "production" {
+		t.Fatalf("RenameSet got name=%q from=%q to=%q", gotName, gotFrom, gotTo)
+	}
+
+	rec = call(handleRenameSet(api), http.MethodPost, `not json`, pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed body status = %d, want 400", rec.Code)
+	}
+
+	rec = call(handleRenameSet(api), http.MethodPost, `{"to":"x"}`, map[string]string{"name": "debug", "set": ""})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty set name status = %d, want 400", rec.Code)
+	}
+
+	api.RenameSet = func(name, from, to string) error { return errWithMessage("already exists") }
+	rec = call(handleRenameSet(api), http.MethodPost, `{"to":"production"}`, pv)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("closure error status = %d, want 500", rec.Code)
+	}
+}
+
+func TestSetDistroPathRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotName, gotPath string
+	api.SetDistroPath = func(name, path string) (string, error) {
+		gotName, gotPath = name, path
+		return `"core" is a shipped distro definition; this path overrides it`, nil
+	}
+	pv := map[string]string{"name": "core"}
+
+	rec := call(handleSetDistroPath(api), http.MethodPut, `{"path":"/usr/bin/otelcol"}`, pv)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotName != "core" || gotPath != "/usr/bin/otelcol" {
+		t.Fatalf("SetDistroPath got name=%q path=%q", gotName, gotPath)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["warning"] == "" {
+		t.Fatalf("body = %v, want a non-empty warning field", body)
+	}
+
+	rec = call(handleSetDistroPath(api), http.MethodPut, `not json`, pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed body status = %d, want 400", rec.Code)
+	}
+
+	api.SetDistroPath = func(name, path string) (string, error) { return "", errWithMessage("not executable") }
+	rec = call(handleSetDistroPath(api), http.MethodPut, `{"path":"/nope"}`, pv)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("closure error status = %d, want 500", rec.Code)
+	}
+}
+
+// TestRemoveDistroRoute covers 200 {"reverted":...} on success and the
+// webui.BadRequest-marked 400 vs the default 500 status split.
+func TestRemoveDistroRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotName string
+	api.RemoveDistro = func(name string) (bool, error) {
+		gotName = name
+		return true, nil
+	}
+	pv := map[string]string{"name": "core"}
+
+	rec := call(handleRemoveDistro(api), http.MethodDelete, "", pv)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotName != "core" {
+		t.Fatalf("RemoveDistro got name=%q, want core", gotName)
+	}
+	var body map[string]bool
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil || !body["reverted"] {
+		t.Fatalf("body = %v, %v, want reverted:true", body, err)
+	}
+
+	api.RemoveDistro = func(name string) (bool, error) {
+		return false, BadRequest(errWithMessage("no user distro entry named \"x\""))
+	}
+	rec = call(handleRemoveDistro(api), http.MethodDelete, "", pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("BadRequest-marked closure error status = %d, want 400", rec.Code)
+	}
+
+	api.RemoveDistro = func(name string) (bool, error) { return false, errWithMessage("disk error") }
+	rec = call(handleRemoveDistro(api), http.MethodDelete, "", pv)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("plain closure error status = %d, want 500", rec.Code)
 	}
 }
 

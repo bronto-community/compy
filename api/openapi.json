@@ -101,6 +101,10 @@
           "available": { "type": "boolean" },
           "downloaded": { "type": "boolean" }
         }
+      },
+      "Ok": {
+        "type": "object",
+        "properties": { "ok": { "type": "boolean" } }
       }
     }
   },
@@ -119,6 +123,15 @@
     "/api/log": {
       "get": {
         "summary": "Tail of the collector log",
+        "parameters": [
+          {
+            "name": "lines",
+            "in": "query",
+            "required": false,
+            "description": "Number of lines (default 50, clamped to 2000)",
+            "schema": { "type": "integer" }
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK",
@@ -130,6 +143,10 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid lines value",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           }
         }
       }
@@ -170,7 +187,10 @@
           }
         },
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -219,7 +239,10 @@
       "post": {
         "summary": "Re-activate the current configuration and set",
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -231,7 +254,10 @@
       "post": {
         "summary": "Restore and re-activate the last known-good configuration + settings",
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -292,7 +318,10 @@
           }
         },
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "400": {
             "description": "Malformed body",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -326,7 +355,10 @@
           }
         },
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "400": {
             "description": "Malformed body",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -365,7 +397,10 @@
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -383,7 +418,10 @@
           "content": { "text/plain": { "schema": { "type": "string" } } }
         },
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "413": {
             "description": "Body too large",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -415,7 +453,10 @@
           }
         },
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "400": {
             "description": "Malformed body",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -449,7 +490,10 @@
           }
         },
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "400": {
             "description": "Malformed body",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -482,7 +526,10 @@
           }
         },
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -522,7 +569,10 @@
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -537,7 +587,10 @@
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -590,7 +643,10 @@
           }
         },
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "400": {
             "description": "Malformed body",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -612,7 +668,10 @@
           { "name": "set", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -628,9 +687,50 @@
           { "name": "set", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/sets/{set}/rename": {
+      "post": {
+        "summary": "Rename this variable set (the active set follows the rename)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "set", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "to": { "type": "string" } },
+                "required": ["to"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error (set missing, or the new name already exists)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           }
         }
@@ -693,6 +793,77 @@
         }
       }
     },
+    "/api/distros/{name}": {
+      "put": {
+        "summary": "Register or update a user distro's binary path (path must exist and be executable)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK (warning set when this overrides a shipped definition)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "warning": { "type": "string" } }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove a user distro entry (an override of a shipped definition reverts to it instead of disappearing; see \"reverted\")",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "reverted": { "type": "boolean" } }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The selected distro, or a pure definition name with no user entry",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
     "/api/distros/{name}/use": {
       "post": {
         "summary": "Select the global default distro",
@@ -700,7 +871,10 @@
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -715,7 +889,10 @@
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "OK" },
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }

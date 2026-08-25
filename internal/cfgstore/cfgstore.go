@@ -471,6 +471,37 @@ func UseSet(root, name, set string) error {
 	return writeMeta(root, name, m)
 }
 
+// RenameSet renames a variable set from -> to. It errors if to is empty,
+// from does not exist, or to already exists. Renaming the active set
+// updates active_set to follow it.
+func RenameSet(root, name, from, to string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	if to == "" {
+		return errors.New("new set name required")
+	}
+	m, err := readMeta(root, name)
+	if err != nil {
+		return err
+	}
+	if !exists(root, name) {
+		return fmt.Errorf("config %q not found", name)
+	}
+	if _, ok := m.VariableSets[from]; !ok {
+		return fmt.Errorf("config %q has no variable set %q", name, from)
+	}
+	if _, ok := m.VariableSets[to]; ok {
+		return fmt.Errorf("config %q already has a variable set %q", name, to)
+	}
+	m.VariableSets[to] = m.VariableSets[from]
+	delete(m.VariableSets, from)
+	if m.ActiveSet == from {
+		m.ActiveSet = to
+	}
+	return writeMeta(root, name, m)
+}
+
 // SnapshotActive copies configs/<name>/ and settings.json into last-good/,
 // replacing any prior snapshot. Callers take it only once a configuration is
 // proven to start, so it is the rollback target.
