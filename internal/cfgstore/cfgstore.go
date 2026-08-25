@@ -21,6 +21,7 @@ import (
 
 	"github.com/bronto-io/compy/internal/state"
 	"github.com/bronto-io/compy/internal/vars"
+	"github.com/bronto-io/compy/internal/webui"
 )
 
 // Meta is the persisted metadata for a configuration (meta.json).
@@ -116,7 +117,7 @@ func readYAML(root, name string) (string, error) {
 	data, err := os.ReadFile(yamlPath(root, name))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("config %q not found", name)
+			return "", userErrf("config %q not found", name)
 		}
 		return "", err
 	}
@@ -153,9 +154,28 @@ func writeYAMLFile(root, name, yaml string) error {
 	return state.WriteFileAtomic(yamlPath(root, name), []byte(yaml), 0o600)
 }
 
+// userErrf builds a webui.BadRequest-marked error: a caller mistake (a bad
+// name, a missing or duplicate configuration, a set that isn't there) the
+// REST layer answers 400 for, rather than a failure of the store itself
+// (500). The web UI dumps a collector log tail onto a 5xx and nothing else,
+// so mis-classifying a user mistake buries its own message.
+func userErrf(format string, a ...any) error {
+	return webui.BadRequest(fmt.Errorf(format, a...))
+}
+
 func validateName(name string) error {
 	if !state.ValidBackendName(name) {
-		return fmt.Errorf("invalid config name %q: use lowercase letters, digits, dashes", name)
+		return userErrf("invalid config name %q: use lowercase letters, digits, dashes", name)
+	}
+	return nil
+}
+
+// validateSetName applies the configuration-name rule to variable set names
+// too: they show up in URLs and in the menu bar exactly like config names,
+// and the same rule deserves the same wording wherever it can surface.
+func validateSetName(set string) error {
+	if !state.ValidBackendName(set) {
+		return userErrf("invalid variable set name %q: use lowercase letters, digits, dashes", set)
 	}
 	return nil
 }
@@ -227,7 +247,7 @@ func createDir(root, name string) error {
 		return err
 	}
 	if exists(root, name) {
-		return fmt.Errorf("config %q already exists", name)
+		return userErrf("config %q already exists", name)
 	}
 	return os.MkdirAll(configDir(root, name), 0o755)
 }
@@ -252,11 +272,11 @@ func CreateFromURL(root, name, url string, fetch Fetch) error {
 		return err
 	}
 	if exists(root, name) {
-		return fmt.Errorf("config %q already exists", name)
+		return userErrf("config %q already exists", name)
 	}
 	content, err := fetch(url)
 	if err != nil {
-		return err
+		return webui.BadRequest(err) // the URL is the user's; a log tail says nothing about it
 	}
 	yaml := string(content)
 	if err := createDir(root, name); err != nil {
@@ -312,7 +332,7 @@ func Delete(root, name string) error {
 		return err
 	}
 	if !exists(root, name) {
-		return fmt.Errorf("config %q not found", name)
+		return userErrf("config %q not found", name)
 	}
 	return os.RemoveAll(configDir(root, name))
 }
@@ -324,7 +344,7 @@ func WriteYAML(root, name, yaml string) error {
 		return err
 	}
 	if !exists(root, name) {
-		return fmt.Errorf("config %q not found", name)
+		return userErrf("config %q not found", name)
 	}
 	return writeYAMLFile(root, name, yaml)
 }
@@ -335,7 +355,7 @@ func WriteMeta(root, name string, m Meta) error {
 		return err
 	}
 	if !exists(root, name) {
-		return fmt.Errorf("config %q not found", name)
+		return userErrf("config %q not found", name)
 	}
 	return writeMeta(root, name, m)
 }
@@ -346,11 +366,11 @@ func refetch(root, name string, fetch Fetch) error {
 		return err
 	}
 	if m.RemoteURL == "" {
-		return fmt.Errorf("config %q has no remote URL configured", name)
+		return userErrf("config %q has no remote URL configured", name)
 	}
 	content, err := fetch(m.RemoteURL)
 	if err != nil {
-		return err
+		return webui.BadRequest(err) // the URL is the user's; a log tail says nothing about it
 	}
 	yaml := string(content)
 	if err := writeYAMLFile(root, name, yaml); err != nil {
@@ -371,7 +391,7 @@ func Sync(root, name string, fetch Fetch) error {
 		return err
 	}
 	if info.Modified {
-		return fmt.Errorf("config %q is locally modified; use Resync to discard local edits", name)
+		return userErrf("config %q is locally modified; use Resync to discard local edits", name)
 	}
 	return refetch(root, name, fetch)
 }
@@ -391,12 +411,15 @@ func SetVar(root, name, set, key, value string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
+	if err := validateSetName(set); err != nil {
+		return err
+	}
 	m, err := readMeta(root, name)
 	if err != nil {
 		return err
 	}
 	if !exists(root, name) {
-		return fmt.Errorf("config %q not found", name)
+		return userErrf("config %q not found", name)
 	}
 	if m.VariableSets == nil {
 		m.VariableSets = map[string]map[string]string{}
@@ -414,12 +437,15 @@ func WriteSet(root, name, set string, values map[string]string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
+	if err := validateSetName(set); err != nil {
+		return err
+	}
 	m, err := readMeta(root, name)
 	if err != nil {
 		return err
 	}
 	if !exists(root, name) {
-		return fmt.Errorf("config %q not found", name)
+		return userErrf("config %q not found", name)
 	}
 	if m.VariableSets == nil {
 		m.VariableSets = map[string]map[string]string{}
@@ -439,13 +465,13 @@ func DeleteSet(root, name, set string) error {
 		return err
 	}
 	if !exists(root, name) {
-		return fmt.Errorf("config %q not found", name)
+		return userErrf("config %q not found", name)
 	}
 	if _, ok := m.VariableSets[set]; !ok {
-		return fmt.Errorf("config %q has no variable set %q", name, set)
+		return userErrf("config %q has no variable set %q", name, set)
 	}
 	if set == m.ActiveSet {
-		return fmt.Errorf("cannot delete active variable set %q", set)
+		return userErrf("cannot delete active variable set %q", set)
 	}
 	delete(m.VariableSets, set)
 	return writeMeta(root, name, m)
@@ -462,10 +488,10 @@ func UseSet(root, name, set string) error {
 		return err
 	}
 	if !exists(root, name) {
-		return fmt.Errorf("config %q not found", name)
+		return userErrf("config %q not found", name)
 	}
 	if _, ok := m.VariableSets[set]; !ok {
-		return fmt.Errorf("config %q has no variable set %q", name, set)
+		return userErrf("config %q has no variable set %q", name, set)
 	}
 	m.ActiveSet = set
 	return writeMeta(root, name, m)
@@ -478,21 +504,21 @@ func RenameSet(root, name, from, to string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
-	if to == "" {
-		return errors.New("new set name required")
+	if err := validateSetName(to); err != nil {
+		return err
 	}
 	m, err := readMeta(root, name)
 	if err != nil {
 		return err
 	}
 	if !exists(root, name) {
-		return fmt.Errorf("config %q not found", name)
+		return userErrf("config %q not found", name)
 	}
 	if _, ok := m.VariableSets[from]; !ok {
-		return fmt.Errorf("config %q has no variable set %q", name, from)
+		return userErrf("config %q has no variable set %q", name, from)
 	}
 	if _, ok := m.VariableSets[to]; ok {
-		return fmt.Errorf("config %q already has a variable set %q", name, to)
+		return userErrf("config %q already has a variable set %q", name, to)
 	}
 	m.VariableSets[to] = m.VariableSets[from]
 	delete(m.VariableSets, from)

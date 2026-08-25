@@ -195,6 +195,10 @@
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -247,6 +251,10 @@
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -261,6 +269,10 @@
           "200": {
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
             "description": "Error",
@@ -389,6 +401,10 @@
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfigDetail" } } }
           },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -404,6 +420,10 @@
           "200": {
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
             "description": "Error",
@@ -428,6 +448,10 @@
           },
           "413": {
             "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -534,6 +558,10 @@
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -577,6 +605,10 @@
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -594,6 +626,10 @@
           "200": {
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
             "description": "Error",
@@ -618,6 +654,10 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
             "description": "Error",
@@ -676,6 +716,10 @@
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -694,6 +738,10 @@
           "200": {
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
             "description": "Error",
@@ -879,6 +927,10 @@
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -896,6 +948,10 @@
           "200": {
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
             "description": "Error",
