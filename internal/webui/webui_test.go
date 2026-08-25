@@ -23,6 +23,8 @@ func fakeAPI() API {
 		PutSettings: func(grpcPort, httpPort *int) error { return nil },
 
 		Apply:    func() error { return nil },
+		Stop:     func() error { return nil },
+		Start:    func() error { return nil },
 		Validate: func() error { return nil },
 
 		CreateConfig:   func(name, yaml string) error { return nil },
@@ -880,3 +882,89 @@ type badRequestFake struct{ error }
 func (badRequestFake) BadRequest() bool { return true }
 
 func markBadRequest(err error) error { return badRequestFake{err} }
+
+// stillRunningFake stands in for internal/state.StillRunning, matched
+// structurally the same way badRequestFake is.
+type stillRunningFake struct {
+	error
+	desc string
+}
+
+func (e stillRunningFake) StillRunning() string { return e.desc }
+
+// TestActivationFailureCarriesStillRunning: the failure panel names what
+// survived the failed activation, and reads it from a field rather than
+// parsing the diagnostic.
+func TestActivationFailureCarriesStillRunning(t *testing.T) {
+	api := fakeAPI()
+	api.Activate = func(name, preset string) error {
+		return stillRunningFake{
+			error: errWithMessage("collector did not come up: probe failed\npanic: bad exporter"),
+			desc:  "otlp-to-bronto · staging",
+		}
+	}
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/api/configs/ebpf-profiles/activate", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (a collector that won't start is not a caller mistake)", resp.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["still_running"] != "otlp-to-bronto · staging" {
+		t.Errorf("still_running = %q, want %q", body["still_running"], "otlp-to-bronto · staging")
+	}
+	if !strings.Contains(body["error"], "panic: bad exporter") {
+		t.Errorf("error = %q, want the collector's diagnostic", body["error"])
+	}
+
+	// An ordinary error carries no such field.
+	api.Activate = func(name, preset string) error { return errWithMessage("boom") }
+	srv2 := httptest.NewServer(Handler(api))
+	defer srv2.Close()
+	resp2, err := http.Post(srv2.URL+"/api/configs/x/activate", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	body = nil
+	if err := json.NewDecoder(resp2.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := body["still_running"]; ok {
+		t.Errorf("plain error body = %v, want no still_running", body)
+	}
+}
+
+func TestStopAndStartRoutes(t *testing.T) {
+	api := fakeAPI()
+	stopped, started := false, false
+	api.Stop = func() error { stopped = true; return nil }
+	api.Start = func() error { started = true; return nil }
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		path string
+		done *bool
+	}{{"/api/service/stop", &stopped}, {"/api/service/start", &started}} {
+		resp, err := http.Post(srv.URL+tc.path, "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("POST %s = %d, want 200", tc.path, resp.StatusCode)
+		}
+		if !*tc.done {
+			t.Errorf("POST %s did not reach its closure", tc.path)
+		}
+	}
+}

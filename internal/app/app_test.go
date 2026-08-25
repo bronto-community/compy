@@ -64,7 +64,8 @@ func fakeDistro(t *testing.T, script string) {
 
 // listenPort stands a listener up on a free port so Activate's probe
 // succeeds (the collector itself never runs — launchd is stubbed) and
-// records it as compy's gRPC port.
+// records it as compy's gRPC port. closeListener stops it again, which is
+// how a test makes the next activation fail its probe.
 func listenPort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -73,6 +74,7 @@ func listenPort(t *testing.T) int {
 	}
 	t.Cleanup(func() { ln.Close() })
 	port := ln.Addr().(*net.TCPAddr).Port
+	listeners[port] = ln
 
 	s, err := state.LoadSettings()
 	if err != nil {
@@ -83,6 +85,20 @@ func listenPort(t *testing.T) int {
 		t.Fatal(err)
 	}
 	return port
+}
+
+// listeners maps a port handed out by listenPort to its listener, so
+// closeListener can stop it. Tests run in one process and never share a
+// port, so a plain map is enough.
+var listeners = map[int]net.Listener{}
+
+func closeListener(t *testing.T, port int) {
+	t.Helper()
+	ln, ok := listeners[port]
+	if !ok {
+		t.Fatalf("no listener recorded for port %d", port)
+	}
+	ln.Close()
 }
 
 func called(calls [][]string, sub string) bool {
@@ -156,8 +172,10 @@ func TestActivateHappyPath(t *testing.T) {
 		t.Errorf("plist carries a feature gate; v2 uses none:\n%s", plist)
 	}
 
-	if _, err := os.Stat(filepath.Join(a.Dir, "last-good", "settings.json")); err != nil {
-		t.Errorf("no last-good snapshot: %v", err)
+	// The snapshot is of the setup that was running BEFORE this activation,
+	// so a first activation takes none — there is nothing to come back to.
+	if _, err := os.Stat(filepath.Join(a.Dir, "last-good", "settings.json")); err == nil {
+		t.Error("a first activation took a snapshot; there was no previous setup")
 	}
 
 	name, set, err := a.ActiveConfig()
@@ -1110,9 +1128,6 @@ func TestActivateProbeFallsBackToLaunchdRunning(t *testing.T) {
 	if err := a.Activate("debug", ""); err != nil {
 		t.Fatalf("Activate() = %v, want nil (launchd reports the job running)", err)
 	}
-	if _, err := os.Stat(filepath.Join(a.Dir, "last-good", "settings.json")); err != nil {
-		t.Errorf("no last-good snapshot after a launchd-confirmed start: %v", err)
-	}
 }
 
 // A stale v1 process (the old tray) can recreate config/ AFTER a completed
@@ -1434,4 +1449,151 @@ func TestGenuineFaultsStay500(t *testing.T) {
 			t.Errorf("UseDistro err = %q: that sentence claims the config is incompatible, which is not what happened", err)
 		}
 	})
+}
+
+// TestActivateStartupFailureRestoresPrevious is the design's failure
+// guarantee (docs/design/handoff/README.md, "On failure"): a configuration
+// the collector accepts but cannot start puts the previous configuration —
+// and its preset — back, and the error names what is still running so the UI
+// can say so.
+func TestActivateStartupFailureRestoresPrevious(t *testing.T) {
+	calls := setup(t, "")
+	fakeDistro(t, "exit 0")
+	port := listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetVar("debug", "prod", "K", "v"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", "prod"); err != nil {
+		t.Fatalf("Activate(debug, prod): %v", err)
+	}
+	if err := a.CreateConfig("other", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.LogPath(), []byte("boom: cannot start\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing listens on the probe port from here on, so "other" validates
+	// but never comes up.
+	closeListener(t, port)
+	*calls = nil
+
+	err = a.Activate("other", "")
+	if err == nil {
+		t.Fatal("Activate(other) = nil, want a startup failure")
+	}
+	if state.IsBadRequest(err) {
+		t.Errorf("startup failure marked BadRequest (400); a collector that won't start is a 500: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cannot start") {
+		t.Errorf("error = %q, want the collector's own log tail", err)
+	}
+	var sr interface{ StillRunning() string }
+	if !errors.As(err, &sr) || sr.StillRunning() != "debug · prod" {
+		t.Errorf("error carries still_running = %v, want %q", err, "debug · prod")
+	}
+
+	// The previous configuration and preset are the active ones again...
+	name, preset, err := a.ActiveConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "debug" || preset != "prod" {
+		t.Errorf("active = %q/%q after the failure, want debug/prod", name, preset)
+	}
+	// ...and it is what the LaunchAgent was left pointing at.
+	if plist := readPlist(t); !strings.Contains(plist, filepath.Join("configs", "debug", "config.yaml")) {
+		t.Errorf("plist still points at the failed config:\n%s", plist)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("the previous configuration was not put back: %v", *calls)
+	}
+}
+
+// TestActivateValidateFailureChangesNothing: a config the collector rejects
+// never reaches launchd, so there is nothing to restore.
+func TestActivateValidateFailureChangesNothing(t *testing.T) {
+	calls := setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("other", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point the one collector at a binary that rejects everything.
+	rejecting := filepath.Join(t.TempDir(), "otelcol")
+	if err := os.WriteFile(rejecting, []byte("#!/bin/sh\necho 'unknown type' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SetDistroPath("fake", rejecting); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	err = a.Activate("other", "")
+	if err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("Activate with a rejected config: err = %v, want a BadRequest-marked error", err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("a rejected config touched launchd: %v", *calls)
+	}
+	if name, _, _ := a.ActiveConfig(); name != "debug" {
+		t.Errorf("active config = %q after a rejected activation, want unchanged debug", name)
+	}
+}
+
+func TestStopAndStart(t *testing.T) {
+	calls := setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	if err := a.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if !called(*calls, "bootout") {
+		t.Errorf("Stop did not boot the job out: %v", *calls)
+	}
+	// Stopping records nothing: the active configuration is still named, so
+	// the UI can dim it rather than forget it.
+	st, err := a.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Config != "debug" {
+		t.Errorf("Status().Config = %q after Stop, want debug", st.Config)
+	}
+	// Stopping an already-stopped collector is not an error.
+	if err := a.Stop(); err != nil {
+		t.Fatalf("Stop (already stopped): %v", err)
+	}
+
+	*calls = nil
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("Start did not bring the job back: %v", *calls)
+	}
 }

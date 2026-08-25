@@ -83,6 +83,10 @@ func run(args []string) error {
 		return cmdStatus(rest)
 	case "apply":
 		return withApp(func(a *app.App) error { return a.Apply() })
+	case "stop":
+		return withApp(func(a *app.App) error { return a.Stop() })
+	case "start":
+		return withApp(func(a *app.App) error { return a.Start() })
 	case "validate":
 		return withApp(func(a *app.App) error {
 			if err := a.Validate(); err != nil {

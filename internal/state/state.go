@@ -66,6 +66,28 @@ func IsBadRequest(err error) bool {
 	return errors.As(err, &b)
 }
 
+// stillRunningErr carries what is running instead, when an activation fails
+// and the previous configuration is put back. The REST layer copies it into
+// the error body as "still_running" so the failure panel can reassure with
+// the same words the design asks for ("otlp-to-bronto still running").
+//
+// Like BadRequest it lives here, in the leaf package, and internal/webui
+// matches it structurally (a StillRunning() string method).
+type stillRunningErr struct {
+	error
+	desc string
+}
+
+// StillRunning reports what kept running, e.g. "otlp-to-bronto · staging".
+func (e stillRunningErr) StillRunning() string { return e.desc }
+
+// Unwrap keeps the marked error reachable through errors.Is/As.
+func (e stillRunningErr) Unwrap() error { return e.error }
+
+// StillRunning marks err with the configuration (and preset) that is running
+// instead, keeping err's message untouched.
+func StillRunning(err error, desc string) error { return stillRunningErr{err, desc} }
+
 var backendNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // ValidBackendName reports whether name is a valid backend name:
