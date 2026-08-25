@@ -3,6 +3,7 @@
 package tray
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -120,3 +121,66 @@ func TestActiveVariableSets(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenWindowReusesTheLiveOne covers the 2026-08-25 report that menu-bar
+// "Open compy" stacks up another window every time: with a window already
+// open the click must raise it, and only spawn when there is none (first
+// click, or the previous one was closed).
+func TestOpenWindowReusesTheLiveOne(t *testing.T) {
+	spawns, raises := 0, 0
+	live := &windowProc{pid: 4242, done: make(chan struct{})}
+	spawn := func() (*windowProc, error) { spawns++; return live, nil }
+	raise := func(pid int) error {
+		if pid != live.pid {
+			t.Errorf("raise(%d), want %d", pid, live.pid)
+		}
+		raises++
+		return nil
+	}
+
+	cur, err := openWindow(nil, spawn, raise) // first click: nothing open yet
+	if err != nil || cur != live {
+		t.Fatalf("openWindow(nil) = %v, %v", cur, err)
+	}
+	if spawns != 1 || raises != 0 {
+		t.Fatalf("first click: spawns=%d raises=%d, want 1/0", spawns, raises)
+	}
+
+	for i := 0; i < 3; i++ { // window still open: raise it, never spawn
+		cur, err = openWindow(cur, spawn, raise)
+		if err != nil || cur != live {
+			t.Fatalf("openWindow(live) = %v, %v", cur, err)
+		}
+	}
+	if spawns != 1 || raises != 3 {
+		t.Fatalf("with a live window: spawns=%d raises=%d, want 1/3", spawns, raises)
+	}
+
+	close(live.done) // the user closed the window
+	fresh := &windowProc{pid: 7, done: make(chan struct{})}
+	spawn = func() (*windowProc, error) { spawns++; return fresh, nil }
+	cur, err = openWindow(cur, spawn, raise)
+	if err != nil || cur != fresh {
+		t.Fatalf("openWindow after close = %v, %v", cur, err)
+	}
+	if spawns != 2 || raises != 3 {
+		t.Fatalf("after close: spawns=%d raises=%d, want 2/3", spawns, raises)
+	}
+}
+
+// TestOpenWindowKeepsTheProcessWhenRaisingFails: a failed raise (no
+// Accessibility permission, say) must be reported, not papered over by
+// spawning a second window -- that is the bug we are fixing.
+func TestOpenWindowKeepsTheProcessWhenRaisingFails(t *testing.T) {
+	live := &windowProc{pid: 1, done: make(chan struct{})}
+	spawn := func() (*windowProc, error) { t.Error("must not spawn while a window is open"); return nil, nil }
+	cur, err := openWindow(live, spawn, func(int) error { return errRaise })
+	if err == nil {
+		t.Error("openWindow err = nil, want the raise failure reported")
+	}
+	if cur != live {
+		t.Errorf("openWindow returned %v, want the live process kept", cur)
+	}
+}
+
+var errRaise = fmt.Errorf("no accessibility permission")

@@ -80,3 +80,36 @@ func assignSlots(configs []string, active string, slots int) (inline, overflow [
 	}
 	return inline, overflow
 }
+
+// windowProc is the standalone window process the tray spawned. alive() is
+// answered from done rather than by signalling the pid: the tray never
+// Waits on the child in the foreground, so a signal-0 probe would keep
+// answering "alive" for a zombie.
+type windowProc struct {
+	pid  int
+	done chan struct{} // closed once the process has exited and been reaped
+}
+
+func (w *windowProc) alive() bool {
+	if w == nil {
+		return false
+	}
+	select {
+	case <-w.done:
+		return false
+	default:
+		return true
+	}
+}
+
+// openWindow raises the window from a previous click if it is still open,
+// and otherwise spawns one. "Open compy" used to spawn unconditionally, so
+// every click stacked another window on the screen. A raise that fails is
+// reported and the process kept: spawning a second window instead would be
+// the very bug this replaces.
+func openWindow(cur *windowProc, spawn func() (*windowProc, error), raise func(pid int) error) (*windowProc, error) {
+	if cur.alive() {
+		return cur, raise(cur.pid)
+	}
+	return spawn()
+}
