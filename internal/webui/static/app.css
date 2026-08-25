@@ -286,8 +286,22 @@ span.act, .act[disabled] { color: var(--muted); }
 .dtable .col-name { font-weight: 500; overflow-wrap: anywhere; }
 
 .configs-table .dtable-head, .configs-table .dtable-row {
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr);
+  grid-template-columns: 20px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr);
 }
+.activate-dot {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: default;
+}
+button.activate-dot { cursor: pointer; }
+button.activate-dot:hover { color: var(--ink); }
+.activate-dot.on { color: var(--accent); }
 .distros-table .dtable-head, .distros-table .dtable-row {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 0.9fr) minmax(0, 1.6fr);
 }
@@ -316,7 +330,6 @@ span.act, .act[disabled] { color: var(--muted); }
 .form-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
 .form-actions { grid-column: 1 / -1; display: flex; gap: 16px; align-items: center; }
 .hidden { display: none !important; }
-.port-input { width: 90px; }
 
 /* code / log panels */
 .code-panel {
@@ -349,6 +362,15 @@ span.act, .act[disabled] { color: var(--muted); }
 /* ── configuration editor ───────────────────────────────── */
 .back-link { color: var(--muted); font-family: var(--mono); font-size: 12px; text-decoration: none; }
 .back-link:hover { text-decoration: underline; }
+
+.props-bar { gap: 14px; flex-wrap: nowrap; }
+.props-bar .props-source { flex: none; font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+.props-bar .path-input { flex: 1; }
+.props-bar select { flex: none; width: 200px; }
+.props-bar .actions { flex: none; }
+@media (max-width: 640px) {
+  .props-bar { flex-wrap: wrap; }
+}
 
 .vars-scroll { overflow-x: auto; }
 .vars-table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12.5px; }
@@ -445,7 +467,10 @@ span.act, .act[disabled] { color: var(--muted); }
   .wordmark, .nav-status { padding-bottom: 0; }
   .form-grid { grid-template-columns: 1fr; }
   .dtable-scroll { overflow-x: auto; }
-  .configs-table .dtable-head, .configs-table .dtable-row,
+  .configs-table .dtable-head, .configs-table .dtable-row {
+    grid-template-columns: 20px minmax(140px, 1.4fr) minmax(100px, 1fr) minmax(80px, 1fr) minmax(140px, 1.6fr);
+    min-width: 580px;
+  }
   .distros-table .dtable-head, .distros-table .dtable-row {
     grid-template-columns: minmax(140px, 1.4fr) minmax(100px, 1fr) minmax(80px, 1fr) minmax(140px, 1.6fr);
     min-width: 560px;

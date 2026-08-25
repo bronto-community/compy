@@ -155,7 +155,7 @@ func writeYAMLFile(root, name, yaml string) error {
 
 func validateName(name string) error {
 	if !state.ValidBackendName(name) {
-		return fmt.Errorf("invalid config name %q", name)
+		return fmt.Errorf("invalid config name %q: use lowercase letters, digits, dashes", name)
 	}
 	return nil
 }

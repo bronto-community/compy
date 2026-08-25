@@ -28,7 +28,11 @@ async function api(path, opts) {
   const r = await fetch(path, opts);
   const ct = r.headers.get("content-type") || "";
   const body = ct.includes("json") ? await r.json() : await r.text();
-  if (!r.ok) throw new Error((body && body.error) || r.statusText);
+  if (!r.ok) {
+    const err = new Error((body && body.error) || r.statusText);
+    err.status = r.status;
+    throw err;
+  }
   return body;
 }
 function apiJSON(path, method, obj) {
@@ -47,18 +51,19 @@ document.getElementById("error-dismiss").addEventListener("click", () => {
   errorStrip.classList.add("hidden");
 });
 
-// showMessage displays msg in the console strip, verbatim. severity
-// "error" (default) colors the strip's border red and appends a short log
-// tail for context; "info" (a surfaced API warning, a distro-remove
-// "reverted" notice — nothing actually went wrong) colors it amber and
-// skips the log tail.
-async function showMessage(msg, severity) {
+// showMessage displays msg in the console strip, verbatim. severity "error"
+// (default) colors the strip's border red; "info" (a surfaced API warning, a
+// distro-remove "reverted" notice — nothing actually went wrong) colors it
+// amber. A log tail is appended only for a server-fault status (>= 500) — a
+// 4xx is the client's own mistake (bad input, a validation failure) and
+// renders with the message alone.
+async function showMessage(msg, severity, status) {
   const isError = severity !== "info";
   errorMessage.textContent = msg;
   errorLog.textContent = "";
   errorStrip.classList.remove("hidden");
   errorStrip.classList.toggle("info", !isError);
-  if (isError) {
+  if (isError && typeof status === "number" && status >= 500) {
     try {
       const j = await api("/api/log?lines=20");
       if (j.log) errorLog.textContent = "recent log:\n" + j.log;
@@ -68,7 +73,7 @@ async function showMessage(msg, severity) {
   }
 }
 function showError(err) {
-  showMessage(err && err.message ? err.message : String(err));
+  showMessage(err && err.message ? err.message : String(err), "error", err && err.status);
 }
 
 /* ── shared state ─────────────────────────────────────────────────── */
@@ -208,7 +213,7 @@ async function renderConfigsView() {
 
   const table = el("div", { class: "dtable configs-table" });
   table.appendChild(el("div", { class: "dtable-head" }, [
-    el("div", { text: "Name" }), el("div", { text: "Source" }), el("div", { text: "State" }),
+    el("div", {}), el("div", { text: "Name" }), el("div", { text: "Source" }), el("div", { text: "State" }),
     el("div", { class: "col-actions", text: "Actions" }),
   ]));
   if (!configs.length) {
@@ -226,6 +231,36 @@ async function renderConfigsView() {
     class: "footer-line",
     text: configs.length + (configs.length === 1 ? " configuration" : " configurations") + " · " + activeCount + " active",
   }));
+}
+
+// activateConfig posts to the same endpoint the old "use" action called.
+async function activateConfig(name) {
+  try {
+    await api("/api/configs/" + encodeURIComponent(name) + "/activate", { method: "POST" });
+  } catch (err) {
+    showError(err);
+  }
+  await renderConfigsView();
+  await refreshNavStatus();
+}
+
+function buildActivationCell(c, isActive) {
+  if (isActive) {
+    return el("span", {
+      class: "activate-dot on", text: "●",
+      attrs: { "aria-label": c.name + " is active", title: "active" },
+    });
+  }
+  return el("button", {
+    class: "activate-dot", text: "○",
+    attrs: { "aria-label": "Activate " + c.name, title: "Activate" },
+    on: {
+      click: async (e) => {
+        e.target.disabled = true;
+        await activateConfig(c.name);
+      },
+    },
+  });
 }
 
 function buildConfigRow(c, active) {
@@ -253,24 +288,6 @@ function buildConfigRow(c, active) {
     class: "act", text: "open",
     attrs: { href: "#/configs/" + encodeURIComponent(c.name) },
   }));
-
-  if (!isActive) {
-    actions.appendChild(el("button", {
-      class: "act", text: "use",
-      on: {
-        click: async (e) => {
-          e.target.disabled = true;
-          try {
-            await api("/api/configs/" + encodeURIComponent(c.name) + "/activate", { method: "POST" });
-          } catch (err) {
-            showError(err);
-          }
-          await renderConfigsView();
-          await refreshNavStatus();
-        },
-      },
-    }));
-  }
 
   actions.appendChild(el("button", {
     class: "act", text: "copy",
@@ -324,6 +341,7 @@ function buildConfigRow(c, active) {
   }
 
   return el("div", { class: "dtable-row" + (isActive ? " is-active" : "") }, [
+    buildActivationCell(c, isActive),
     el("div", { class: "col-name" }, [name]), source, state, actions,
   ]);
 }
@@ -504,30 +522,13 @@ function buildPropertiesGroup(name, info, meta, distros) {
     }));
   }
 
-  const card = el("div", { class: "card" }, [
-    el("div", { class: "srow" }, [
-      el("div", { class: "grow" }, [
-        el("div", { class: "title" }, [el("span", { text: "Source" }), el("span", { class: "state-muted", text: sourceText })]),
-        el("div", { class: "desc", text: info.modified ? "Edited locally — updates from the source no longer apply automatically." : "Unmodified." }),
-      ]),
-      syncActions,
-    ]),
-    el("div", { class: "srow" }, [
-      el("div", { class: "grow" }, [
-        el("div", { class: "title", text: "Remote URL" }),
-        el("div", { class: "desc", text: "Where this configuration is fetched from. Clearing it makes the configuration local." }),
-      ]),
-      urlInput,
-    ]),
-    el("div", { class: "srow" }, [
-      el("div", { class: "grow" }, [
-        el("div", { class: "title", text: "Distribution" }),
-        el("div", { class: "desc", text: "Collector binary to run this configuration with." }),
-      ]),
-      distroSelect,
-    ]),
+  const bar = el("div", { class: "srow props-bar" }, [
+    el("span", { class: "state-muted props-source", text: sourceText }),
+    urlInput,
+    distroSelect,
+    syncActions,
   ]);
-  return el("div", { class: "group" }, [el("div", { class: "group-title", text: "Properties" }), card]);
+  return el("div", { class: "group" }, [el("div", { class: "card" }, [bar])]);
 }
 
 /* ── variables card ───────────────────────────────────────────────── */
@@ -743,7 +744,7 @@ function buildYamlGroup(name, info, yaml) {
       on: {
         click: () => {
           const msg = prov === "remote"
-            ? "Editing detaches " + name + " from its remote source: syncing is replaced by an explicit \"Discard local edits & re-sync\" until you discard them. Continue?"
+            ? "Editing detaches this configuration from its remote source. Sync will stop; \"Discard local edits & re-sync\" brings it back."
             : "Editing makes this configuration yours. Your version will be kept on future compy updates. Continue?";
           if (!window.confirm(msg)) return;
           editor.editable = true;
@@ -939,12 +940,10 @@ async function renderSettingsView() {
 
   clear(viewRoot);
   viewRoot.appendChild(el("h1", { text: "Settings" }));
-  viewRoot.appendChild(el("p", { class: "page-desc", text: "Distributions, ports, and how compy wires OTEL_* into your shell." }));
+  viewRoot.appendChild(el("p", { class: "page-desc", text: "Collector distributions and menu bar / environment behavior." }));
 
   viewRoot.appendChild(buildDistrosGroup(distros));
-  viewRoot.appendChild(buildPortsGroup(settings));
   viewRoot.appendChild(buildTogglesGroup(settings, status));
-  viewRoot.appendChild(buildWiringGroup(settings));
 }
 
 function buildDistrosGroup(distros) {
@@ -1115,49 +1114,6 @@ function buildRemoveButton(d) {
   return removeBtn;
 }
 
-function buildPortsGroup(settings) {
-  const form = el("form", { class: "form-grid" });
-  const grpcLabel = el("label", {}, [
-    el("span", { text: "gRPC port" }),
-    el("input", { class: "field-input port-input", attrs: { name: "grpc_port", type: "number", min: "1", max: "65535" }, props: { value: settings.grpc_port } }),
-  ]);
-  const httpLabel = el("label", {}, [
-    el("span", { text: "HTTP port" }),
-    el("input", { class: "field-input port-input", attrs: { name: "http_port", type: "number", min: "1", max: "65535" }, props: { value: settings.http_port } }),
-  ]);
-  const hint = el("div", { class: "desc", text: "Takes effect on next apply." });
-  const actions = el("div", { class: "form-actions" }, [
-    el("button", { class: "solid-btn", attrs: { type: "submit" }, text: "Save" }),
-    hint,
-  ]);
-  form.append(grpcLabel, httpLabel, actions);
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const grpc_port = parseInt(form.grpc_port.value, 10);
-    const http_port = parseInt(form.http_port.value, 10);
-    try {
-      await apiJSON("/api/settings", "PUT", { grpc_port, http_port });
-    } catch (err) {
-      showError(err);
-    }
-    await renderSettingsView();
-    await refreshNavStatus();
-  });
-  return el("div", { class: "group" }, [
-    el("div", { class: "group-title", text: "Default ports" }),
-    el("p", { class: "page-desc", attrs: { style: "margin:0 0 6px" } }, [
-      document.createTextNode("Used by shipped configurations ("),
-      el("code", { text: "${env:COMPY_GRPC_PORT}" }),
-      document.createTextNode(" / "),
-      el("code", { text: "${env:COMPY_HTTP_PORT}" }),
-      document.createTextNode(") and by "),
-      el("code", { text: "compy env" }),
-      document.createTextNode(". Your configuration's receivers control the real listeners."),
-    ]),
-    el("div", { class: "card" }, [el("div", { class: "card-extra" }, [form])]),
-  ]);
-}
-
 function buildTogglesGroup(settings, status) {
   const menuRow = el("div", { class: "srow" }, [
     el("div", { class: "grow" }, [
@@ -1203,67 +1159,6 @@ function buildTogglesGroup(settings, status) {
   return el("div", { class: "group" }, [
     el("div", { class: "group-title", text: "Menu bar & environment" }),
     el("div", { class: "card" }, [menuRow, osEnvRow]),
-  ]);
-}
-
-function copyButton(sourceId) {
-  return el("button", {
-    class: "act", text: "copy",
-    on: {
-      click: async (e) => {
-        const text = document.getElementById(sourceId).textContent;
-        try {
-          await navigator.clipboard.writeText(text);
-          e.target.textContent = "copied";
-        } catch (err) {
-          e.target.textContent = "copy failed";
-        }
-        setTimeout(() => { e.target.textContent = "copy"; }, 1500);
-      },
-    },
-  });
-}
-
-function buildWiringGroup(settings) {
-  const httpEndpoint = "http://127.0.0.1:" + settings.http_port;
-  const grpcEndpoint = "127.0.0.1:" + settings.grpc_port;
-
-  const epHTTP = el("code", { text: httpEndpoint, attrs: { id: "ep-http" } });
-  const epGRPC = el("code", { text: grpcEndpoint, attrs: { id: "ep-grpc" } });
-  const evalLine = el("code", { text: 'eval "$(compy env)"', attrs: { id: "env-line" } });
-
-  const endpointsCard = el("div", { class: "card" }, [
-    el("div", { class: "srow" }, [
-      el("div", { class: "grow" }, [el("div", { class: "title", text: "OTLP over HTTP" }), el("div", { class: "desc" }, [epHTTP])]),
-      copyButton("ep-http"),
-    ]),
-    el("div", { class: "srow" }, [
-      el("div", { class: "grow" }, [el("div", { class: "title", text: "OTLP over gRPC" }), el("div", { class: "desc" }, [epGRPC])]),
-      copyButton("ep-grpc"),
-    ]),
-  ]);
-
-  const shellCard = el("div", { class: "card" }, [
-    el("div", { class: "srow" }, [
-      el("div", { class: "grow" }, [
-        el("div", { class: "title", text: "Current shell" }),
-        el("div", { class: "desc" }, [document.createTextNode("Sets OTEL_* variables for this shell only: "), evalLine]),
-      ]),
-      copyButton("env-line"),
-    ]),
-    el("div", { class: "srow" }, [
-      el("div", { class: "grow" }, [
-        el("div", { class: "title", text: "Single command" }),
-        el("div", { class: "desc" }, [document.createTextNode("Runs one program with the variables set: "), el("code", { text: "compy run -- <command>" })]),
-      ]),
-    ]),
-  ]);
-
-  return el("div", { class: "group" }, [
-    el("div", { class: "group-title", text: "Wiring" }),
-    endpointsCard,
-    el("div", { attrs: { style: "height:12px" } }),
-    shellCard,
   ]);
 }
 
