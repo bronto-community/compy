@@ -1,3 +1,4 @@
 /compy
 *.tmp
 dist/
+.claude/

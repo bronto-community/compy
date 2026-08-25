@@ -604,3 +604,56 @@ func TestActivateProbeFallsBackToLaunchdRunning(t *testing.T) {
 		t.Errorf("no last-good snapshot after a launchd-confirmed start: %v", err)
 	}
 }
+
+// A stale v1 process (the old tray) can recreate config/ AFTER a completed
+// migration. Re-running migration then must not touch launchd, settings, the
+// migrated config, or the existing archive — observed live 2026-08-25.
+func TestMigrationIgnoresStaleLegacyRecreation(t *testing.T) {
+	calls := setup(t, "state = running")
+	dir := os.Getenv("COMPY_HOME")
+
+	// Completed v2 state: migrated config exists and is active.
+	if err := cfgstore.Create(dir, "migrated", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := state.LoadSettings()
+	s.ActiveConfig = "migrated"
+	if err := state.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	// The real archive from the original migration, which must survive.
+	if err := os.MkdirAll(filepath.Join(dir, "legacy-v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "legacy-v1", "base.yaml"), []byte("original archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Stale leftovers as the old tray recreates them.
+	if err := os.MkdirAll(filepath.Join(dir, "config", "backends"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config", "base.yaml"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.New(); err != nil {
+		t.Fatalf("New() = %v, want nil", err)
+	}
+
+	for _, c := range *calls {
+		t.Errorf("launchctl must not be called for stale leftovers, got %v", c)
+	}
+	s2, _ := state.LoadSettings()
+	if s2.ActiveConfig != "migrated" {
+		t.Errorf("ActiveConfig = %q, want migrated", s2.ActiveConfig)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "legacy-v1", "base.yaml")); err != nil || string(data) != "original archive" {
+		t.Errorf("original archive clobbered: %q %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config")); !os.IsNotExist(err) {
+		t.Errorf("stale config/ tree not archived away: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "legacy-v1.2", "base.yaml")); err != nil || string(data) != "stale" {
+		t.Errorf("stale leftovers not archived to unique dir: %q %v", data, err)
+	}
+}
