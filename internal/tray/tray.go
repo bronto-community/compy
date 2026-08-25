@@ -1,9 +1,10 @@
 //go:build darwin
 
 // Package tray implements compy's macOS menu-bar item: the service status,
-// a picker for the active configuration, an optional distro switcher, and
-// rollback; "Open compy" spawns the standalone window for everything else.
-// (The full menu-bar rework is P4.)
+// the configurations inline as checkable items (overflowing into a "More
+// configurations" submenu only when there are many), an optional distro
+// switcher, and rollback; "Open compy" spawns the standalone window for
+// everything else. (The full menu-bar rework is P4.)
 package tray
 
 import (
@@ -24,6 +25,10 @@ import (
 // changed behind our back).
 const refreshInterval = 5 * time.Second
 
+// maxInline is how many configurations appear directly in the menu before
+// the rest overflow into the "More configurations" submenu.
+const maxInline = 10
+
 // Run starts the menu-bar tray and blocks until Quit is clicked.
 // systray.Run must run on the main goroutine, so main() should call Run
 // directly rather than in a goroutine.
@@ -34,12 +39,14 @@ func Run(a *app.App) error {
 
 type menu struct {
 	a       *app.App
-	mu      sync.Mutex // serializes apply-triggering actions
+	mu      sync.Mutex // serializes apply-triggering actions and guards the fields below
 	status  *systray.MenuItem
-	configs *systray.MenuItem
 	distros *systray.MenuItem
 
-	configItems map[string]*systray.MenuItem
+	slots       []*systray.MenuItem // pre-created inline config items (fixed menu position)
+	slotNames   []string            // slotNames[i] = config shown in slots[i], "" = hidden
+	more        *systray.MenuItem   // overflow submenu parent
+	moreItems   map[string]*systray.MenuItem
 	distroItems map[string]*systray.MenuItem
 }
 
@@ -49,14 +56,24 @@ func onReady(a *app.App) {
 
 	m := &menu{
 		a:           a,
-		configItems: map[string]*systray.MenuItem{},
+		moreItems:   map[string]*systray.MenuItem{},
 		distroItems: map[string]*systray.MenuItem{},
 	}
 
 	m.status = systray.AddMenuItem("...", "service status")
 	m.status.Disable()
 	systray.AddSeparator()
-	m.configs = systray.AddMenuItem("Configurations", "pick the active configuration")
+	// Fixed slots keep configurations at this menu position even for configs
+	// that appear while the tray runs (systray can only append new items).
+	m.slotNames = make([]string, maxInline)
+	for i := 0; i < maxInline; i++ {
+		slot := systray.AddMenuItemCheckbox("", "activate this configuration", false)
+		slot.Hide()
+		m.slots = append(m.slots, slot)
+		go m.handleSlotClicks(i, slot)
+	}
+	m.more = systray.AddMenuItem("More configurations", "the rest of your configurations")
+	m.more.Hide()
 	m.distros = systray.AddMenuItem("Distro", "switch the collector distribution")
 	m.distros.Hide() // shown by sync() only when settings.MenuDistroSwap is on
 	rollback := systray.AddMenuItem("Rollback", "restore the last known-good config")
@@ -108,18 +125,39 @@ func (m *menu) sync() {
 
 	configs, err := m.a.Configs()
 	if err == nil {
-		seen := map[string]bool{}
+		names := make([]string, 0, len(configs))
 		for _, c := range configs {
-			seen[c.Name] = true
-			item, ok := m.configItems[c.Name]
-			if !ok {
-				item = m.configs.AddSubMenuItemCheckbox(c.Name, "activate "+c.Name, false)
-				m.configItems[c.Name] = item
-				go m.handleConfigClicks(c.Name, item)
-			}
-			setChecked(item, c.Name == st.Config)
+			names = append(names, c.Name)
 		}
-		removeStale(m.configItems, seen)
+		inline, overflow := assignSlots(names, st.Config, len(m.slots))
+		for i, slot := range m.slots {
+			if i < len(inline) {
+				m.slotNames[i] = inline[i]
+				slot.SetTitle(inline[i])
+				slot.Show()
+				setChecked(slot, inline[i] == st.Config)
+			} else {
+				m.slotNames[i] = ""
+				slot.Hide()
+			}
+		}
+		seen := map[string]bool{}
+		for _, name := range overflow {
+			seen[name] = true
+			item, ok := m.moreItems[name]
+			if !ok {
+				item = m.more.AddSubMenuItemCheckbox(name, "activate "+name, false)
+				m.moreItems[name] = item
+				go m.handleConfigClicks(name, item)
+			}
+			setChecked(item, name == st.Config)
+		}
+		removeStale(m.moreItems, seen)
+		if len(overflow) > 0 {
+			m.more.Show()
+		} else {
+			m.more.Hide()
+		}
 	}
 
 	s, err := state.LoadSettings()
@@ -170,6 +208,21 @@ func (m *menu) handleConfigClicks(name string, item *systray.MenuItem) {
 	}
 }
 
+// handleSlotClicks resolves the slot's current config at click time — the
+// assignment may have changed since the menu was drawn.
+func (m *menu) handleSlotClicks(i int, slot *systray.MenuItem) {
+	for range slot.ClickedCh {
+		m.mu.Lock()
+		name := m.slotNames[i]
+		if name == "" {
+			m.mu.Unlock()
+			continue
+		}
+		m.doAct("activating "+name+"…", func() error { return m.a.Activate(name, "") })
+		m.mu.Unlock()
+	}
+}
+
 func (m *menu) handleDistroClicks(name string, item *systray.MenuItem) {
 	for range item.ClickedCh {
 		m.act("switching distro…", func() error { return m.a.UseDistro(name) })
@@ -181,6 +234,11 @@ func (m *menu) handleDistroClicks(name string, item *systray.MenuItem) {
 func (m *menu) act(note string, fn func() error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.doAct(note, fn)
+}
+
+// doAct is act's body; callers hold m.mu.
+func (m *menu) doAct(note string, fn func() error) {
 	m.status.SetTitle(note)
 	if err := fn(); err != nil {
 		fmt.Fprintln(os.Stderr, "compy tray:", err)
