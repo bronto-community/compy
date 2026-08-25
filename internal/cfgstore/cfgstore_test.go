@@ -1,6 +1,8 @@
 package cfgstore
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -302,6 +304,105 @@ func TestGetParsesVars(t *testing.T) {
 		}
 		if got != desc {
 			t.Errorf("var %s description = %q, want %q", name, got, desc)
+		}
+	}
+}
+
+// Regression: every exported function that maps a config name to a path
+// must reject path traversal before touching the filesystem.
+
+// TestDeleteRejectsPathTraversal plants a sentinel *directory that looks
+// like a real config* (config.yaml present) at the path a traversal name
+// would resolve to, so that the pre-fix code's exists()-based guard would
+// have been satisfied and os.RemoveAll would have fired on it. It proves
+// validateName rejects the name before any filesystem access, not just
+// incidentally via a "not found" on an unrelated path shape.
+func TestDeleteRejectsPathTraversal(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "state")
+	if err := os.MkdirAll(filepath.Join(root, "configs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// "../../sentinel" from root/configs resolves to base/sentinel.
+	sentinelDir := filepath.Join(base, "sentinel")
+	if err := os.MkdirAll(sentinelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinelYAML := filepath.Join(sentinelDir, "config.yaml")
+	if err := os.WriteFile(sentinelYAML, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Delete(root, "../../sentinel"); err == nil {
+		t.Fatal("Delete with traversal name: want error, got nil")
+	}
+	data, err := os.ReadFile(sentinelYAML)
+	if err != nil {
+		t.Fatalf("sentinel did not survive Delete: %v", err)
+	}
+	if string(data) != "keep me\n" {
+		t.Fatalf("sentinel content changed: %q", data)
+	}
+}
+
+// TestWriteYAMLRejectsPathTraversal plants a pre-existing file at the
+// resolved traversal path (so the pre-fix exists()-based guard would have
+// let the write through) and asserts the fixed code rejects the name before
+// writing anything.
+func TestWriteYAMLRejectsPathTraversal(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "state")
+	if err := os.MkdirAll(filepath.Join(root, "configs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// "../../outside" from root/configs resolves to base/outside.
+	outsideDir := filepath.Join(base, "outside")
+	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideYAML := filepath.Join(outsideDir, "config.yaml")
+	if err := os.WriteFile(outsideYAML, []byte("original: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteYAML(root, "../../outside", "malicious: true\n"); err == nil {
+		t.Fatal("WriteYAML with traversal name: want error, got nil")
+	}
+	data, err := os.ReadFile(outsideYAML)
+	if err != nil {
+		t.Fatalf("outside file vanished: %v", err)
+	}
+	if string(data) != "original: true\n" {
+		t.Fatalf("traversal WriteYAML overwrote a file outside configs/: got %q", data)
+	}
+}
+
+func TestAllNamedFunctionsRejectTraversal(t *testing.T) {
+	root := t.TempDir()
+	const bad = "../x"
+	fetch := func(url string) ([]byte, error) { return []byte("x: 1\n"), nil }
+
+	checks := []struct {
+		name string
+		call func() error
+	}{
+		{"Get", func() error { _, _, err := Get(root, bad); return err }},
+		{"Create", func() error { return Create(root, bad, "x: 1\n") }},
+		{"CreateFromURL", func() error { return CreateFromURL(root, bad, "https://example.com/x.yaml", fetch) }},
+		{"Copy(src)", func() error { return Copy(root, bad, "dst") }},
+		{"Copy(dst)", func() error { return Copy(root, "src", bad) }},
+		{"Delete", func() error { return Delete(root, bad) }},
+		{"WriteYAML", func() error { return WriteYAML(root, bad, "x: 1\n") }},
+		{"WriteMeta", func() error { return WriteMeta(root, bad, Meta{}) }},
+		{"Sync", func() error { return Sync(root, bad, fetch) }},
+		{"Resync", func() error { return Resync(root, bad, fetch) }},
+		{"SetVar", func() error { return SetVar(root, bad, "set", "K", "V") }},
+		{"DeleteSet", func() error { return DeleteSet(root, bad, "set") }},
+		{"UseSet", func() error { return UseSet(root, bad, "set") }},
+	}
+	for _, c := range checks {
+		if err := c.call(); err == nil {
+			t.Errorf("%s(%q): traversal name accepted, want error", c.name, bad)
 		}
 	}
 }
