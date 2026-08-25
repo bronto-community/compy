@@ -7,118 +7,169 @@ import (
 	"reflect"
 	"testing"
 
+	"fyne.io/systray"
+
 	"github.com/bronto-io/compy/internal/app"
 	"github.com/bronto-io/compy/internal/cfgstore"
 )
 
-func TestAssignSlots(t *testing.T) {
+func TestRecencyOrder(t *testing.T) {
+	cases := []struct {
+		name   string
+		names  []string
+		recent []string
+		want   []string
+	}{
+		{"no recency: alphabetical", []string{"c", "a", "b"}, nil, []string{"a", "b", "c"}},
+		{"recent first, rest alphabetical", []string{"a", "b", "c", "d"}, []string{"c", "a"}, []string{"c", "a", "b", "d"}},
+		{"recent dedup keeps first occurrence", []string{"a", "b"}, []string{"a", "a", "b"}, []string{"a", "b"}},
+		{
+			// T1 review: DeleteConfig doesn't prune Settings.Recent, so a
+			// recent entry can name a configuration that no longer exists —
+			// it must not surface as a menu item (nor as a gap in the order).
+			"stale recent entry (deleted config) dropped",
+			[]string{"a", "b"}, []string{"ghost", "b", "a"}, []string{"b", "a"},
+		},
+		{"empty", nil, nil, nil},
+	}
+	for _, c := range cases {
+		got := recencyOrder(c.names, c.recent)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: recencyOrder(%v, %v) = %v, want %v", c.name, c.names, c.recent, got, c.want)
+		}
+	}
+}
+
+func TestSplitInline(t *testing.T) {
 	cases := []struct {
 		name         string
-		configs      []string
-		active       string
-		slots        int
+		ordered      []string
+		n            int
 		wantInline   []string
 		wantOverflow []string
 	}{
-		{"fits", []string{"a", "b"}, "a", 4, []string{"a", "b"}, nil},
-		{"exact", []string{"a", "b"}, "", 2, []string{"a", "b"}, nil},
-		{"overflow", []string{"a", "b", "c", "d"}, "", 2, []string{"a", "b"}, []string{"c", "d"}},
-		{"active promoted from overflow", []string{"a", "b", "c", "d"}, "d", 2, []string{"a", "d"}, []string{"b", "c"}},
-		{"active already inline unchanged", []string{"a", "b", "c"}, "a", 2, []string{"a", "b"}, []string{"c"}},
-		{"empty", nil, "", 4, nil, nil},
+		{"fits exactly", []string{"a", "b"}, 2, []string{"a", "b"}, nil},
+		{"under capacity", []string{"a", "b"}, 4, []string{"a", "b"}, nil},
+		{
+			// C5.3: overflow is re-sorted alphabetically, independent of the
+			// recency order that put it there.
+			"overflow re-sorted alphabetically", []string{"z", "a", "c", "b"}, 2, []string{"z", "a"}, []string{"b", "c"},
+		},
+		{"empty", nil, 4, nil, nil},
 	}
 	for _, c := range cases {
-		inline, overflow := assignSlots(c.configs, c.active, c.slots)
+		inline, overflow := splitInline(c.ordered, c.n)
 		if !reflect.DeepEqual(inline, c.wantInline) || !reflect.DeepEqual(overflow, c.wantOverflow) {
-			t.Errorf("%s: got inline=%v overflow=%v, want %v / %v", c.name, inline, overflow, c.wantInline, c.wantOverflow)
+			t.Errorf("%s: splitInline(%v, %d) = %v, %v, want %v, %v", c.name, c.ordered, c.n, inline, overflow, c.wantInline, c.wantOverflow)
 		}
 	}
 }
 
 func TestStatusLines(t *testing.T) {
 	cases := []struct {
-		name        string
-		st          app.Status
-		errs, warns int
-		wantLine1   string
-		wantLine2   string
+		name      string
+		st        app.Status
+		warns     int
+		wantLine1 string
+		wantLine2 string
 	}{
 		{
-			name:      "no configuration",
-			st:        app.Status{Running: true, GRPCPort: 14317, HTTPPort: 14318},
-			wantLine1: "no configuration",
-			wantLine2: "grpc :14317 · http :14318",
+			name:      "running with preset",
+			st:        app.Status{Running: true, Config: "otlp-to-bronto", Preset: "staging", GRPCPort: 4317, HTTPPort: 4318},
+			wantLine1: "● Running · otlp-to-bronto · staging",
+			wantLine2: ":4317 :4318",
 		},
 		{
-			name:      "running with set",
-			st:        app.Status{Running: true, Config: "prod", Preset: "eu", GRPCPort: 14317, HTTPPort: 14318},
-			wantLine1: "running — prod (eu)",
-			wantLine2: "grpc :14317 · http :14318",
+			name:      "running without a preset (config with no vars) omits it",
+			st:        app.Status{Running: true, Config: "debug", GRPCPort: 4317, HTTPPort: 4318},
+			wantLine1: "● Running · debug",
+			wantLine2: ":4317 :4318",
 		},
 		{
-			name:      "running without set omits parens",
+			name:      "stopped ignores config/preset/ports",
+			st:        app.Status{Running: false, Config: "otlp-to-bronto", Preset: "staging", GRPCPort: 4317, HTTPPort: 4318},
+			wantLine1: "○ Stopped",
+			wantLine2: "no listeners",
+		},
+		{
+			name:      "warnings appended, warn-only (no error count)",
 			st:        app.Status{Running: true, Config: "prod", GRPCPort: 14317, HTTPPort: 14318},
-			wantLine1: "running — prod",
+			warns:     2,
+			wantLine1: "● Running · prod",
+			wantLine2: ":14317 :14318 · 2 warnings",
 		},
 		{
-			name:      "stopped",
-			st:        app.Status{Running: false, Config: "prod", GRPCPort: 14317, HTTPPort: 14318},
-			wantLine1: "stopped — prod",
-		},
-		{
-			name:      "errors and warnings appended",
+			name:      "zero warnings omit the tail",
 			st:        app.Status{Running: true, Config: "prod", GRPCPort: 14317, HTTPPort: 14318},
-			errs:      2,
-			warns:     1,
-			wantLine1: "running — prod",
-			wantLine2: "grpc :14317 · http :14318 · 2 err · 1 warn",
-		},
-		{
-			name:      "zero errors/warnings omit the tail",
-			st:        app.Status{Running: true, Config: "prod", GRPCPort: 14317, HTTPPort: 14318},
-			errs:      0,
 			warns:     0,
-			wantLine1: "running — prod",
-			wantLine2: "grpc :14317 · http :14318",
+			wantLine1: "● Running · prod",
+			wantLine2: ":14317 :14318",
 		},
 	}
 	for _, c := range cases {
-		if c.wantLine2 == "" {
-			c.wantLine2 = "grpc :14317 · http :14318"
-		}
-		line1, line2 := statusLines(c.st, c.errs, c.warns)
+		line1, line2 := statusLines(c.st, c.warns)
 		if line1 != c.wantLine1 || line2 != c.wantLine2 {
 			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, line1, line2, c.wantLine1, c.wantLine2)
 		}
 	}
 }
 
-func TestActivePresets(t *testing.T) {
-	configs := []cfgstore.Info{
-		{Name: "solo", Meta: cfgstore.Meta{Presets: map[string]map[string]string{"default": {}}, ActivePreset: "default"}},
-		{Name: "multi", Meta: cfgstore.Meta{
-			Presets:      map[string]map[string]string{"eu": {}, "default": {}, "us": {}},
-			ActivePreset: "us",
-		}},
-	}
+func TestPresetChoices(t *testing.T) {
 	cases := []struct {
 		name      string
-		active    string
+		info      cfgstore.Info
 		wantNames []string
-		wantSet   string
-		wantShow  bool
+		wantMulti bool
 	}{
-		{"no active config", "", nil, "", false},
-		{"unknown active config", "ghost", nil, "", false},
-		{"single set hidden", "solo", nil, "", false},
-		{"multi set shown sorted", "multi", []string{"default", "eu", "us"}, "us", true},
+		{"no presets: single-click", cfgstore.Info{}, nil, false},
+		{
+			"one preset: single-click",
+			cfgstore.Info{Meta: cfgstore.Meta{Presets: map[string]map[string]string{"default": {}}}},
+			nil, false,
+		},
+		{
+			"two+ presets: submenu, sorted",
+			cfgstore.Info{Meta: cfgstore.Meta{Presets: map[string]map[string]string{"us": {}, "default": {}, "eu": {}}}},
+			[]string{"default", "eu", "us"}, true,
+		},
 	}
 	for _, c := range cases {
-		names, set, show := activePresets(configs, c.active)
-		if show != c.wantShow || set != c.wantSet || !reflect.DeepEqual(names, c.wantNames) {
-			t.Errorf("%s: got names=%v set=%q show=%v, want names=%v set=%q show=%v",
-				c.name, names, set, show, c.wantNames, c.wantSet, c.wantShow)
+		names, multi := presetChoices(c.info)
+		if multi != c.wantMulti || !reflect.DeepEqual(names, c.wantNames) {
+			t.Errorf("%s: presetChoices() = %v, %v, want %v, %v", c.name, names, multi, c.wantNames, c.wantMulti)
 		}
+	}
+}
+
+// TestPresetOwnershipFollowsSlotReassignment is the T3 review's regression:
+// slot i is a fixed menu position, and a recency reorder can put a
+// different configuration there between syncs. Config acme{default,prod}
+// occupies slot i, then a re-sync reassigns it to beta{default,us} — both
+// configs have a "default" preset, so the slot's preset-item cache (keyed
+// by preset name only) reuses the very same *systray.MenuItem for
+// "default" under both configs. Without click-time resolution, that item's
+// click would still fire against acme (whoever it was created for);
+// clicking it must activate beta, the config it currently represents.
+//
+// This drives menu.setPresetOwner/resolvePresetClick directly — the two
+// syncRow calls a real reorder would make — rather than through syncRow's
+// actual systray.MenuItem creation: AddSubMenuItemCheckbox blocks on the
+// Cocoa main-thread run loop that only exists once systray.Run is driving
+// it, so calling it here (outside Run) would hang the test rather than
+// fail it.
+func TestPresetOwnershipFollowsSlotReassignment(t *testing.T) {
+	m := &menu{presetOwner: map[*systray.MenuItem]presetTarget{}}
+	item := &systray.MenuItem{} // slot i's "default" preset row, reused across configs
+
+	m.setPresetOwner(item, "acme", "default") // acme{default,prod} occupies slot i
+	m.setPresetOwner(item, "beta", "default") // re-sync: beta{default,us} took the slot
+
+	target, ok := m.resolvePresetClick(item)
+	if !ok {
+		t.Fatal("resolvePresetClick: no owner recorded")
+	}
+	if target.config != "beta" || target.preset != "default" {
+		t.Errorf("resolvePresetClick = %+v, want {config:beta preset:default} — a click on the reused item must activate whoever owns it now, not acme", target)
 	}
 }
 

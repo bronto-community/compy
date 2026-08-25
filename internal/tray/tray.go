@@ -1,10 +1,10 @@
 //go:build darwin
 
-// Package tray implements compy's macOS menu-bar item: the service status,
-// the configurations inline as checkable items (overflowing into a "More
-// configurations" submenu only when there are many), and the active
-// configuration's presets; "Open compy" opens the standalone window for
-// everything else. (The full menu-bar rework is v3 task 3.)
+// Package tray implements compy's macOS menu-bar item: status line, the
+// CONFIGURATION list (recency-first, "More…" overflow alphabetical, a
+// preset submenu where picking a preset is the activation), "Restart
+// collector", and "Open compy" for everything else. Menu bar v4 —
+// docs/design/handoff/README.md § "5. Menu bar", ACCEPTANCE.md C5.
 package tray
 
 import (
@@ -18,6 +18,7 @@ import (
 	"fyne.io/systray"
 
 	"github.com/bronto-io/compy/internal/app"
+	"github.com/bronto-io/compy/internal/cfgstore"
 )
 
 // refreshInterval is how often the status line and menu check-states are
@@ -26,7 +27,7 @@ import (
 const refreshInterval = 5 * time.Second
 
 // maxInline is how many configurations appear directly in the menu before
-// the rest overflow into the "More configurations" submenu.
+// the rest overflow into the "More…" submenu (ACCEPTANCE C5.3).
 const maxInline = 10
 
 // Run starts the menu-bar tray and blocks until Quit is clicked.
@@ -43,12 +44,32 @@ type menu struct {
 	status      *systray.MenuItem
 	statusLine2 *systray.MenuItem
 
-	slots       []*systray.MenuItem // pre-created inline config items (fixed menu position)
-	slotNames   []string            // slotNames[i] = config shown in slots[i], "" = hidden
-	more        *systray.MenuItem   // overflow submenu parent
+	slots       []*systray.MenuItem            // pre-created inline config rows (fixed menu position)
+	slotNames   []string                       // slotNames[i] = config shown in slots[i], "" = hidden
+	slotPresets []map[string]*systray.MenuItem // slotPresets[i]: that row's own preset submenu items
+
+	more        *systray.MenuItem // "More…" overflow submenu parent
 	moreItems   map[string]*systray.MenuItem
-	preset      *systray.MenuItem // "Preset" submenu parent, shown only for a multi-preset active config
-	presetItems map[string]*systray.MenuItem
+	morePresets map[string]map[string]*systray.MenuItem // per overflow config: its preset submenu items
+
+	restart *systray.MenuItem
+
+	// presetOwner records which (config, preset) each live preset-submenu
+	// item currently represents, so its click handler can resolve that at
+	// click time (like handleSlotClicks does via slotNames) instead of
+	// trusting a name captured in a closure at item-creation time. That
+	// distinction matters because slot positions are fixed and reused
+	// across configs (recency reorders who sits at slot i): a preset-name
+	// cache keyed only by "default" would otherwise let one config's leftover
+	// item — and its stale closure — silently activate a different config
+	// that happens to share a preset name (T3 review finding).
+	presetOwner map[*systray.MenuItem]presetTarget
+}
+
+// presetTarget is the (config, preset) one preset-submenu item currently
+// stands for; see menu.presetOwner.
+type presetTarget struct {
+	config, preset string
 }
 
 func onReady(a *app.App) {
@@ -58,7 +79,8 @@ func onReady(a *app.App) {
 	m := &menu{
 		a:           a,
 		moreItems:   map[string]*systray.MenuItem{},
-		presetItems: map[string]*systray.MenuItem{},
+		morePresets: map[string]map[string]*systray.MenuItem{},
+		presetOwner: map[*systray.MenuItem]presetTarget{},
 	}
 
 	m.status = systray.AddMenuItem("...", "service status")
@@ -66,19 +88,23 @@ func onReady(a *app.App) {
 	m.statusLine2 = systray.AddMenuItem("...", "service status")
 	m.statusLine2.Disable()
 	systray.AddSeparator()
+	header := systray.AddMenuItem("CONFIGURATION", "your configurations")
+	header.Disable()
 	// Fixed slots keep configurations at this menu position even for configs
 	// that appear while the tray runs (systray can only append new items).
 	m.slotNames = make([]string, maxInline)
+	m.slotPresets = make([]map[string]*systray.MenuItem, maxInline)
 	for i := 0; i < maxInline; i++ {
 		slot := systray.AddMenuItemCheckbox("", "activate this configuration", false)
 		slot.Hide()
 		m.slots = append(m.slots, slot)
+		m.slotPresets[i] = map[string]*systray.MenuItem{}
 		go m.handleSlotClicks(i, slot)
 	}
-	m.more = systray.AddMenuItem("More configurations", "the rest of your configurations")
+	m.more = systray.AddMenuItem("More…", "the rest of your configurations")
 	m.more.Hide()
-	m.preset = systray.AddMenuItem("Preset", "switch the active configuration's preset")
-	m.preset.Hide()
+	systray.AddSeparator()
+	m.restart = systray.AddMenuItem("Restart collector", "restart the collector")
 	systray.AddSeparator()
 	openApp := systray.AddMenuItem("Open compy", "open the compy window")
 	quit := systray.AddMenuItem("Quit", "quit the compy menu bar item")
@@ -95,6 +121,7 @@ func onReady(a *app.App) {
 			m.mu.Unlock()
 		}
 	}()
+	go m.handleRestart()
 	go handleOpenApp(openApp)
 	go func() {
 		<-quit.ClickedCh
@@ -102,75 +129,133 @@ func onReady(a *app.App) {
 	}()
 }
 
-// sync reconciles the status line, the configuration picker, and the preset
-// items with what is on disk right now.
+// sync reconciles the status line and the configuration/preset rows with
+// what is on disk right now.
 func (m *menu) sync() {
 	st, err := m.a.Status()
 	if err != nil {
 		m.status.SetTitle("status: " + err.Error())
 		return
 	}
-	errs, warns, _ := m.a.LogStats(500) // best-effort: a log-read error just omits the tail
-	line1, line2 := statusLines(st, errs, warns)
+	// Menu bar counts warn-level lines only (controller ruling D2); the
+	// error count that used to sit alongside it is dropped from this line.
+	_, warns, _ := m.a.LogStats(500) // best-effort: a log-read error just omits the tail
+	line1, line2 := statusLines(st, warns)
 	m.status.SetTitle(line1)
 	m.statusLine2.SetTitle(line2)
 
 	configs, err := m.a.Configs()
-	if err == nil {
-		names := make([]string, 0, len(configs))
-		for _, c := range configs {
-			names = append(names, c.Name)
-		}
-		inline, overflow := assignSlots(names, st.Config, len(m.slots))
-		for i, slot := range m.slots {
-			if i < len(inline) {
-				m.slotNames[i] = inline[i]
-				slot.SetTitle(inline[i])
-				slot.Show()
-				setChecked(slot, inline[i] == st.Config)
-			} else {
-				m.slotNames[i] = ""
-				slot.Hide()
-			}
-		}
-		seen := map[string]bool{}
-		for _, name := range overflow {
-			seen[name] = true
-			item, ok := m.moreItems[name]
-			if !ok {
-				item = m.more.AddSubMenuItemCheckbox(name, "activate "+name, false)
-				m.moreItems[name] = item
-				go m.handleConfigClicks(name, item)
-			}
-			setChecked(item, name == st.Config)
-		}
-		removeStale(m.moreItems, seen)
-		if len(overflow) > 0 {
-			m.more.Show()
-		} else {
-			m.more.Hide()
-		}
+	if err != nil {
+		return
+	}
+	byName := make(map[string]cfgstore.Info, len(configs))
+	names := make([]string, 0, len(configs))
+	for _, c := range configs {
+		byName[c.Name] = c
+		names = append(names, c.Name)
+	}
+	inline, overflow := splitInline(recencyOrder(names, st.Recent), len(m.slots))
 
-		presetNames, activePreset, show := activePresets(configs, st.Config)
-		if show {
-			seen := map[string]bool{}
-			for _, name := range presetNames {
-				seen[name] = true
-				item, ok := m.presetItems[name]
-				if !ok {
-					item = m.preset.AddSubMenuItemCheckbox(name, "switch to preset "+name, false)
-					m.presetItems[name] = item
-					go m.handlePresetClicks(name, item)
-				}
-				setChecked(item, name == activePreset)
-			}
-			removeStale(m.presetItems, seen)
-			m.preset.Show()
-		} else {
-			removeStale(m.presetItems, map[string]bool{})
-			m.preset.Hide()
+	for i, slot := range m.slots {
+		if i >= len(inline) {
+			m.slotNames[i] = ""
+			slot.Hide()
+			m.removeStale(m.slotPresets[i], map[string]bool{})
+			continue
+		}
+		name := inline[i]
+		if m.slotNames[i] != name {
+			// This slot changed which config it shows (recency reordered).
+			// Drop its whole preset cache rather than let a same-named
+			// preset item survive into a different config's ownership —
+			// belt-and-braces alongside the click-time resolution in
+			// syncRow/resolvePresetClick (T3 review finding).
+			m.removeStale(m.slotPresets[i], map[string]bool{})
+		}
+		m.slotNames[i] = name
+		slot.SetTitle(name)
+		slot.Show()
+		m.syncRow(slot, m.slotPresets[i], name, byName[name], st)
+	}
+
+	seen := map[string]bool{}
+	for _, name := range overflow {
+		seen[name] = true
+		item, ok := m.moreItems[name]
+		if !ok {
+			item = m.more.AddSubMenuItemCheckbox(name, "activate "+name, false)
+			m.moreItems[name] = item
+			m.morePresets[name] = map[string]*systray.MenuItem{}
+			go m.handleConfigClicks(name, item)
+		}
+		m.syncRow(item, m.morePresets[name], name, byName[name], st)
+	}
+	for name, item := range m.moreItems {
+		if !seen[name] {
+			item.Remove()
+			delete(m.moreItems, name)
+			m.removeStale(m.morePresets[name], map[string]bool{}) // drop that config's own preset-item ownership too
+			delete(m.morePresets, name)
 		}
 	}
+	if len(overflow) > 0 {
+		m.more.Show()
+	} else {
+		m.more.Hide()
+	}
+}
+
+// syncRow reconciles one configuration's menu row against current status:
+// the row's own checkmark, and — only for a 2+-preset configuration
+// (ACCEPTANCE C5.4) — its preset submenu, lazily created in presetItems
+// (that row's own cache, since systray can only append items). Clicking a
+// preset row is itself the activation; the running preset is checked.
+//
+// Every preset item's ownership is (re)recorded here on every sync, whether
+// the item is newly created or reused from a previous sync — the click
+// handler (handlePresetClicks/resolvePresetClick) resolves it from
+// m.presetOwner at click time rather than a name closed over at creation,
+// so a cache entry that outlives a config change never misdirects the
+// activation (T3 review finding).
+func (m *menu) syncRow(item *systray.MenuItem, presetItems map[string]*systray.MenuItem, name string, info cfgstore.Info, st app.Status) {
+	active := name == st.Config
+	setChecked(item, active)
+	presets, multi := presetChoices(info)
+	if !multi {
+		m.removeStale(presetItems, map[string]bool{})
+		return
+	}
+	seen := map[string]bool{}
+	for _, preset := range presets {
+		seen[preset] = true
+		pi, ok := presetItems[preset]
+		if !ok {
+			pi = item.AddSubMenuItemCheckbox(preset, "activate "+name+" · "+preset, false)
+			presetItems[preset] = pi
+			go m.handlePresetClicks(pi)
+		}
+		pi.SetTooltip("activate " + name + " · " + preset)
+		m.setPresetOwner(pi, name, preset)
+		setChecked(pi, active && preset == st.Preset)
+	}
+	m.removeStale(presetItems, seen)
+}
+
+// setPresetOwner records which (config, preset) item currently represents.
+// Called only from sync() (directly, or via syncRow), which every caller
+// except the very first (onReady's initial, single-threaded m.sync()) makes
+// under m.mu — the same discipline slotNames already relies on.
+func (m *menu) setPresetOwner(item *systray.MenuItem, config, preset string) {
+	m.presetOwner[item] = presetTarget{config: config, preset: preset}
+}
+
+// resolvePresetClick looks up what a preset-submenu item currently stands
+// for, under mu, at click time — see menu.presetOwner.
+func (m *menu) resolvePresetClick(item *systray.MenuItem) (presetTarget, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, ok := m.presetOwner[item]
+	return target, ok
 }
 
 func setChecked(item *systray.MenuItem, want bool) {
@@ -181,11 +266,15 @@ func setChecked(item *systray.MenuItem, want bool) {
 	}
 }
 
-func removeStale(items map[string]*systray.MenuItem, seen map[string]bool) {
+// removeStale removes every item in items not named in seen, dropping its
+// preset ownership record too (a no-op for items that were never a preset
+// row's key, e.g. the top-level "More…" entries).
+func (m *menu) removeStale(items map[string]*systray.MenuItem, seen map[string]bool) {
 	for name, item := range items {
 		if !seen[name] {
 			item.Remove()
 			delete(items, name)
+			delete(m.presetOwner, item)
 		}
 	}
 }
@@ -193,6 +282,8 @@ func removeStale(items map[string]*systray.MenuItem, seen map[string]bool) {
 func (m *menu) handleConfigClicks(name string, item *systray.MenuItem) {
 	for range item.ClickedCh {
 		// Activate with the configuration's own active preset ("" keeps it).
+		// Native menus don't deliver this click at all once the row has grown
+		// a submenu (multi-preset) — picking a preset there is the activation.
 		m.act("activating "+name+"…", func() error { return m.a.Activate(name, "") })
 	}
 }
@@ -212,18 +303,30 @@ func (m *menu) handleSlotClicks(i int, slot *systray.MenuItem) {
 	}
 }
 
-// handlePresetClicks resolves the active configuration at click time — the
-// submenu is only shown for it, but that may have changed since the menu was
-// drawn.
-func (m *menu) handlePresetClicks(preset string, item *systray.MenuItem) {
+// handlePresetClicks activates whatever (config, preset) this submenu item
+// currently owns, per m.presetOwner — resolved fresh at click time rather
+// than a name captured when the item was created, since a fixed-position
+// row's preset items can end up reused for a different config across
+// recency reorders. "Picking a preset is the activation" (README § 5).
+func (m *menu) handlePresetClicks(item *systray.MenuItem) {
 	for range item.ClickedCh {
-		m.act("switching preset…", func() error {
-			st, err := m.a.Status()
-			if err != nil {
-				return err
-			}
-			return m.a.Activate(st.Config, preset)
+		target, ok := m.resolvePresetClick(item)
+		if !ok {
+			continue
+		}
+		m.act("activating "+target.config+" · "+target.preset+"…", func() error {
+			return m.a.Activate(target.config, target.preset)
 		})
+	}
+}
+
+// handleRestart re-applies the active configuration (README "Restart
+// collector"). The design's in-flight pulse has no native-menu equivalent;
+// a static "Restarting…" title stands in for it (busy state still visible,
+// no animation needed).
+func (m *menu) handleRestart() {
+	for range m.restart.ClickedCh {
+		m.act("Restarting…", func() error { return m.a.Apply() })
 	}
 }
 

@@ -10,75 +10,87 @@ import (
 	"github.com/bronto-io/compy/internal/cfgstore"
 )
 
-// statusLines renders the two status-block lines: the running/config/preset
-// summary, and the ports line with an error/warning tail (from
-// app.LogStats) shown only when there's something to report.
-func statusLines(st app.Status, errs, warns int) (line1, line2 string) {
-	if st.Config == "" {
-		line1 = "no configuration"
-	} else {
-		state := "stopped"
-		if st.Running {
-			state = "running"
-		}
-		line1 = fmt.Sprintf("%s — %s", state, st.Config)
-		if st.Preset != "" {
-			line1 += fmt.Sprintf(" (%s)", st.Preset)
-		}
+// statusLines renders the two status-block lines (README "5. Menu bar";
+// ACCEPTANCE C5.1). Stopped is exactly "Stopped" / "no listeners" — no
+// config or preset named, since nothing is running to name. Running always
+// names the config, and the preset too when it has one (a config with no
+// `${VAR}` references has none). warns is the collector log's warn-level
+// line count only (controller ruling D2: warn-only here, unlike the
+// window sidebar's warn+error sum), and the tail is omitted entirely at
+// zero rather than printed as "0 warnings". The leading ●/○ stands in for
+// the design's amber/grey running dot — a native menu item can't tint
+// text, so a glyph carries what colour would.
+func statusLines(st app.Status, warns int) (line1, line2 string) {
+	if !st.Running {
+		return "○ Stopped", "no listeners"
 	}
-	line2 = fmt.Sprintf("grpc :%d · http :%d", st.GRPCPort, st.HTTPPort)
-	if errs > 0 || warns > 0 {
-		line2 += fmt.Sprintf(" · %d err · %d warn", errs, warns)
+	line1 = "● Running · " + st.Config
+	if st.Preset != "" {
+		line1 += " · " + st.Preset
+	}
+	line2 = fmt.Sprintf(":%d :%d", st.GRPCPort, st.HTTPPort)
+	if warns > 0 {
+		line2 += fmt.Sprintf(" · %d warnings", warns)
 	}
 	return line1, line2
 }
 
-// activePresets reports the active configuration's presets (sorted) and its
-// currently-active preset, and whether the picker should be shown at all:
-// only when there is an active config with 2+ presets.
-func activePresets(configs []cfgstore.Info, activeConfig string) (names []string, activePreset string, show bool) {
-	if activeConfig == "" {
-		return nil, "", false
+// recencyOrder orders configuration names per ACCEPTANCE C5.2: `recent`'s
+// activation order first, then every other existing config alphabetically.
+// A `recent` entry for a configuration that no longer exists (e.g. deleted
+// since) is dropped rather than surfaced as a menu item.
+func recencyOrder(names []string, recent []string) []string {
+	if len(names) == 0 {
+		return nil
 	}
-	for _, c := range configs {
-		if c.Name != activeConfig {
-			continue
-		}
-		if len(c.Meta.Presets) < 2 {
-			return nil, "", false
-		}
-		names = make([]string, 0, len(c.Meta.Presets))
-		for n := range c.Meta.Presets {
-			names = append(names, n)
-		}
-		slices.Sort(names)
-		return names, c.Meta.ActivePreset, true
+	exists := make(map[string]bool, len(names))
+	for _, n := range names {
+		exists[n] = true
 	}
-	return nil, "", false
+	ordered := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, r := range recent {
+		if exists[r] && !seen[r] {
+			ordered = append(ordered, r)
+			seen[r] = true
+		}
+	}
+	rest := make([]string, 0, len(names)-len(ordered))
+	for _, n := range names {
+		if !seen[n] {
+			rest = append(rest, n)
+		}
+	}
+	slices.Sort(rest)
+	return append(ordered, rest...)
 }
 
-// assignSlots splits the (sorted) config names into the inline menu slots
-// and the overflow submenu. The active config is always inline: when it
-// would land in overflow it takes the last slot, and the config it
-// displaces moves to overflow (keeping sort order there).
-func assignSlots(configs []string, active string, slots int) (inline, overflow []string) {
-	if len(configs) <= slots {
-		return append([]string(nil), configs...), nil
+// splitInline divides a recency-ordered name list into up to n inline rows
+// and the "More…" remainder, itself re-sorted alphabetically regardless of
+// where in the recency order it fell (ACCEPTANCE C5.3).
+func splitInline(ordered []string, n int) (inline, overflow []string) {
+	if len(ordered) <= n {
+		return ordered, nil
 	}
-	inline = append([]string(nil), configs[:slots]...)
-	overflow = append([]string(nil), configs[slots:]...)
-	for i, name := range overflow {
-		if name == active {
-			displaced := inline[slots-1]
-			inline[slots-1] = name
-			overflow = append(overflow[:i], overflow[i+1:]...)
-			// keep overflow sorted: displaced comes from before any
-			// remaining overflow entry, so it goes to the front
-			overflow = append([]string{displaced}, overflow...)
-			break
-		}
-	}
+	inline = ordered[:n]
+	overflow = append([]string(nil), ordered[n:]...)
+	slices.Sort(overflow)
 	return inline, overflow
+}
+
+// presetChoices reports a configuration's presets (sorted) and whether it
+// gets a submenu at all: only 2+ presets do (ACCEPTANCE C5.4) — a config
+// with zero or one preset activates directly on click.
+func presetChoices(info cfgstore.Info) (names []string, multi bool) {
+	if len(info.Meta.Presets) < 2 {
+		return nil, false
+	}
+	names = make([]string, 0, len(info.Meta.Presets))
+	for n := range info.Meta.Presets {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names, true
 }
 
 // windowProc is the standalone window process the tray spawned. alive() is
