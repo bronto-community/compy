@@ -210,6 +210,56 @@ func TestActivateUnknownSetErrors(t *testing.T) {
 	}
 }
 
+func TestValidateConfig(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ValidateConfig("debug"); err != nil {
+		t.Fatalf("ValidateConfig(debug) = %v, want nil", err)
+	}
+}
+
+func TestValidateConfigFailureReturnsCollectorOutput(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, `echo "error decoding 'exporters': unknown type" >&2; exit 1`)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = a.ValidateConfig("debug")
+	if err == nil || !strings.Contains(err.Error(), "unknown type") {
+		t.Fatalf("ValidateConfig(debug) = %v, want the collector's output", err)
+	}
+}
+
+// TestValidateConfigValidatesAnyConfig proves ValidateConfig checks name's
+// own config, not the active one: it validates an inactive configuration
+// while a different one is active.
+func TestValidateConfigValidatesAnyConfig(t *testing.T) {
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("other", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ValidateConfig("other"); err != nil {
+		t.Fatalf("ValidateConfig(other) = %v, want nil (validates any config, not just the active one)", err)
+	}
+}
+
 func TestActivateWithoutDistroMentionsDistroCommand(t *testing.T) {
 	setup(t, "")
 

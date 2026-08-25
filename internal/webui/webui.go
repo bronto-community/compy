@@ -35,18 +35,19 @@ type API struct {
 	Rollback func() error
 	Validate func() error
 
-	Configs       func() (any, error) // configurations, JSON-marshalable
-	CreateConfig  func(name, yaml string) error
-	CreateFromURL func(name, url string) error
-	GetConfig     func(name string) (any, error) // {"info":..., "yaml":...}
-	PutConfigYAML func(name, yaml string) error
-	PutConfigMeta func(name string, distro, remoteURL *string) error // partial: nil = unchanged
-	DeleteConfig  func(name string) error
-	CopyConfig    func(src, dst string) error
-	Activate      func(name, set string) error // make a configuration the running one; "" set keeps the current one
-	Sync          func(name string) error
-	Resync        func(name string) error
-	SyncAll       func() ([]string, error)
+	Configs        func() (any, error) // configurations, JSON-marshalable
+	CreateConfig   func(name, yaml string) error
+	CreateFromURL  func(name, url string) error
+	GetConfig      func(name string) (any, error) // {"info":..., "yaml":...}
+	PutConfigYAML  func(name, yaml string) error
+	PutConfigMeta  func(name string, distro, remoteURL *string) error // partial: nil = unchanged
+	DeleteConfig   func(name string) error
+	CopyConfig     func(src, dst string) error
+	Activate       func(name, set string) error // make a configuration the running one; "" set keeps the current one
+	ValidateConfig func(name string) error      // validate this config (any config, not just the active one) against its own distro
+	Sync           func(name string) error
+	Resync         func(name string) error
+	SyncAll        func() ([]string, error)
 
 	PutSet    func(name, set string, values map[string]string) error // create/replace whole set
 	DeleteSet func(name, set string) error
@@ -92,6 +93,7 @@ func routes() []route {
 		{"DELETE", "/api/configs/{name}", handleDeleteConfig},
 		{"POST", "/api/configs/{name}/copy", handleCopyConfig},
 		{"POST", "/api/configs/{name}/activate", handleActivate},
+		{"POST", "/api/configs/{name}/validate", handleValidateConfig},
 		{"POST", "/api/configs/{name}/sync", handleSync},
 		{"POST", "/api/configs/{name}/resync", handleResync},
 		{"POST", "/api/configs/sync-all", handleSyncAll},
@@ -112,7 +114,11 @@ func Handler(api API) http.Handler {
 	mux := http.NewServeMux()
 
 	for _, rt := range routes() {
-		mux.HandleFunc(rt.Method+" "+rt.Pattern, rt.H(api))
+		h := rt.H(api)
+		mux.HandleFunc(rt.Method+" "+rt.Pattern, func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+			h(w, r)
+		})
 	}
 
 	static, err := fs.Sub(staticFiles, "static")
@@ -186,6 +192,19 @@ func writeErr(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
 
+// writeBodyErr reports a request-body error: 413 if it's the request
+// exceeding the body-size cap (http.MaxBytesError, from the MaxBytesReader
+// Handler wraps every request body in), 400 for any other decode/read
+// failure (malformed JSON, a client hangup, etc).
+func writeBodyErr(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeErr(w, http.StatusRequestEntityTooLarge, err)
+		return
+	}
+	writeErr(w, http.StatusBadRequest, err)
+}
+
 func handleStatus(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		status, err := api.Status()
@@ -217,10 +236,20 @@ func handleActivate(api API) http.HandlerFunc {
 			Set string `json:"set"`
 		}
 		if err := decodeBody(r, &body); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+			writeBodyErr(w, err)
 			return
 		}
 		if err := api.Activate(r.PathValue("name"), body.Set); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleValidateConfig(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.ValidateConfig(r.PathValue("name")); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -256,7 +285,7 @@ func handleSetOSEnv(api API) http.HandlerFunc {
 			On bool `json:"on"`
 		}
 		if err := decodeBody(r, &body); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+			writeBodyErr(w, err)
 			return
 		}
 		if err := api.SetOSEnv(body.On); err != nil {
@@ -289,7 +318,7 @@ func handlePutSettings(api API) http.HandlerFunc {
 			MenuDistroSwap *bool `json:"menu_distro_swap"`
 		}
 		if err := decodeBody(r, &body); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+			writeBodyErr(w, err)
 			return
 		}
 		if err := api.PutSettings(body.GRPCPort, body.HTTPPort, body.MenuDistroSwap); err != nil {
@@ -342,7 +371,7 @@ func handleCreateConfig(api API) http.HandlerFunc {
 			Yaml string `json:"yaml"`
 		}
 		if err := decodeBody(r, &body); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+			writeBodyErr(w, err)
 			return
 		}
 		if err := api.CreateConfig(body.Name, body.Yaml); err != nil {
@@ -360,7 +389,7 @@ func handleCreateFromURL(api API) http.HandlerFunc {
 			URL  string `json:"url"`
 		}
 		if err := decodeBody(r, &body); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+			writeBodyErr(w, err)
 			return
 		}
 		if err := api.CreateFromURL(body.Name, body.URL); err != nil {
@@ -382,18 +411,17 @@ func handleGetConfig(api API) http.HandlerFunc {
 	}
 }
 
-// maxConfigYAMLBytes caps the body handlePutConfigYAML will read, mirroring
-// cfgstore.HTTPFetch's 5MB fetch cap.
-const maxConfigYAMLBytes = 5 << 20
+// maxBodyBytes caps every request body Handler routes through (applied in
+// Handler's route loop), mirroring cfgstore.HTTPFetch's 5MB fetch cap.
+const maxBodyBytes = 5 << 20
 
 // handlePutConfigYAML's body is text/plain, not JSON: the whole body is the
-// new YAML content.
+// new YAML content. The size cap itself is applied by Handler, not here.
 func handlePutConfigYAML(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxConfigYAMLBytes)
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+			writeBodyErr(w, err)
 			return
 		}
 		if err := api.PutConfigYAML(r.PathValue("name"), string(data)); err != nil {
@@ -411,7 +439,7 @@ func handlePutConfigMeta(api API) http.HandlerFunc {
 			RemoteURL *string `json:"remote_url"`
 		}
 		if err := decodeBody(r, &body); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+			writeBodyErr(w, err)
 			return
 		}
 		if err := api.PutConfigMeta(r.PathValue("name"), body.Distro, body.RemoteURL); err != nil {
@@ -438,7 +466,7 @@ func handleCopyConfig(api API) http.HandlerFunc {
 			Dst string `json:"dst"`
 		}
 		if err := decodeBody(r, &body); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+			writeBodyErr(w, err)
 			return
 		}
 		if err := api.CopyConfig(r.PathValue("name"), body.Dst); err != nil {
@@ -493,7 +521,7 @@ func handlePutSet(api API) http.HandlerFunc {
 			Values map[string]string `json:"values"`
 		}
 		if err := decodeBody(r, &body); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+			writeBodyErr(w, err)
 			return
 		}
 		if body.Values == nil {
@@ -555,7 +583,7 @@ func handleAddDistro(api API) http.HandlerFunc {
 			Path string `json:"path"`
 		}
 		if err := decodeBody(r, &body); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+			writeBodyErr(w, err)
 			return
 		}
 		warning, err := api.AddDistro(body.Name, body.Path)

@@ -26,16 +26,17 @@ func fakeAPI() API {
 		Rollback: func() error { return nil },
 		Validate: func() error { return nil },
 
-		CreateConfig:  func(name, yaml string) error { return nil },
-		CreateFromURL: func(name, url string) error { return nil },
-		GetConfig:     func(name string) (any, error) { return map[string]any{}, nil },
-		PutConfigYAML: func(name, yaml string) error { return nil },
-		PutConfigMeta: func(name string, distro, remoteURL *string) error { return nil },
-		DeleteConfig:  func(name string) error { return nil },
-		CopyConfig:    func(src, dst string) error { return nil },
-		Sync:          func(name string) error { return nil },
-		Resync:        func(name string) error { return nil },
-		SyncAll:       func() ([]string, error) { return nil, nil },
+		CreateConfig:   func(name, yaml string) error { return nil },
+		CreateFromURL:  func(name, url string) error { return nil },
+		GetConfig:      func(name string) (any, error) { return map[string]any{}, nil },
+		PutConfigYAML:  func(name, yaml string) error { return nil },
+		PutConfigMeta:  func(name string, distro, remoteURL *string) error { return nil },
+		DeleteConfig:   func(name string) error { return nil },
+		CopyConfig:     func(src, dst string) error { return nil },
+		ValidateConfig: func(name string) error { return nil },
+		Sync:           func(name string) error { return nil },
+		Resync:         func(name string) error { return nil },
+		SyncAll:        func() ([]string, error) { return nil, nil },
 
 		PutSet:    func(name, set string, values map[string]string) error { return nil },
 		DeleteSet: func(name, set string) error { return nil },
@@ -297,9 +298,11 @@ func TestCreateConfigRoute(t *testing.T) {
 	}
 }
 
-// TestPutConfigYAMLOversizedBody guards the http.MaxBytesReader cap on
-// handlePutConfigYAML: a body over the 5MB limit must fail with 400, not
-// exhaust memory reading an unbounded body.
+// TestPutConfigYAMLOversizedBody guards the http.MaxBytesReader cap Handler
+// applies to every route: a body over the 5MB limit must fail with 413, not
+// exhaust memory reading an unbounded body. Goes through Handler (not the
+// bare handler via call()) since the cap is now applied by Handler's route
+// loop, not the handler itself.
 func TestPutConfigYAMLOversizedBody(t *testing.T) {
 	api := fakeAPI()
 	api.PutConfigYAML = func(name, yaml string) error {
@@ -307,10 +310,13 @@ func TestPutConfigYAMLOversizedBody(t *testing.T) {
 		return nil
 	}
 
-	body := strings.Repeat("a", maxConfigYAMLBytes+1)
-	rec := call(handlePutConfigYAML(api), http.MethodPut, body, map[string]string{"name": "debug"})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+	body := strings.Repeat("a", maxBodyBytes+1)
+	req := httptest.NewRequest(http.MethodPut, "/api/configs/debug/yaml", strings.NewReader(body))
+	req.Host = "localhost"
+	rec := httptest.NewRecorder()
+	Handler(api).ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rec.Code)
 	}
 	var got map[string]string
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil || got["error"] == "" {
@@ -344,6 +350,42 @@ func TestCopyConfigRoute(t *testing.T) {
 	rec = call(handleCopyConfig(api), http.MethodPost, `{"dst":"debug2"}`, pv)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("closure error status = %d, want 500", rec.Code)
+	}
+}
+
+// TestValidateConfigRoute covers POST /api/configs/{name}/validate: 200
+// {"ok":true} on success, 500 with the closure's error (the collector's own
+// output) verbatim on failure.
+func TestValidateConfigRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotName string
+	api.ValidateConfig = func(name string) error {
+		gotName = name
+		return nil
+	}
+
+	rec := call(handleValidateConfig(api), http.MethodPost, "", map[string]string{"name": "debug"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotName != "debug" {
+		t.Fatalf("ValidateConfig got name=%q, want debug", gotName)
+	}
+	var ok map[string]bool
+	if err := json.NewDecoder(rec.Body).Decode(&ok); err != nil || !ok["ok"] {
+		t.Fatalf("body = %v, %v, want ok:true", ok, err)
+	}
+
+	api.ValidateConfig = func(name string) error {
+		return errWithMessage("error decoding 'exporters': unknown type")
+	}
+	rec = call(handleValidateConfig(api), http.MethodPost, "", map[string]string{"name": "debug"})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	var errBody map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil || errBody["error"] != "error decoding 'exporters': unknown type" {
+		t.Fatalf("body = %v, %v, want the collector's output verbatim", errBody, err)
 	}
 }
 
