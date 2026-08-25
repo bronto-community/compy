@@ -1,0 +1,670 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "compy",
+    "description": "Local OpenTelemetry Collector manager: REST API served by whatever UI process is running (compy ui / window / tray). Localhost-only; see internal/webui's host-check + CSRF middleware.",
+    "version": "2.0.0"
+  },
+  "servers": [
+    { "url": "http://127.0.0.1:8080" }
+  ],
+  "components": {
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" }
+        },
+        "required": ["error"]
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "running": { "type": "boolean" },
+          "distro": { "type": "string" },
+          "grpc_port": { "type": "integer" },
+          "http_port": { "type": "integer" },
+          "endpoint": { "type": "string" },
+          "config": { "type": "string" },
+          "set": { "type": "string" },
+          "os_env": { "type": "boolean" }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "grpc_port": { "type": "integer" },
+          "http_port": { "type": "integer" },
+          "menu_distro_swap": { "type": "boolean" }
+        }
+      },
+      "SettingsUpdate": {
+        "type": "object",
+        "description": "Partial: an absent field leaves that setting unchanged. Port changes take effect on next apply.",
+        "properties": {
+          "grpc_port": { "type": "integer" },
+          "http_port": { "type": "integer" },
+          "menu_distro_swap": { "type": "boolean" }
+        }
+      },
+      "Var": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "default": { "type": "string" },
+          "has_default": { "type": "boolean" },
+          "description": { "type": "string" }
+        }
+      },
+      "Info": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "provenance": { "type": "string", "enum": ["shipped", "remote", "local"] },
+          "modified": { "type": "boolean" },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "remote_url": { "type": "string" },
+              "distro": { "type": "string" },
+              "pristine_sha256": { "type": "string" },
+              "variable_sets": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" }
+                }
+              },
+              "active_set": { "type": "string" }
+            }
+          },
+          "vars": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Var" }
+          }
+        }
+      },
+      "ConfigDetail": {
+        "type": "object",
+        "properties": {
+          "info": { "$ref": "#/components/schemas/Info" },
+          "yaml": { "type": "string" }
+        }
+      },
+      "Distro": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "available": { "type": "boolean" },
+          "downloaded": { "type": "boolean" },
+          "selected": { "type": "boolean" },
+          "version": { "type": "string" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/status": {
+      "get": {
+        "summary": "Service state, distro, ports, active config",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Status" } } }
+          }
+        }
+      }
+    },
+    "/api/log": {
+      "get": {
+        "summary": "Tail of the collector log",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "log": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/env": {
+      "get": {
+        "summary": "OTEL_* environment variables compy exposes",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "vars": { "type": "object", "additionalProperties": { "type": "string" } },
+                    "script": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/os-env": {
+      "post": {
+        "summary": "Enable/disable OS-level (launchctl setenv) injection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "on": { "type": "boolean" } },
+                "required": ["on"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "summary": "Current settings",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Settings" } } }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update settings (partial)",
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SettingsUpdate" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Settings" } } }
+          },
+          "400": {
+            "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/service/apply": {
+      "post": {
+        "summary": "Re-activate the current configuration and set",
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/service/rollback": {
+      "post": {
+        "summary": "Restore and re-activate the last known-good configuration + settings",
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/service/validate": {
+      "post": {
+        "summary": "Validate the active configuration against its distro without touching the running service",
+        "responses": {
+          "200": {
+            "description": "Valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "ok": { "type": "boolean" } }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Invalid (the collector's own diagnostics)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs": {
+      "get": {
+        "summary": "List configurations",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Info" } }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a configuration (blank template if yaml is absent)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "yaml": { "type": "string" }
+                },
+                "required": ["name"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "OK" },
+          "400": {
+            "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/from-url": {
+      "post": {
+        "summary": "Create a configuration from a remote YAML URL",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "url": { "type": "string" }
+                },
+                "required": ["name", "url"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "OK" },
+          "400": {
+            "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}": {
+      "get": {
+        "summary": "One configuration's info and YAML",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfigDetail" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a configuration (the active one may not be deleted)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/yaml": {
+      "put": {
+        "summary": "Replace a configuration's YAML",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": { "text/plain": { "schema": { "type": "string" } } }
+        },
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/meta": {
+      "put": {
+        "summary": "Update a configuration's metadata (partial)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "distro": { "type": "string" },
+                  "remote_url": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "OK" },
+          "400": {
+            "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/copy": {
+      "post": {
+        "summary": "Duplicate a configuration under a new name",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "dst": { "type": "string" } },
+                "required": ["dst"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "OK" },
+          "400": {
+            "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/activate": {
+      "post": {
+        "summary": "Make this configuration the running one",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "set": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/sync": {
+      "post": {
+        "summary": "Refetch a remote configuration (refuses if locally modified)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/resync": {
+      "post": {
+        "summary": "Refetch a remote configuration, discarding local edits",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/sync-all": {
+      "post": {
+        "summary": "Sync every unmodified remote configuration",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "synced": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/sets/{set}": {
+      "put": {
+        "summary": "Create or replace a whole variable set",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "set", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "values": { "type": "object", "additionalProperties": { "type": "string" } }
+                },
+                "required": ["values"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "OK" },
+          "400": {
+            "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a variable set (never the active one)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "set", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/sets/{set}/use": {
+      "post": {
+        "summary": "Make this variable set the configuration's active one",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "set", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/distros": {
+      "get": {
+        "summary": "List the distro registry",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Distro" } }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Register a user distro",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "path": { "type": "string" }
+                },
+                "required": ["name", "path"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK (warning set when this overrides a shipped definition)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "warning": { "type": "string" } }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/distros/{name}/use": {
+      "post": {
+        "summary": "Select the global default distro",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/distros/{name}/fetch": {
+      "post": {
+        "summary": "Download a shipped distro definition's binary on demand",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "OK" },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    }
+  }
+}
