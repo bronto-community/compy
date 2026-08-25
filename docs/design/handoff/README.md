@@ -1,0 +1,416 @@
+# Handoff: compy — five surfaces
+
+## Overview
+
+compy is a macOS menu-bar app (plus window and CLI) that runs a local OpenTelemetry
+Collector for a developer. Apps on the machine send telemetry to compy; compy forwards
+it wherever the active configuration says. This handoff covers the redesign of all five
+surfaces: Configurations (home), Configuration editor, Collector, Settings, and the
+menu bar.
+
+Design decisions in here were made against a written product brief and iterated with the
+product owner. Several of the brief's "product truths" were deliberately changed — see
+**Departures from the brief** below. Those are decisions, not oversights.
+
+## About the design files
+
+`compy.dc.html` in this folder is a **design reference written in HTML**, not production
+code. It is a working prototype: real state, real latencies, real failure paths, so
+behaviour can be verified by clicking rather than by reading. Do **not** port the HTML.
+
+The task is to recreate these designs in compy's own environment (SwiftUI / AppKit for a
+native macOS app, or whatever the existing codebase uses), following that codebase's
+established patterns, components and idioms. Where this document and the prototype
+disagree, the prototype wins for behaviour and this document wins for intent.
+
+Open it in a browser. Everything described below is clickable.
+
+## Fidelity
+
+**High-fidelity.** Final colours, typography, spacing, iconography, copy and interaction
+behaviour. Recreate faithfully. Two caveats:
+
+- The YAML pane is a static render, not a working code editor. Syntax colouring and line
+  numbers are illustrative of the intended treatment; use a real editor component.
+- Health numbers, log lines, timestamps, pids and uptimes are fixed sample data.
+
+## Design language
+
+Dense utility. Monospace throughout (JetBrains Mono), IBM Plex Sans only for explanatory
+sentences. Tables over cards. Quiet text and icon actions rather than buttons. One accent
+colour, reserved for the single active thing — never used decoratively.
+
+Palette is Bronto's brand palette. Both a dark and a light theme are defined; the app
+follows macOS by default.
+
+### Colour tokens
+
+Every colour is a CSS custom property in the prototype so both themes stay in lockstep.
+Reproduce as two theme dictionaries.
+
+| token | dark | light | used for |
+|---|---|---|---|
+| desk | #131312 | #E2DECC | area behind the window |
+| window | #1b1b1a | #FDFCFA | window body, input fills |
+| raise | #212120 | #F1EFE7 | sidebar, presets band, row hover |
+| panel | #262625 | #F8F7F3 | tiles, menus, cards, active row fill |
+| logbg | #171716 | #F8F7F3 | log surface |
+| divider | #2b2b28 | #E9E5D9 | row separators |
+| border | #363631 | #D8D2C0 | default borders |
+| border2 | #302f2b | #E2DECC | soft card borders |
+| border3 | #4b4a44 | #C3BC9F | strong borders, focus |
+| text | #F1EFE7 | #444441 | primary text |
+| text2 | #E2DECC | #4E4C46 | menu items, code |
+| text3 | #C3BC9F | #5C5A51 | URLs, secondary values |
+| muted | #9E9782 | #6E6B5E | secondary text, quiet actions |
+| dim | #857F6B | #857F6B | icon actions, hints |
+| dim2 | #6C6759 | #7C7767 | placeholders, meta |
+| faint | #57544A | #8A8474 | column headers, disabled icons |
+| accent | #ECAA0D | #99753F | THE ACTIVE THING, only |
+| accentLine | #99753F | #C9A45E | borders on accent controls |
+| accentBg | #2E2A1A | #F5EEDD | accent control hover fill |
+| accentHi | #FFC839 | #ECAA0D | link hover |
+| ok | #53DFA9 | #17885B | running, valid |
+| okBg | #0A3424 | #E4F7EE | success strip fill |
+| err | #C1583B | #C1583B | failures, destructive |
+| errText | #FC9F85 | #A6412A | failure headline |
+| diag | #D2A392 | #7A3E2C | collector diagnostic body |
+| errBg | #241715 | #FCEDE7 | failure panel fill |
+| errLine | #4A241C | #E8BEAE | failure panel border |
+| errDiv | #3A211A | #EFD6CA | failure panel divider |
+| errHover | #2E1A15 | #F7E0D6 | destructive hover |
+| info | #859EFF | #0129CC | variable names |
+| string | #B3B310 | #17885B | YAML string values |
+| warnText | #D8A21A | #6F5410 | log warn level |
+| warnBg | #2A2617 | #FBF3DC | unlock confirmation fill |
+
+Light mode is not an inversion: accent becomes Bronto Gold (Lemon Lime is invisible on
+paper white), ok becomes Tropical Mint 60%, strings become green, variable names become
+Sapphire 60%. The two smallest-type tokens (faint, dim2) are darkened in light mode to
+clear 3:1 contrast at 10–11.5px.
+
+### Typography
+
+| role | font | size | notes |
+|---|---|---|---|
+| screen title | JetBrains Mono | 17px | lowercase |
+| body / rows | JetBrains Mono | 13px | |
+| secondary / actions | JetBrains Mono | 12px | |
+| meta, state | JetBrains Mono | 11.5px | |
+| column headers | JetBrains Mono | 10px | uppercase, letter-spacing .14em, faint |
+| explanatory sentences | IBM Plex Sans | 12px / 11.5px | the only non-mono text |
+| code / log | JetBrains Mono | 12.5px / 11.5px | line-height 1.85 / 1.75 |
+
+All UI copy is lowercase except native menu-bar items, which follow macOS convention
+(Title case: "Restart collector", "Open compy", "Quit").
+
+### Spacing, radius, elevation
+
+- Screen padding 20–24px; header padding 16–20px 24px.
+- Table rows: 10–11px vertical padding, 47–48px effective row height.
+- Card padding 8px 10px; grid gaps 8px; control gaps 8–14px.
+- Radius: 4px controls, 5px cards, 6px panels/tiles, 8–10px window.
+- Only elevation: dropdowns — `0 14px 30px -12px rgba(0,0,0,.65)`, submenus
+  `0 16px 34px -14px rgba(0,0,0,.7)`, window `0 30px 70px -20px rgba(0,0,0,.85)`.
+- Active row marker: `box-shadow: inset 2px 0 0 0 accent` plus panel fill.
+
+### Iconography
+
+Lucide (ISC), stroke 1.9, 12–14px, `currentColor`, round caps. Icons used: circle,
+circle-dot, package, user, link, play (filled), pencil, copy, refresh-cw, undo, trash-2,
+plus, chevron-down, chevron-right, check, download, folder, ban, search, list, activity,
+sliders. Use the real Lucide package (or the platform equivalent) rather than the inlined
+path data in the prototype.
+
+Semantics that must hold:
+- **circle-dot amber = running.** circle grey = not running.
+- **package / user / link** = built in to compy / yours / fetched from a URL.
+- **play** = activate. **pencil** = edit. **copy** = duplicate. **trash** = delete.
+- **refresh-cw / undo** = return to source (re-sync from URL / reset to shipped).
+
+## Vocabulary (settled — use these words everywhere)
+
+| concept | word | notes |
+|---|---|---|
+| bundled with compy | **built in to compy** | shown as the package icon; the phrase appears in tooltips |
+| created by the user | *no label* | the normal case earns no word |
+| fetched from a URL | **the host itself** (`otel.acme.dev`) | shown with the link icon; never a category word like "remote" |
+| named bundle of values | **preset** | never "variable set", "profile" |
+| collector binary | **collector** | four known ones; states: installed / available to download / added by you / not available on macOS |
+| user has edited a protected config | *no badge* | expressed only by the sync/reset icon being live |
+
+Names become folder names and CLI arguments, so they are lowercase-digits-dashes.
+Typing converts as you go ("My Collector" → `my-collector`) and the field says
+"saved as my-collector". Collisions are rejected, not auto-suffixed.
+
+## Departures from the brief (decisions, not omissions)
+
+1. **No per-config collector binary.** The brief allows each configuration to pin a
+   binary. Dropped. One collector, chosen once in Settings, runs everything. Rationale:
+   removes a config×binary matrix nobody can hold in their head, and "which binary was
+   this running under" stops being a question. Cost: comparing a config on `otelcol` vs
+   `otelcol-contrib` means switching globally and back.
+2. **No rollback / "restore last working setup".** The brief keeps the last
+   provably-working configuration and restores it in one action. Dropped after review:
+   "provably worked" cannot be defined without defining healthy, and a config can start
+   cleanly and still be wrong. If it returns, the honest version is "go back to the setup
+   you were on before this one" (config + preset), labelled with its target, one step
+   only — not a history.
+3. **Menu-bar collector switcher removed**, along with its Settings toggle. Choosing a
+   binary is a settings-level decision, not a per-session one.
+
+Two questions were left open on purpose: what "healthy" means beyond "the process
+started", and whether editing a built-in should fork a copy instead of taking it over.
+
+---
+
+# Screens
+
+## 1. Configurations (home)
+
+**Purpose.** See what is running, switch in one gesture, manage the list.
+
+**Layout.** Window 1240×838. Sidebar 214px fixed, content fills. Header (title, sentence,
+find field, "sync all", "new configuration"), then optional strips (note / nothing-active
+/ activation failure), then the table in a scroll area with 24px side padding.
+
+**Table grid.** `62px minmax(170px,1fr) 330px 112px`, 14px column gap. Header row:
+uppercase 10px faint labels — blank, name, preset, blank.
+
+Row columns:
+
+1. **Status + type**, two icons, 9px apart. circle-dot amber if running, circle dim
+   otherwise (tooltip "running now" / "not running"); then package / user / link
+   (tooltip "built in to compy" / "yours" / "fetched from otel.acme.dev").
+2. **Name.** 13px, amber when running, otherwise text. Click opens the editor.
+3. **Preset control.** A 148px-min bordered selector showing the selected preset with a
+   chevron **only when the config has more than one**; then **play** (activate) and
+   **pencil** (open the inline preset editor). While activating, the selector is followed
+   by pulsing "restarting…" and a 44px indeterminate bar. The dropdown lists every
+   preset, each with its own play and pencil, and ends with "+ add preset".
+4. **Actions**, always all three, right-aligned, 4px apart: copy, refresh-cw/undo, trash.
+   Greyed with an explaining tooltip when inapplicable — e.g. "yours from the start,
+   nothing to return to", "this is the shipped version, nothing to reset", "can't delete
+   the running config".
+
+**Active row.** panel fill + `inset 2px 0 0 0 accent` + amber name and status icon.
+Said once — there is no "running" text column, no badge.
+
+**Sorting.** Alphabetical by name, everywhere in the window. (The menu bar sorts by
+recency; see below.)
+
+**Empty / first-run.** The true empty state cannot occur (fresh installs ship with
+built-ins). The reachable one is *nothing active*: dashed strip, "nothing is running
+yet", "no collector is running. activate a config and it starts.", plus one primary
+action. Reach it by stopping the collector on the Collector screen.
+
+**New configuration.** Inline strip, two fields only: name (with live slug note, red
+"docker-stats already exists" on collision) and optional URL. With a URL: "fetching…"
+for ~1.5s, then either a linked config appears with a quiet confirmation, or an inline
+failure "404 · nothing at that URL. compy kept nothing."
+
+**Activation failure.** Bordered panel above the table: err dot, "couldn't activate
+ebpf-profiles", right-aligned reassurance "otlp-to-bronto still running", dismiss; then
+the collector's own multi-line diagnostic in monospace `<pre>` with horizontal scroll,
+then "open in editor" / "copy diagnostic". This is the home for collector text — never a
+one-line strip.
+
+**Destructive confirmations.** Single inline row, plain sentence + "keep it" + the verb
+("delete", "discard & re-sync", "reset"). No modals.
+
+**Find.** Field with search icon in the header, filters as you type; "no configuration
+matches “x”" when empty.
+
+## 2. Configuration editor
+
+**Purpose.** Edit one configuration: presets and their values, its YAML, its origin.
+
+**Header, one line.** status dot (if running) · type icon with the origin detail as
+tooltip · name as an inline-editable field (17px, borderless until hover/focus; rename
+rejects collisions) · for linked configs the URL as an inline field taking the row's free
+space · right side: transient "asking the collector…" hint, a re-sync/reset button where
+applicable, and **save**.
+
+There is no second header line and no origin strip — that information lives on the type
+icon, the URL field and the reset button.
+
+**Presets band** (directly under the header, full width, raise fill):
+- Row one: "presets" label, then one chip per preset. The selected chip carries an amber
+  dot and its name is an **inline editable field** (dashed underline) — renaming happens
+  here, there is no rename action. Every chip carries copy and trash icons. A dashed
+  **+** chip at the end adds a preset, like a browser tab.
+- Row two: value cards, **fixed 3 per row**, wrapping. Card: key name (bare —
+  `BRONTO_KEY`, not `${env:BRONTO_KEY}`) with its description as tooltip, origin hint
+  right ("line 17" / "default"), then the value input with a reveal/hide toggle for
+  secrets (masked with bullets). Card ~65px tall; padding 8px 10px, gap 5px.
+- Row three: a sentence only when something is wrong ("customer-x has no ingest key.
+  activating with it will fail.").
+
+Deleting a preset is blocked when it is the running one ("this preset is running.
+activate another one first.") and when it is the last one ("a config always keeps one
+preset"). Duplicate names are rejected.
+
+**Save results** sit at screen level, directly under the presets band — visible whether
+or not the YAML is expanded. Success: quiet one-line ok strip. Failure: err panel,
+"the collector rejected this config. nothing was saved.", copy + dismiss, and the
+diagnostic in a scrollable `<pre>`, max-height 220px.
+
+**YAML.** For built-in and linked configs it is **collapsed by default** to a single
+line: "config.yaml" + "ships with compy. most people never open it." / "kept in sync with
+otel.acme.dev" + "show yaml". User-owned configs open expanded. When expanded: uppercase
+"config.yaml" bar, read-only notice + "edit anyway" for protected configs, then a
+gutter of line numbers and the highlighted document (keys info, string values string,
+comments faint).
+
+**Protection flow.** "edit anyway" → one inline confirmation ("editing disconnects this
+from otel.acme.dev. it stops re-syncing." / "your version stays through compy updates.")
+→ "make it mine". Reset restores protection and read-only.
+
+## 3. Collector
+
+**Purpose.** Is telemetry flowing, and what is the collector saying?
+
+- **Header**: state dot (mint running / amber restarting / grey stopped), state word,
+  "pid 48213 · up 26m" (or "no process"), then **restart** (becomes **start** when
+  stopped) and **stop**.
+- **Four tiles**, 1px-gap grid: configuration (amber), preset, collector (underlined,
+  clicks through to Settings, tooltip "every config runs on this one"), listening. When
+  stopped: preset "—", listening "not listening", both dimmed.
+- **Health strip**: received / exported / queue / dropped, with
+  `localhost:8888/metrics` named on the right so the source of the numbers is explicit.
+  Dropped turns amber when non-zero. All dashes and "no metrics while stopped" when
+  stopped. Deliberately four numbers, no chart.
+- **Log toolbar**: filter field, level chips (all / error / warn / info / debug, amber dot
+  on the active one), line count, a copy icon (copies the filtered lines, confirms with
+  "14 log lines copied"), and the tail indicator ("live tail" mint / "paused" grey /
+  "no output" when stopped).
+- **Log**: three columns `82px 56px 1fr`, `white-space: pre`, `min-width: max-content`
+  so long lines scroll horizontally rather than wrap. Level colours: error err,
+  warn warnText, info info, debug dim2.
+
+## 4. Settings
+
+Two sections, **app first**:
+
+- **app** — appearance (segmented system / dark / light, system default, remembered,
+  follows macOS live) and "set OTEL_* variables system-wide". A sentence notes that ports
+  and shell wiring live in the CLI (`compy env`).
+- **collector** — "one collector runs every configuration. compy ships with contrib; add
+  others if you need them." Table shaped exactly like the configurations table:
+  `54px minmax(170px,1fr) 1fr 132px`; status icon (circle-dot in use / circle installed /
+  download available / ban blocked), name with its path as tooltip, one short state
+  phrase, then four always-present icons — play ("run every config on otelcol"), download,
+  folder (change path), trash. The in-use row carries the same amber edge and fill.
+  Downloading shows "downloading… 51%" with a 2px progress bar; failure shows
+  "download failed · checksum mismatch" in err with the download icon acting as retry.
+  `ebpf-profiler` shows "not available on macOS" with the reason in its tooltip — never a
+  dead row. Last row on the same grid: + , name field, path field, "add".
+
+## 5. Menu bar
+
+Native macOS menu, so this is ordering and wording:
+
+```
+● Running · otlp-to-bronto · staging
+  :4317 :4318 · 2 warnings
+  ────────
+  CONFIGURATION
+  ✓ otlp-to-bronto              ›     (submenu only when >1 preset)
+    local-debug
+    acme-standard               ›
+    … up to 10, most recently used first
+    More…                       ›     (the rest, alphabetical)
+  ────────
+  Restart collector
+  ────────
+  Open compy
+  Quit
+```
+
+One list, not two pickers: a configuration with several presets opens a submenu and
+**picking a preset is the activation**, so nothing can be half-chosen. Single-preset
+configs activate on click. Ten most recent, then More… . Status line always names state,
+config and preset. "Open compy" focuses the single existing window (never spawns one).
+
+# Interactions & behaviour
+
+**Slow actions** (activate, restart, save) take 1–10s and can fail. Everything else is
+instant. Prototype timings: activate 2.3s (ebpf failure path 3.4s), restart 2.2s, save
+1.6s, URL fetch 1.5s, download ~1.6s in ~17% steps.
+
+**During activation**: the row shows pulsing "restarting…" plus an indeterminate bar
+(`compyBar`, 1.2s linear, translateX(-100% → 320%)); the sidebar status reads
+"restarting…" with an amber dot; further activations are ignored until it settles.
+
+**On failure**: the previously active configuration keeps running and the panel says so.
+Nothing is saved on a rejected save.
+
+**Animations** are only these two: `compyPulse` (opacity 1 → .4 → 1, 1.1s ease-in-out
+infinite) on in-flight labels, and `compyBar`. No transitions elsewhere.
+
+**Hover** is a background lift to raise/panel for rows and menu items, and a colour lift
+(dim → text, or → err for destructive) for icon actions. Focus on inputs is a border3
+border plus a fill change.
+
+**Disabled** never hides an action: the icon greys to faint, the cursor stays default,
+and the tooltip explains why.
+
+# State
+
+```
+theme            'system' | 'dark' | 'light'   persisted (localStorage in the prototype)
+screen           'configs' | 'editor' | 'collector' | 'settings'
+activeId         config id currently running
+activePreset     preset name currently running
+nothingActive    collector stopped
+busyId           config id being activated
+restarting       collector restart in flight
+err / errName    activation failure diagnostic + subject
+recent           config ids, most recent first (menu ordering)
+presetSel        { configId: presetName }   per-row selection, independent of what runs
+presetsOpenId    which row's preset dropdown is open
+menubarId        which menu item's submenu is open ('__more' for More…)
+inline           { id, preset, isNew } | null  inline preset editor
+inlineName       draft preset name
+editId           config open in the editor
+name             draft config name
+unlocked         protection lifted for the open config
+unlockAsk        unlock confirmation showing
+yamlOpen         YAML expanded for a protected config
+saving / valErr / valOk        save in flight + result
+preset           preset selected in the editor
+values           { presetName: { KEY: value } }
+reveal           { KEY: bool }  secret visibility
+query / level / tail           log filter, level, tail state
+find             configuration search
+newOpen / newName / newUrl / newErr / fetching   new-configuration form
+confirm / confirmVerb / confirmId                destructive confirmation
+dl               { binaryName: { status, pct } } download progress
+note             transient one-line confirmation, auto-clears after ~3s
+```
+
+Validation rules: names slugged to `[a-z0-9-]`; duplicate config names rejected;
+duplicate preset names rejected; last preset undeletable; running preset undeletable;
+running config undeletable; URL fetch failure creates nothing.
+
+# Assets
+
+No image assets. Icons are Lucide (ISC licence) — use the real package. Fonts are
+JetBrains Mono and IBM Plex Sans (both open-licensed); substitute the codebase's mono and
+sans if it already standardises on some.
+
+# Files
+
+- `compy.dc.html` — the complete interactive prototype: all five surfaces, both themes,
+  every state described above. Open in any browser.
+
+## Things worth clicking in the prototype
+
+- Activate **ebpf-profiles** — platform failure with the collector's diagnostic.
+- Activate **otlp-to-bronto · customer-x** — missing `BRONTO_KEY` failure.
+- **save** in the editor twice — first the collector's complaint, then the quiet success.
+- **stop** on the Collector screen — reaches the nothing-active first-run state.
+- Create a config with a URL that is not `otel.acme.dev` — the 404 path.
+- Download **otelcol-k8s** in Settings — progress, then checksum failure and retry.
+- The **⟳ / undo** icon on `otlp-to-bronto` — reset to the shipped version.
+- The menu bar's **More…** — overflow past ten.
