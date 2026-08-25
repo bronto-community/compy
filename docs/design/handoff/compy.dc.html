@@ -1,0 +1,1338 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; background: var(--desk, #131312); }
+  * { box-sizing: border-box; }
+  a { color: var(--accent, #ECAA0D); text-decoration: none; }
+  a:hover { color: var(--accentHi, #FFC839); text-decoration: underline; }
+  input::placeholder { color: var(--dim2, #6C6759); }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--scroll, #3f3e38); border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  @keyframes compyPulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }
+  @keyframes compyBar { 0% { transform: translateX(-100%) } 100% { transform: translateX(320%) } }
+</style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; gap: 34px; padding: 40px; background: var(--desk, #131312); font-family: 'JetBrains Mono', ui-monospace, monospace; min-height: 100vh;">
+
+  <div style="display: flex; align-items: baseline; gap: 14px; font-size: 11px; letter-spacing: .16em; text-transform: uppercase;">
+    <span style="color: var(--accent, #ECAA0D);">compy</span>
+    <span style="color: var(--dim2, #6C6759);">five surfaces · dense utility</span>
+  </div>
+
+  <div style="width: 1240px; height: 838px; background: var(--window, #1b1b1a); border: 1px solid var(--border, #363631); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 70px -20px rgba(0,0,0,.85);">
+
+    <div style="height: 38px; flex: 0 0 38px; background: var(--panel, #262625); border-bottom: 1px solid var(--border, #363631); display: flex; align-items: center; padding: 0 14px; gap: 14px;">
+      <div style="display: flex; gap: 8px;">
+        <div style="width: 11px; height: 11px; border-radius: 50%; background: var(--border3, #4b4a44);"></div>
+        <div style="width: 11px; height: 11px; border-radius: 50%; background: var(--border3, #4b4a44);"></div>
+        <div style="width: 11px; height: 11px; border-radius: 50%; background: var(--border3, #4b4a44);"></div>
+      </div>
+      <div style="flex: 1; text-align: center; font-size: 12px; color: var(--muted, #9E9782);">compy</div>
+    </div>
+
+    <div style="flex: 1; display: flex; min-height: 0;">
+
+      <div style="width: 214px; flex: 0 0 214px; background: var(--raise, #212120); border-right: 1px solid var(--border, #363631); display: flex; flex-direction: column; padding: 14px 0;">
+        <div style="padding: 0 16px 8px; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--faint, #57544A);">compy</div>
+        <sc-for list="{{ nav }}" as="item" hint-placeholder-count="4">
+          <div onClick="{{ item.go }}" style="position: relative; display: flex; align-items: center; gap: 10px; padding: 7px 16px; font-size: 13px; cursor: pointer; color: var(--muted, #9E9782);" style-hover="background: var(--divider, #2b2b28); color: var(--text, #F1EFE7);">
+            <sc-if value="{{ item.on }}" hint-placeholder-val="{{ false }}">
+              <span style="position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; background: var(--accent, #ECAA0D);"></span>
+            </sc-if>
+            <span style="display: flex; color: var(--faint, #57544A);">{{ item.glyph }}</span>
+            <span>{{ item.label }}</span>
+            <span style="flex: 1;"></span>
+            <span style="font-size: 10px; color: var(--faint, #57544A);">{{ item.badge }}</span>
+          </div>
+        </sc-for>
+
+        <div style="flex: 1;"></div>
+
+        <div style="margin: 0 12px; padding: 11px 12px; border: 1px solid var(--border, #363631); border-radius: 6px; background: var(--panel, #262625); display: flex; flex-direction: column; gap: 6px;">
+          <div style="display: flex; align-items: center; gap: 7px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted, #9E9782);">
+            <span style="width: 5px; height: 5px; border-radius: 50%; background: {{ statusDot }};"></span>
+            <span>{{ headerStatus }}</span>
+          </div>
+          <div style="font-size: 12.5px; color: var(--accent, #ECAA0D);">{{ activeName }}</div>
+          <div style="font-size: 11px; color: var(--muted, #9E9782);">preset · {{ activePreset }}</div>
+          <div style="font-size: 11px; color: var(--dim2, #6C6759);">{{ sidebarPorts }}</div>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+
+        <!-- SCREEN 1 -->
+        <sc-if value="{{ isConfigs }}" hint-placeholder-val="{{ true }}">
+        <div data-screen-label="01 Configurations" style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+
+          <div style="padding: 20px 24px 15px; border-bottom: 1px solid var(--border, #363631); display: flex; align-items: flex-end; gap: 20px;">
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="font-size: 17px; color: var(--text, #F1EFE7);">configurations</div>
+              <div style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 12px; color: var(--muted, #9E9782);">activating restarts the collector</div>
+            </div>
+            <span style="flex: 1;"></span>
+            <span style="display: flex; align-items: center; gap: 8px; border: 1px solid var(--border, #363631); border-radius: 4px; padding: 4px 9px;" style-hover="border-color: var(--border3, #4b4a44);">
+              <span style="display: flex; color: var(--faint, #57544A);">{{ searchIcon }}</span>
+              <input value="{{ find }}" onChange="{{ onFind }}" placeholder="find" spellcheck="false" style="width: 118px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text, #F1EFE7); background: transparent; border: none; outline: none;">
+            </span>
+            <div style="display: flex; gap: 18px; font-size: 12px;">
+              <span onClick="{{ syncAll }}" style="color: var(--muted, #9E9782); cursor: pointer;" style-hover="color: var(--text, #F1EFE7);">sync all</span>
+              <span onClick="{{ openNew }}" style="color: var(--text, #F1EFE7); cursor: pointer; border-bottom: 1px solid var(--border3, #4b4a44); padding-bottom: 1px;" style-hover="border-color: var(--accent, #ECAA0D);">new configuration</span>
+            </div>
+          </div>
+
+          <sc-if value="{{ newOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="margin: 16px 24px 0; padding: 14px 16px; border: 1px solid var(--border3, #4b4a44); border-radius: 6px; background: var(--panel, #262625); display: flex; align-items: flex-end; gap: 14px;">
+              <div style="display: flex; flex-direction: column; gap: 6px; width: 260px;">
+                <span style="font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint, #57544A);">name</span>
+                <input value="{{ newName }}" onChange="{{ onNewName }}" placeholder="my collector" spellcheck="false" style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text, #F1EFE7); background: var(--window, #1b1b1a); border: 1px solid var(--border, #363631); border-radius: 4px; padding: 6px 9px; outline: none;" style-focus="border-color: var(--border3, #4b4a44);">
+                <span style="font-size: 11px; color: {{ newNoteColor }};">{{ newSlugNote }}</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0;">
+                <span style="font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint, #57544A);">from url (optional)</span>
+                <input value="{{ newUrl }}" onChange="{{ onNewUrl }}" placeholder="https://otel.acme.dev/configs/standard.yaml" spellcheck="false" style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text, #F1EFE7); background: var(--window, #1b1b1a); border: 1px solid var(--border, #363631); border-radius: 4px; padding: 6px 9px; outline: none;" style-focus="border-color: var(--border3, #4b4a44);">
+                <span style="font-size: 11px; color: {{ newErrColor }};">{{ newUrlNote }}</span>
+              </div>
+              <span onClick="{{ closeNew }}" style="font-size: 12px; color: var(--muted, #9E9782); cursor: pointer; padding-bottom: 26px;" style-hover="color: var(--text, #F1EFE7);">cancel</span>
+              <span onClick="{{ createNew }}" style="font-size: 12px; color: var(--accent, #ECAA0D); cursor: pointer; border: 1px solid var(--accentLine, #99753F); border-radius: 4px; padding: 6px 12px; margin-bottom: 22px; white-space: nowrap;" style-hover="background: var(--accentBg, #2E2A1A);">{{ createLabel }}</span>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ note }}" hint-placeholder-val="{{ false }}">
+            <div style="margin: 14px 24px 0; padding: 9px 14px; border: 1px solid var(--border2, #302f2b); border-radius: 6px; background: var(--panel, #262625); font-size: 12px; color: var(--muted, #9E9782);">{{ note }}</div>
+          </sc-if>
+
+          <sc-if value="{{ nothingActive }}" hint-placeholder-val="{{ false }}">
+            <div style="margin: 16px 24px 0; padding: 14px 16px; border: 1px dashed var(--border3, #4b4a44); border-radius: 6px; display: flex; align-items: center; gap: 16px; background: var(--raise, #212120);">
+              <div style="display: flex; flex-direction: column; gap: 4px;">
+                <div style="font-size: 13px; color: var(--text, #F1EFE7);">nothing active</div>
+                <div style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 12px; color: var(--muted, #9E9782);">no collector is running. activate a config and it starts.</div>
+              </div>
+              <span style="flex: 1;"></span>
+              <span onClick="{{ activateSuggested }}" style="font-size: 12px; color: var(--accent, #ECAA0D); cursor: pointer; border: 1px solid var(--accentLine, #99753F); padding: 6px 12px; border-radius: 4px; white-space: nowrap;" style-hover="background: var(--accentBg, #2E2A1A);">activate local-debug</span>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ activationError }}" hint-placeholder-val="{{ false }}">
+            <div style="margin: 16px 24px 0; border: 1px solid var(--errLine, #4A241C); border-radius: 6px; overflow: hidden; background: var(--errBg, #241715);">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--errDiv, #3A211A);">
+                <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--err, #C1583B);"></span>
+                <span style="font-size: 12px; color: var(--errText, #FC9F85);">{{ activationErrorTitle }}</span>
+                <span style="flex: 1;"></span>
+                <span style="font-size: 11px; color: var(--muted, #9E9782);">{{ activationErrorKept }}</span>
+                <span onClick="{{ dismissError }}" style="font-size: 12px; color: var(--muted, #9E9782); cursor: pointer; padding-left: 10px;" style-hover="color: var(--text, #F1EFE7);">dismiss</span>
+              </div>
+              <pre style="margin: 0; padding: 12px 14px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.7; color: var(--diag, #D2A392); overflow-x: auto; white-space: pre;">{{ activationError }}</pre>
+              <div style="display: flex; gap: 18px; padding: 10px 14px; border-top: 1px solid var(--errDiv, #3A211A); font-size: 12px;">
+                <span onClick="{{ openErrored }}" style="color: var(--text, #F1EFE7); cursor: pointer;" style-hover="color: var(--accent, #ECAA0D);">open in editor</span>
+                <span onClick="{{ copyDiag }}" style="color: var(--muted, #9E9782); cursor: pointer;" style-hover="color: var(--text, #F1EFE7);">copy diagnostic</span>
+              </div>
+            </div>
+          </sc-if>
+
+          <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 12px 24px 24px;">
+            <div style="display: grid; grid-template-columns: 62px minmax(170px, 1fr) 330px 112px; gap: 0 14px; align-items: center; padding: 8px 10px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A); border-bottom: 1px solid var(--border, #363631);">
+              <span></span><span>name</span><span>preset</span><span></span>
+            </div>
+
+            <sc-for list="{{ rows }}" as="row" hint-placeholder-count="6">
+              <div style="border-bottom: 1px solid var(--divider, #2b2b28);">
+                <div style="position: relative; display: grid; grid-template-columns: 62px minmax(170px, 1fr) 330px 112px; gap: 0 14px; align-items: center; padding: 10px; font-size: 13px; background: {{ row.rowBg }}; box-shadow: {{ row.rowMark }};">
+
+                  <span style="display: flex; align-items: center; gap: 9px;">
+                    <span title="{{ row.activeTitle }}" style="display: flex; color: {{ row.activeColor }};">{{ row.activeIcon }}</span>
+                    <span title="{{ row.typeTitle }}" style="display: flex; color: var(--dim2, #6C6759);">{{ row.typeIcon }}</span>
+                  </span>
+
+                  <span onClick="{{ row.open }}" style="display: flex; align-items: baseline; gap: 8px; cursor: pointer; min-width: 0;">
+                    <span style="color: {{ row.nameColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ row.name }}</span>
+                  </span>
+
+                  <span style="position: relative; display: flex; align-items: center; gap: 9px; font-size: 12px;">
+                    <span onClick="{{ row.togglePresets }}" style="display: flex; align-items: center; gap: 8px; min-width: 148px; color: var(--text2, #E2DECC); cursor: {{ row.presetCursor }}; border: 1px solid var(--border, #363631); border-radius: 4px; padding: 4px 9px;" style-hover="border-color: var(--border3, #4b4a44);">
+                      <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ row.presetName }}</span>
+                      <span style="flex: 1;"></span>
+                      <span style="display: flex; color: var(--dim2, #6C6759);">{{ row.caret }}</span>
+                    </span>
+
+                    <span onClick="{{ row.activate }}" title="{{ row.playTitle }}" style="display: flex; cursor: pointer; color: {{ row.playColor }}; border: 1px solid {{ row.playBorder }}; border-radius: 4px; padding: 5px 11px;" style-hover="background: var(--accentBg, #2E2A1A);">{{ row.playIcon }}</span>
+                    <span onClick="{{ row.edit }}" title="edit preset values" style="display: flex; cursor: pointer; color: var(--dim, #857F6B); border: 1px solid var(--border, #363631); border-radius: 4px; padding: 5px 11px;" style-hover="color: var(--text, #F1EFE7); border-color: var(--border3, #4b4a44);">{{ row.editIcon }}</span>
+
+                    <sc-if value="{{ row.busy }}" hint-placeholder-val="{{ false }}">
+                      <span style="display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--accent, #ECAA0D);">
+                        <span style="animation: compyPulse 1.1s ease-in-out infinite;">restarting…</span>
+                        <span style="display: block; width: 44px; height: 2px; background: var(--border, #363631); border-radius: 2px; overflow: hidden;">
+                          <span style="display: block; height: 2px; width: 30%; background: var(--accent, #ECAA0D); animation: compyBar 1.2s linear infinite;"></span>
+                        </span>
+                      </span>
+                    </sc-if>
+
+                    <sc-if value="{{ row.presetsOpen }}" hint-placeholder-val="{{ false }}">
+                      <span style="position: absolute; top: 32px; left: 0; z-index: 6; min-width: 250px; display: flex; flex-direction: column; background: var(--panel, #262625); border: 1px solid var(--border3, #4b4a44); border-radius: 5px; padding: 4px 0; box-shadow: 0 14px 30px -12px rgba(0,0,0,.65);">
+                        <sc-for list="{{ row.presetList }}" as="p" hint-placeholder-count="3">
+                          <span style="display: flex; align-items: center; gap: 12px; padding: 6px 11px;" style-hover="background: var(--raise, #212120);">
+                            <span onClick="{{ p.pick }}" style="flex: 1; cursor: pointer; white-space: nowrap; color: {{ p.color }};">{{ p.label }}</span>
+                            <span onClick="{{ p.play }}" title="activate this preset" style="display: flex; cursor: pointer; color: var(--accent, #ECAA0D);">{{ p.playIcon }}</span>
+                            <span onClick="{{ p.edit }}" title="edit this preset" style="display: flex; cursor: pointer; color: var(--dim, #857F6B);" style-hover="color: var(--text, #F1EFE7);">{{ p.editIcon }}</span>
+                          </span>
+                        </sc-for>
+                        <span onClick="{{ row.addPreset }}" style="border-top: 1px solid var(--divider, #2b2b28); margin-top: 4px; padding: 7px 11px; cursor: pointer; color: var(--muted, #9E9782); white-space: nowrap;" style-hover="background: var(--raise, #212120); color: var(--text, #F1EFE7);">+ add preset</span>
+                      </span>
+                    </sc-if>
+                  </span>
+
+                  <span style="display: flex; justify-content: flex-end; align-items: center; gap: 4px; font-size: 12px;">
+                    <span onClick="{{ row.copy }}" title="{{ row.copyTitle }}" style="display: flex; cursor: {{ row.copyCursor }}; color: {{ row.copyColor }}; padding: 5px 6px; border-radius: 4px;" style-hover="background: var(--raise, #212120);">{{ row.copyIcon }}</span>
+                    <span onClick="{{ row.sync }}" title="{{ row.syncTitle }}" style="display: flex; cursor: {{ row.syncCursor }}; color: {{ row.syncColor }}; padding: 5px 6px; border-radius: 4px;" style-hover="background: var(--raise, #212120);">{{ row.syncIcon }}</span>
+                    <span onClick="{{ row.del }}" title="{{ row.delTitle }}" style="display: flex; cursor: {{ row.delCursor }}; color: {{ row.delColor }}; padding: 5px 6px; border-radius: 4px;" style-hover="background: var(--raise, #212120);">{{ row.delIcon }}</span>
+                  </span>
+                </div>
+
+                <sc-if value="{{ row.inlineOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="background: var(--raise, #212120); border-top: 1px solid var(--divider, #2b2b28); padding: 13px 12px 15px 72px; display: flex; flex-direction: column; gap: 11px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                      <span style="font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A);">{{ row.inlineTitle }}</span>
+                      <input value="{{ row.inlineName }}" onChange="{{ row.onInlineName }}" placeholder="preset name" spellcheck="false" style="width: 180px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text, #F1EFE7); background: var(--window, #1b1b1a); border: 1px solid var(--border, #363631); border-radius: 4px; padding: 5px 9px; outline: none;" style-focus="border-color: var(--border3, #4b4a44);">
+                      <span style="flex: 1;"></span>
+                      <span onClick="{{ row.closeInline }}" style="font-size: 12px; color: var(--muted, #9E9782); cursor: pointer;" style-hover="color: var(--text, #F1EFE7);">cancel</span>
+                      <span onClick="{{ row.saveInline }}" style="font-size: 12px; color: var(--text, #F1EFE7); cursor: pointer; border: 1px solid var(--border3, #4b4a44); border-radius: 4px; padding: 5px 12px;" style-hover="border-color: var(--accent, #ECAA0D); color: var(--accent, #ECAA0D);">save preset</span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+                      <sc-for list="{{ row.inlineVars }}" as="v" hint-placeholder-count="3">
+                        <div style="display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; border: 1px solid var(--border2, #302f2b); border-radius: 5px; background: var(--panel, #262625);">
+                          <div style="display: flex; align-items: baseline; gap: 8px;">
+                            <span title="{{ v.description }}" style="font-size: 11.5px; color: var(--info, #859EFF); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ v.name }}</span>
+                            <span style="flex: 1;"></span>
+                            <span style="font-size: 10px; color: var(--faint, #57544A); white-space: nowrap;">{{ v.origin }}</span>
+                          </div>
+                          <div style="display: flex; align-items: center; gap: 8px;">
+                            <input value="{{ v.shown }}" onChange="{{ v.onEdit }}" placeholder="{{ v.placeholder }}" spellcheck="false" style="flex: 1; min-width: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text, #F1EFE7); background: var(--window, #1b1b1a); border: 1px solid var(--border, #363631); border-radius: 4px; padding: 4px 7px; outline: none;" style-focus="border-color: var(--border3, #4b4a44);">
+                            <sc-if value="{{ v.revealLabel }}" hint-placeholder-val="{{ false }}">
+                              <span onClick="{{ v.toggle }}" style="font-size: 10.5px; color: var(--dim, #857F6B); cursor: pointer; white-space: nowrap;" style-hover="color: var(--text, #F1EFE7);">{{ v.revealLabel }}</span>
+                            </sc-if>
+                          </div>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <div style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 11.5px; color: var(--dim, #857F6B);">{{ row.inlineNote }}</div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+
+            <sc-if value="{{ noMatches }}" hint-placeholder-val="{{ false }}">
+              <div style="padding: 18px 8px; font-size: 12px; color: var(--dim2, #6C6759);">{{ noMatches }}</div>
+            </sc-if>
+
+            <sc-if value="{{ confirm }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top: 14px; padding: 12px 14px; border: 1px solid var(--errLine, #4A241C); border-radius: 6px; background: var(--errBg, #241715); display: flex; align-items: center; gap: 16px;">
+                <span style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 12.5px; color: var(--text2, #E2DECC);">{{ confirm }}</span>
+                <span style="flex: 1;"></span>
+                <span onClick="{{ cancelConfirm }}" style="font-size: 12px; color: var(--muted, #9E9782); cursor: pointer;" style-hover="color: var(--text, #F1EFE7);">keep it</span>
+                <span onClick="{{ okConfirm }}" style="font-size: 12px; color: var(--err, #C1583B); cursor: pointer; border: 1px solid var(--errLine, #4A241C); border-radius: 4px; padding: 5px 11px; white-space: nowrap;" style-hover="background: var(--errHover, #2E1A15);">{{ confirmVerb }}</span>
+              </div>
+            </sc-if>
+
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- SCREEN 2 -->
+        <sc-if value="{{ isEditor }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="02 Editor" style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+
+          <div style="padding: 16px 24px 14px; border-bottom: 1px solid var(--border, #363631); display: flex; flex-direction: column; gap: 11px;">
+            <div style="display: flex; align-items: center; gap: 14px;">
+              <sc-if value="{{ editIsActive }}" hint-placeholder-val="{{ true }}">
+                <span title="running now" style="display: flex; color: var(--accent, #ECAA0D);">{{ activeDotIcon }}</span>
+              </sc-if>
+              <span title="{{ editTypeTitle }}" style="display: flex; color: var(--dim2, #6C6759);">{{ editTypeIcon }}</span>
+              <input value="{{ editName }}" onChange="{{ onRename }}" spellcheck="false" style="font-family: 'JetBrains Mono', monospace; font-size: 17px; color: var(--text, #F1EFE7); background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px 7px; margin-left: -7px; width: 300px; outline: none;" style-hover="border-color: var(--border, #363631);" style-focus="border-color: var(--border3, #4b4a44); background: var(--panel, #262625);">
+              <sc-if value="{{ isUrlOrigin }}" hint-placeholder-val="{{ false }}">
+                <input value="{{ originUrl }}" spellcheck="false" title="source URL" style="flex: 20 1 auto; min-width: 120px; text-overflow: ellipsis; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text3, #C3BC9F); background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 4px 7px; outline: none;" style-hover="border-color: var(--border, #363631);" style-focus="border-color: var(--border3, #4b4a44); background: var(--panel, #262625);">
+              </sc-if>
+              <span style="flex: 1;"></span>
+              <span style="font-size: 11px; color: var(--dim2, #6C6759);">{{ saveHint }}</span>
+              <sc-if value="{{ showReset }}" hint-placeholder-val="{{ false }}">
+                <span onClick="{{ resync }}" title="{{ syncState }}" style="display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted, #9E9782); cursor: pointer; border: 1px solid var(--border3, #4b4a44); border-radius: 4px; padding: 5px 12px; white-space: nowrap;" style-hover="color: var(--text, #F1EFE7); border-color: var(--accent, #ECAA0D);">
+{{ headerSyncIcon }}<span>{{ resyncLabel }}</span>
+                </span>
+              </sc-if>
+              <span onClick="{{ save }}" style="font-size: 12px; color: var(--text, #F1EFE7); cursor: pointer; border: 1px solid var(--border3, #4b4a44); border-radius: 4px; padding: 5px 12px; white-space: nowrap;" style-hover="border-color: var(--accent, #ECAA0D); color: var(--accent, #ECAA0D);">{{ saveLabel }}</span>
+            </div>
+
+          </div>
+
+          <div style="border-bottom: 1px solid var(--border, #363631); background: var(--raise, #212120); padding: 13px 24px 15px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <span style="font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A); margin-right: 4px;">presets</span>
+              <sc-for list="{{ presets }}" as="p" hint-placeholder-count="3">
+                <span style="display: flex; align-items: center; gap: 7px; font-size: 12px; padding: 3px 10px; border-radius: 4px; border: 1px solid var(--border, #363631); white-space: nowrap;" style-hover="border-color: var(--border3, #4b4a44);">
+                  <sc-if value="{{ p.on }}" hint-placeholder-val="{{ false }}">
+                    <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--accent, #ECAA0D);"></span>
+                  </sc-if>
+                  <sc-if value="{{ p.on }}" hint-placeholder-val="{{ false }}">
+                    <input value="{{ p.name }}" onChange="{{ p.rename }}" size="{{ p.size }}" spellcheck="false" title="rename this preset" style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text, #F1EFE7); background: transparent; border: none; border-bottom: 1px dashed var(--border3, #4b4a44); padding: 1px 0; outline: none;" style-focus="border-bottom-color: var(--accent, #ECAA0D);">
+                  </sc-if>
+                  <sc-if value="{{ p.off }}" hint-placeholder-val="{{ true }}">
+                    <span onClick="{{ p.pick }}" style="cursor: pointer; color: var(--muted, #9E9782);" style-hover="color: var(--text, #F1EFE7);">{{ p.name }}</span>
+                  </sc-if>
+                  <span onClick="{{ p.dup }}" title="duplicate this preset" style="display: flex; cursor: pointer; color: var(--dim, #857F6B); padding-left: 2px;" style-hover="color: var(--text, #F1EFE7);">{{ p.copyIcon }}</span>
+                  <span onClick="{{ p.del }}" title="{{ p.delTitle }}" style="display: flex; cursor: {{ p.delCursor }}; color: {{ p.delColor }};" style-hover="color: var(--err, #C1583B);">{{ p.delIcon }}</span>
+                </span>
+              </sc-for>
+              <span onClick="{{ newPreset }}" title="add a preset" style="display: flex; color: var(--muted, #9E9782); cursor: pointer; border: 1px dashed var(--border3, #4b4a44); border-radius: 4px; padding: 6px 10px;" style-hover="color: var(--accent, #ECAA0D); border-color: var(--accentLine, #99753F);">{{ plusIcon }}</span>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+              <sc-for list="{{ vars }}" as="v" hint-placeholder-count="3">
+                <div style="display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; border: 1px solid var(--border2, #302f2b); border-radius: 5px; background: var(--panel, #262625);">
+                  <div style="display: flex; align-items: baseline; gap: 8px;">
+                    <span title="{{ v.description }}" style="font-size: 11.5px; color: var(--info, #859EFF); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ v.name }}</span>
+                    <span style="flex: 1;"></span>
+                    <span style="font-size: 10px; color: var(--faint, #57544A); white-space: nowrap;">{{ v.origin }}</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <input value="{{ v.shown }}" onChange="{{ v.onEdit }}" placeholder="{{ v.placeholder }}" spellcheck="false" style="flex: 1; min-width: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text, #F1EFE7); background: var(--window, #1b1b1a); border: 1px solid var(--border, #363631); border-radius: 4px; padding: 4px 7px; outline: none;" style-focus="border-color: var(--border3, #4b4a44);">
+                    <sc-if value="{{ v.revealLabel }}" hint-placeholder-val="{{ false }}">
+                      <span onClick="{{ v.toggle }}" style="font-size: 10.5px; color: var(--dim, #857F6B); cursor: pointer; white-space: nowrap;" style-hover="color: var(--text, #F1EFE7);">{{ v.revealLabel }}</span>
+                    </sc-if>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+
+            <sc-if value="{{ presetNote }}" hint-placeholder-val="{{ false }}">
+              <div style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 11.5px; color: var(--dim, #857F6B);">{{ presetNote }}</div>
+            </sc-if>
+          </div>
+
+          <sc-if value="{{ validationOk }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--border, #363631); background: var(--okBg, #0A3424); font-size: 12px; color: var(--ok, #53DFA9);">
+              <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--ok, #53DFA9);"></span>
+              <span>{{ validationOk }}</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ validationError }}" hint-placeholder-val="{{ false }}">
+            <div style="border-top: 1px solid var(--errLine, #4A241C); background: var(--errBg, #241715); max-height: 220px; display: flex; flex-direction: column;">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-bottom: 1px solid var(--errDiv, #3A211A); font-size: 12px;">
+                <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--err, #C1583B);"></span>
+                <span style="color: var(--errText, #FC9F85);">the collector rejected this config. nothing was saved.</span>
+                <span style="flex: 1;"></span>
+                <span onClick="{{ copyDiag }}" style="color: var(--muted, #9E9782); cursor: pointer;" style-hover="color: var(--text, #F1EFE7);">copy</span>
+                <span onClick="{{ dismissValidation }}" style="color: var(--muted, #9E9782); cursor: pointer;" style-hover="color: var(--text, #F1EFE7);">dismiss</span>
+              </div>
+              <pre style="margin: 0; padding: 12px 16px; overflow: auto; font-size: 11.5px; line-height: 1.7; color: var(--diag, #D2A392); white-space: pre;">{{ validationError }}</pre>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ yamlHidden }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; align-items: center; gap: 14px; padding: 20px 24px;">
+              <span style="font-size: 13px; color: var(--text, #F1EFE7);">config.yaml</span>
+              <span style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 12px; color: var(--dim, #857F6B);">{{ yamlHiddenNote }}</span>
+              <span style="flex: 1;"></span>
+              <span onClick="{{ showYaml }}" style="font-size: 12px; color: var(--muted, #9E9782); cursor: pointer; border: 1px solid var(--border3, #4b4a44); border-radius: 4px; padding: 5px 12px;" style-hover="color: var(--text, #F1EFE7);">show yaml</span>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ yamlShown }}" hint-placeholder-val="{{ true }}">
+          <div style="flex: 1; min-height: 0; display: flex;">
+
+            <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+              <div style="display: flex; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid var(--divider, #2b2b28); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A);">
+                <span>config.yaml</span>
+                <span style="flex: 1;"></span>
+                <sc-if value="{{ locked }}" hint-placeholder-val="{{ true }}">
+                  <span style="display: flex; align-items: center; gap: 12px; text-transform: none; letter-spacing: 0; font-size: 11.5px;">
+                    <span style="color: var(--muted, #9E9782);">read-only</span>
+                    <span onClick="{{ unlock }}" style="color: var(--accent, #ECAA0D); cursor: pointer;" style-hover="text-decoration: underline;">edit anyway</span>
+                  </span>
+                </sc-if>
+              </div>
+
+              <sc-if value="{{ unlockAsk }}" hint-placeholder-val="{{ false }}">
+                <div style="margin: 12px 16px 0; padding: 12px 14px; border: 1px solid var(--accentLine, #99753F); border-radius: 5px; background: var(--warnBg, #2A2617); display: flex; align-items: center; gap: 14px;">
+                  <span style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 12.5px; color: var(--text2, #E2DECC); line-height: 1.5;">{{ unlockCopy }}</span>
+                  <span style="flex: 1;"></span>
+                  <span onClick="{{ cancelUnlock }}" style="font-size: 12px; color: var(--muted, #9E9782); cursor: pointer; white-space: nowrap;" style-hover="color: var(--text, #F1EFE7);">cancel</span>
+                  <span onClick="{{ confirmUnlock }}" style="font-size: 12px; color: var(--accent, #ECAA0D); cursor: pointer; border: 1px solid var(--accentLine, #99753F); border-radius: 4px; padding: 5px 11px; white-space: nowrap;" style-hover="background: var(--accentBg, #2E2A1A);">make it mine</span>
+                </div>
+              </sc-if>
+
+              <div style="flex: 1; min-height: 0; overflow: auto; display: flex; font-size: 12.5px; line-height: 1.85;">
+                <pre style="margin: 0; padding: 14px 10px 20px 16px; color: var(--border3, #4b4a44); text-align: right; user-select: none;"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21</pre>
+                <pre style="margin: 0; padding: 14px 24px 20px 8px; color: var(--text2, #E2DECC); white-space: pre;">receivers:
+  <span style="color: var(--info, #859EFF);">otlp</span>:
+    protocols:
+      grpc:
+        endpoint: <span style="color: var(--string, #B3B310);">0.0.0.0:4317</span>
+      http:
+        endpoint: <span style="color: var(--string, #B3B310);">0.0.0.0:4318</span>
+
+processors:
+  <span style="color: var(--info, #859EFF);">batch</span>: { timeout: <span style="color: var(--string, #B3B310);">5s</span> }
+
+exporters:
+  <span style="color: var(--info, #859EFF);">otlp/bronto</span>:
+    endpoint: <span style="color: var(--string, #B3B310);">${env:OTLP_ENDPOINT:-otlp.eu.bronto.io:443}</span>  <span style="color: var(--faint, #57544A);"># where traces go</span>
+    headers:
+      x-bronto-key: <span style="color: var(--string, #B3B310);">${env:BRONTO_KEY}</span>  <span style="color: var(--faint, #57544A);"># ingest key</span>
+      x-bronto-dataset: <span style="color: var(--string, #B3B310);">${env:DATASET:-dev}</span>  <span style="color: var(--faint, #57544A);"># dataset name</span>
+
+service:
+  pipelines:
+    traces: { receivers: [otlp], processors: [batch], exporters: [otlp/bronto] }</pre>
+              </div>
+
+            </div>
+
+          </div>
+          </sc-if>
+        </div>
+        </sc-if>
+
+        <!-- SCREEN 3 -->
+        <sc-if value="{{ isCollector }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="03 Collector" style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+
+          <div style="padding: 20px 24px 16px; border-bottom: 1px solid var(--border, #363631); display: flex; flex-direction: column; gap: 15px;">
+            <div style="display: flex; align-items: center; gap: 14px;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: {{ collectorDot }};"></span>
+              <span style="font-size: 17px; color: var(--text, #F1EFE7);">{{ collectorState }}</span>
+              <span style="font-size: 12px; color: var(--dim2, #6C6759);">{{ collectorMeta }}</span>
+              <span style="flex: 1;"></span>
+              <span onClick="{{ restart }}" style="font-size: 12px; color: var(--text, #F1EFE7); cursor: pointer; border: 1px solid var(--border3, #4b4a44); border-radius: 4px; padding: 5px 12px;" style-hover="border-color: var(--accent, #ECAA0D); color: var(--accent, #ECAA0D);">{{ restartLabel }}</span>
+              <sc-if value="{{ canStop }}" hint-placeholder-val="{{ true }}">
+                <span onClick="{{ stop }}" title="stop the collector. nothing will be received until you activate a config again." style="font-size: 12px; color: var(--muted, #9E9782); cursor: pointer; border: 1px solid var(--border3, #4b4a44); border-radius: 4px; padding: 5px 12px;" style-hover="color: var(--err, #C1583B); border-color: var(--err, #C1583B);">stop</span>
+              </sc-if>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border, #363631); border: 1px solid var(--border, #363631); border-radius: 6px; overflow: hidden;">
+              <div style="background: var(--panel, #262625); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A);">configuration</span>
+                <span style="font-size: 13px; color: var(--accent, #ECAA0D);">{{ activeName }}</span>
+              </div>
+              <div style="background: var(--panel, #262625); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A);">preset</span>
+                <span style="font-size: 13px; color: {{ liveColor }};">{{ livePreset }}</span>
+              </div>
+              <div style="background: var(--panel, #262625); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A);">collector</span>
+                <span onClick="{{ goSettings }}" title="every config runs on this one. change it in settings." style="font-size: 13px; color: var(--text, #F1EFE7); cursor: pointer; width: fit-content; border-bottom: 1px solid var(--border3, #4b4a44);" style-hover="color: var(--accent, #ECAA0D);">otelcol-contrib 0.108</span>
+              </div>
+              <div style="background: var(--panel, #262625); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A);">listening</span>
+                <span style="font-size: 13px; color: {{ liveColor }};">{{ liveListening }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 24px; padding: 11px 24px; border-bottom: 1px solid var(--divider, #2b2b28); background: var(--panel, #262625);">
+            <sc-for list="{{ health }}" as="h" hint-placeholder-count="4">
+              <span style="display: flex; align-items: baseline; gap: 8px;">
+                <span style="font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint, #57544A);">{{ h.label }}</span>
+                <span style="font-size: 13px; color: {{ h.color }};">{{ h.value }}</span>
+              </span>
+            </sc-for>
+            <span style="flex: 1;"></span>
+            <span title="the collector's own prometheus endpoint" style="font-size: 11px; color: var(--dim2, #6C6759);">{{ healthSource }}</span>
+          </div>
+
+          <div style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+            <div style="display: flex; align-items: center; gap: 10px; padding: 10px 24px; border-bottom: 1px solid var(--divider, #2b2b28);">
+              <input value="{{ query }}" onChange="{{ onQuery }}" placeholder="filter log…" spellcheck="false" style="width: 240px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text, #F1EFE7); background: var(--panel, #262625); border: 1px solid var(--border, #363631); border-radius: 4px; padding: 5px 9px; outline: none;" style-focus="border-color: var(--border3, #4b4a44);">
+              <sc-for list="{{ levels }}" as="l" hint-placeholder-count="4">
+                <span onClick="{{ l.pick }}" style="display: flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 4px 9px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border2, #302f2b); color: var(--muted, #9E9782);" style-hover="color: var(--text, #F1EFE7); border-color: var(--border3, #4b4a44);">
+                  <sc-if value="{{ l.on }}" hint-placeholder-val="{{ false }}">
+                    <span style="width: 4px; height: 4px; border-radius: 50%; background: var(--accent, #ECAA0D);"></span>
+                  </sc-if>
+                  <span>{{ l.label }}</span>
+                </span>
+              </sc-for>
+              <span style="flex: 1;"></span>
+              <span style="font-size: 11.5px; color: var(--dim2, #6C6759);">{{ logCount }}</span>
+              <span onClick="{{ copyLog }}" title="{{ copyLogTitle }}" style="display: flex; color: var(--dim, #857F6B); cursor: pointer; padding: 4px 5px; border-radius: 4px;" style-hover="color: var(--text, #F1EFE7); background: var(--panel, #262625);">{{ copyLogIcon }}</span>
+              <span onClick="{{ toggleTail }}" style="display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--muted, #9E9782); cursor: pointer;" style-hover="color: var(--text, #F1EFE7);">
+                <span style="width: 5px; height: 5px; border-radius: 50%; background: {{ tailDot }};"></span><span>{{ tailLabel }}</span>
+              </span>
+            </div>
+
+            <div style="flex: 1; min-height: 0; overflow: auto; background: var(--logbg, #171716);">
+              <sc-for list="{{ logs }}" as="l" hint-placeholder-count="12">
+                <div style="display: grid; grid-template-columns: 82px 56px 1fr; gap: 14px; padding: 3px 24px; font-size: 11.5px; line-height: 1.75; white-space: pre; min-width: max-content;" style-hover="background: var(--panel, #262625);">
+                  <span style="color: var(--border3, #4b4a44);">{{ l.time }}</span>
+                  <span style="{{ l.levelStyle }}">{{ l.level }}</span>
+                  <span style="color: var(--text3, #C3BC9F);">{{ l.text }}</span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ noLogs }}" hint-placeholder-val="{{ false }}">
+                <div style="padding: 20px 24px; font-size: 12px; color: var(--dim2, #6C6759);">no lines match this filter.</div>
+              </sc-if>
+            </div>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- SCREEN 4 -->
+        <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+        <div data-screen-label="04 Settings" style="flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 28px; display: flex; flex-direction: column; gap: 22px;">
+
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <div style="font-size: 17px; color: var(--text, #F1EFE7);">app</div>
+            <div style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 12px; color: var(--muted, #9E9782);">ports and shell wiring live in the CLI: <span style="font-family: 'JetBrains Mono', monospace; color: var(--text3, #C3BC9F);">compy env</span></div>
+          </div>
+
+          <div style="border: 1px solid var(--border, #363631); border-radius: 6px; overflow: hidden;">
+            <div style="display: flex; align-items: center; gap: 14px; padding: 13px 14px; border-bottom: 1px solid var(--divider, #2b2b28);">
+              <span style="display: flex; flex-direction: column; gap: 3px;">
+                <span style="font-size: 13px; color: var(--text, #F1EFE7);">appearance</span>
+                <span style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 11.5px; color: var(--dim, #857F6B);">{{ themeNote }}</span>
+              </span>
+              <span style="flex: 1;"></span>
+              <span style="display: flex; border: 1px solid var(--border3, #4b4a44); border-radius: 5px; overflow: hidden;">
+                <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
+                  <span onClick="{{ t.pick }}" style="font-size: 11.5px; padding: 5px 14px; cursor: pointer; border-left: 1px solid var(--border3, #4b4a44); color: {{ t.color }}; background: {{ t.bg }};">{{ t.label }}</span>
+                </sc-for>
+              </span>
+            </div>
+            <sc-for list="{{ toggles }}" as="t" hint-placeholder-count="2">
+              <div onClick="{{ t.flip }}" style="display: flex; align-items: center; gap: 14px; padding: 13px 14px; border-bottom: 1px solid var(--divider, #2b2b28); cursor: pointer;" style-hover="background: var(--raise, #212120);">
+                <span style="display: flex; flex-direction: column; gap: 3px;">
+                  <span style="font-size: 13px; color: var(--text, #F1EFE7);">{{ t.label }}</span>
+                  <span style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 11.5px; color: var(--dim, #857F6B);">{{ t.note }}</span>
+                </span>
+                <span style="flex: 1;"></span>
+                <span style="width: 34px; height: 18px; border-radius: 10px; border: 1px solid var(--border3, #4b4a44); background: {{ t.trackColor }}; display: flex; align-items: center; padding: 2px; justify-content: {{ t.justify }};">
+                  <span style="width: 12px; height: 12px; border-radius: 50%; background: {{ t.knobColor }};"></span>
+                </span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+            <div style="font-size: 17px; color: var(--text, #F1EFE7);">collector</div>
+            <div style="font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 12px; color: var(--muted, #9E9782);">one collector runs every configuration. compy ships with contrib; add others if you need them.</div>
+          </div>
+
+          <div style="border: 1px solid var(--border, #363631); border-radius: 6px; overflow: hidden;">
+            <div style="display: grid; grid-template-columns: 54px minmax(170px, 1fr) 1fr 132px; gap: 0 14px; padding: 9px 14px; background: var(--panel, #262625); border-bottom: 1px solid var(--border, #363631); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A);">
+              <span></span><span>collector</span><span>state</span><span></span>
+            </div>
+            <sc-for list="{{ binaries }}" as="b" hint-placeholder-count="5">
+              <div style="display: grid; grid-template-columns: 54px minmax(170px, 1fr) 1fr 132px; gap: 0 14px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--divider, #2b2b28); font-size: 13px; background: {{ b.rowBg }}; box-shadow: {{ b.rowMark }};">
+                <span title="{{ b.state }}" style="display: flex; color: {{ b.iconColor }};">{{ b.icon }}</span>
+                <span title="{{ b.detail }}" style="color: {{ b.nameColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ b.name }}</span>
+                <span style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+                  <span style="font-size: 11.5px; color: {{ b.stateColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ b.state }}</span>
+                  <sc-if value="{{ b.progress }}" hint-placeholder-val="{{ false }}">
+                    <span style="display: block; height: 2px; background: var(--border, #363631); border-radius: 2px; overflow: hidden;">
+                      <span style="display: block; height: 2px; background: var(--accent, #ECAA0D); width: {{ b.progress }};"></span>
+                    </span>
+                  </sc-if>
+                </span>
+                <span style="display: flex; justify-content: flex-end; align-items: center; gap: 4px;">
+                  <span onClick="{{ b.use }}" title="{{ b.useTitle }}" style="display: flex; cursor: {{ b.useCursor }}; color: {{ b.useColor }}; padding: 5px 6px; border-radius: 4px;" style-hover="background: var(--raise, #212120);">{{ b.useIcon }}</span>
+                  <span onClick="{{ b.get }}" title="{{ b.getTitle }}" style="display: flex; cursor: {{ b.getCursor }}; color: {{ b.getColor }}; padding: 5px 6px; border-radius: 4px;" style-hover="background: var(--raise, #212120);">{{ b.getIcon }}</span>
+                  <span onClick="{{ b.path }}" title="{{ b.pathTitle }}" style="display: flex; cursor: {{ b.pathCursor }}; color: {{ b.pathColor }}; padding: 5px 6px; border-radius: 4px;" style-hover="background: var(--raise, #212120);">{{ b.pathIcon }}</span>
+                  <span onClick="{{ b.remove }}" title="{{ b.removeTitle }}" style="display: flex; cursor: {{ b.removeCursor }}; color: {{ b.removeColor }}; padding: 5px 6px; border-radius: 4px;" style-hover="background: var(--raise, #212120);">{{ b.removeIcon }}</span>
+                </span>
+              </div>
+            </sc-for>
+            <div style="display: grid; grid-template-columns: 54px minmax(170px, 1fr) 1fr 132px; gap: 0 14px; align-items: center; padding: 10px 14px;">
+              <span style="display: flex; color: var(--faint, #57544A);">{{ plusIcon }}</span>
+              <input placeholder="name" spellcheck="false" style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text, #F1EFE7); background: var(--panel, #262625); border: 1px solid var(--border, #363631); border-radius: 4px; padding: 5px 8px; outline: none; min-width: 0;" style-focus="border-color: var(--border3, #4b4a44);">
+              <input placeholder="/usr/local/bin/otelcol-mine" spellcheck="false" style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text, #F1EFE7); background: var(--panel, #262625); border: 1px solid var(--border, #363631); border-radius: 4px; padding: 5px 8px; outline: none; min-width: 0;" style-focus="border-color: var(--border3, #4b4a44);">
+              <span onClick="{{ noop }}" style="display: flex; justify-content: flex-end; font-size: 12px; color: var(--muted, #9E9782); cursor: pointer;" style-hover="color: var(--text, #F1EFE7);">add</span>
+            </div>
+          </div>
+
+        </div>
+        </sc-if>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 5: menu bar text artboard -->
+  <div data-screen-label="05 Menu bar" style="display: flex; gap: 28px; align-items: flex-start;">
+    <div style="width: 344px; border: 1px solid var(--border, #363631); border-radius: 8px; background: var(--raise, #212120); overflow: visible;">
+      <div style="padding: 9px 14px; border-bottom: 1px solid var(--border, #363631); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A);">menu bar — live</div>
+      <div style="padding: 8px 0; font-size: 12.5px; color: var(--text2, #E2DECC); display: flex; flex-direction: column;">
+
+        <div style="padding: 5px 14px; display: flex; align-items: center; gap: 8px;">
+          <span style="width: 5px; height: 5px; border-radius: 50%; background: {{ statusDot }};"></span>
+          <span>{{ menuStatus }}</span>
+        </div>
+        <div style="padding: 4px 14px 4px 27px; color: var(--muted, #9E9782);">{{ menuPorts }}</div>
+
+        <div style="height: 1px; background: var(--border, #363631); margin: 7px 0;"></div>
+        <div style="padding: 4px 14px; color: var(--dim, #857F6B); font-size: 11px; letter-spacing: .1em; text-transform: uppercase;">configuration</div>
+
+        <sc-for list="{{ menuConfigs }}" as="m" hint-placeholder-count="6">
+          <div style="position: relative;">
+            <div onClick="{{ m.click }}" style="display: flex; align-items: center; gap: 9px; padding: 5px 14px; cursor: pointer; color: {{ m.color }}; background: {{ m.bg }};" style-hover="background: var(--panel, #262625);">
+              <span style="width: 12px; display: flex; color: var(--accent, #ECAA0D);">{{ m.check }}</span>
+              <span>{{ m.name }}</span>
+              <span style="flex: 1;"></span>
+              <span style="font-size: 11px; color: var(--dim, #857F6B);">{{ m.right }}</span>
+            </div>
+
+            <sc-if value="{{ m.open }}" hint-placeholder-val="{{ false }}">
+              <div style="position: absolute; top: -6px; left: 100%; z-index: 8; min-width: 190px; background: var(--panel, #262625); border: 1px solid var(--border3, #4b4a44); border-radius: 6px; padding: 5px 0; box-shadow: 0 16px 34px -14px rgba(0,0,0,.7);">
+                <sc-for list="{{ m.presets }}" as="p" hint-placeholder-count="3">
+                  <div onClick="{{ p.pick }}" style="display: flex; align-items: center; gap: 9px; padding: 5px 12px; cursor: pointer; color: {{ p.color }};" style-hover="background: var(--raise, #212120);">
+                    <span style="width: 12px; display: flex; color: var(--accent, #ECAA0D);">{{ p.check }}</span>
+                    <span>{{ p.name }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+
+        <sc-if value="{{ menuMore }}" hint-placeholder-val="{{ false }}">
+          <div style="position: relative;">
+            <div onClick="{{ menuMore.click }}" style="display: flex; align-items: center; gap: 9px; padding: 5px 14px; cursor: pointer; color: var(--muted, #9E9782);" style-hover="background: var(--panel, #262625);">
+              <span style="width: 12px;"></span>
+              <span>More…</span>
+              <span style="flex: 1;"></span>
+              <span style="font-size: 11px; color: var(--dim, #857F6B);">{{ menuMore.right }}</span>
+            </div>
+            <sc-if value="{{ menuMore.open }}" hint-placeholder-val="{{ false }}">
+              <div style="position: absolute; top: -6px; left: 100%; z-index: 8; min-width: 200px; background: var(--panel, #262625); border: 1px solid var(--border3, #4b4a44); border-radius: 6px; padding: 5px 0; box-shadow: 0 16px 34px -14px rgba(0,0,0,.7);">
+                <sc-for list="{{ menuMore.items }}" as="m" hint-placeholder-count="3">
+                  <div onClick="{{ m.pick }}" style="padding: 5px 12px; cursor: pointer; color: {{ m.color }};" style-hover="background: var(--raise, #212120);">{{ m.name }}</div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <div style="height: 1px; background: var(--border, #363631); margin: 7px 0;"></div>
+        <div onClick="{{ restart }}" style="padding: 5px 14px 5px 35px; cursor: pointer;" style-hover="background: var(--panel, #262625);">{{ menuRestart }}</div>
+        <div style="height: 1px; background: var(--border, #363631); margin: 7px 0;"></div>
+        <div style="padding: 5px 14px 5px 35px; color: var(--muted, #9E9782);">Open compy</div>
+        <div style="padding: 5px 14px 5px 35px; color: var(--muted, #9E9782);">Quit</div>
+      </div>
+    </div>
+
+    <div style="width: 430px; display: flex; flex-direction: column; gap: 14px; font-family: 'IBM Plex Sans', system-ui, sans-serif;">
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint, #57544A);">decisions worth flagging</div>
+      <div style="font-size: 12.5px; line-height: 1.7; color: var(--muted, #9E9782);">
+        <p style="margin: 0 0 10px;"><span style="color: var(--text2, #E2DECC);">Words.</span> shipped becomes <span style="color: var(--text2, #E2DECC);">built in to compy</span>, shown as an icon. remote becomes the URL host. local gets nothing. variable set becomes <span style="color: var(--text2, #E2DECC);">preset</span>. modified lives only where it acts: the sync icon and its tooltip.</p>
+        <p style="margin: 0 0 10px;"><span style="color: var(--text2, #E2DECC);">Menu.</span> one list, not two: configs with a preset submenu where one exists. picking a preset is the same gesture as activating, so nothing can be half-chosen. this menu is live — it drives the window beside it.</p>
+        <p style="margin: 0 0 10px;"><span style="color: var(--text2, #E2DECC);">Against the brief.</span> the per-config pinned binary is gone. one collector, chosen once in Settings, runs everything: no config or preset can disagree with another, and "which binary was this running under" stops being a question. adding alternatives stays possible.</p>
+        <p style="margin: 0 0 10px;"><span style="color: var(--text2, #E2DECC);">Things to click.</span> activate <span style="font-family: 'JetBrains Mono', monospace; color: var(--accent, #ECAA0D);">ebpf-profiles</span> for the failure. the pencil opens a preset under its row. click a name for the yaml. save twice in the editor: the collector's complaint, then the quiet success. stop the collector on the Collector screen to reach the nothing-active state.</p>
+        <p style="margin: 0;"><span style="color: var(--text2, #E2DECC);">Still open.</span> what "healthy" means beyond "the process started" — needed before anything can promise a known-good setup. and whether editing a built-in should fork a copy instead of taking it over.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1320, &quot;height&quot;: 1100}}">
+class Component extends DCLogic {
+  DARK = {
+    desk: "#131312", logbg: "#171716", window: "#1b1b1a", raise: "#212120", panel: "#262625",
+    divider: "#2b2b28", border: "#363631", border2: "#302f2b", border3: "#4b4a44", scroll: "#3f3e38",
+    text: "#F1EFE7", text2: "#E2DECC", text3: "#C3BC9F", muted: "#9E9782", dim: "#857F6B",
+    dim2: "#6C6759", faint: "#57544A", accent: "#ECAA0D", accentLine: "#99753F", accentBg: "#2E2A1A",
+    accentHi: "#FFC839", ok: "#53DFA9", okBg: "#0A3424", err: "#C1583B", errText: "#FC9F85",
+    diag: "#D2A392", errBg: "#241715", errLine: "#4A241C", errDiv: "#3A211A", errHover: "#2E1A15",
+    info: "#859EFF", string: "#B3B310", warnBg: "#2A2617", warnText: "#D8A21A"
+  };
+
+  LIGHT = {
+    desk: "#E2DECC", logbg: "#F8F7F3", window: "#FDFCFA", raise: "#F1EFE7", panel: "#F8F7F3",
+    divider: "#E9E5D9", border: "#D8D2C0", border2: "#E2DECC", border3: "#C3BC9F", scroll: "#C3BC9F",
+    text: "#444441", text2: "#4E4C46", text3: "#5C5A51", muted: "#6E6B5E", dim: "#857F6B",
+    dim2: "#7C7767", faint: "#8A8474", accent: "#99753F", accentLine: "#C9A45E", accentBg: "#F5EEDD",
+    accentHi: "#ECAA0D", ok: "#17885B", okBg: "#E4F7EE", err: "#C1583B", errText: "#A6412A",
+    diag: "#7A3E2C", errBg: "#FCEDE7", errLine: "#E8BEAE", errDiv: "#EFD6CA", errHover: "#F7E0D6",
+    info: "#0129CC", string: "#17885B", warnBg: "#FBF3DC", warnText: "#6F5410"
+  };
+
+  componentDidMount() {
+    this.mq = window.matchMedia("(prefers-color-scheme: dark)");
+    this.onMq = () => this.forceUpdate();
+    this.mq.addEventListener("change", this.onMq);
+    this.applyTheme();
+  }
+  componentDidUpdate() { this.applyTheme(); }
+  componentWillUnmount() { if (this.mq) this.mq.removeEventListener("change", this.onMq); }
+
+  resolvedTheme() {
+    const t = this.state.theme;
+    if (t === "dark" || t === "light") return t;
+    return this.mq && this.mq.matches ? "dark" : "light";
+  }
+  applyTheme() {
+    const set = this.resolvedTheme() === "light" ? this.LIGHT : this.DARK;
+    const root = document.documentElement.style;
+    for (const k in set) root.setProperty("--" + k, set[k]);
+    root.setProperty("color-scheme", this.resolvedTheme());
+  }
+
+  state = {
+    menuId: null,
+    menubarId: null,
+    note: null,
+    find: "",
+    newUrl: "",
+    newErr: null,
+    fetching: false,
+    dl: {},
+    yamlOpen: false,
+    activePreset: "staging",
+    recent: ["honeycomb", "local-debug", "acme"],
+    presetSel: {},
+    presetsOpenId: null,
+    inline: null,
+    inlineName: "",
+    theme: (() => { try { return localStorage.getItem("compy.theme") || "system"; } catch (e) { return "system"; } })(),
+    screen: "configs",
+    activeId: "honeycomb",
+    editId: "honeycomb",
+    busyId: null,
+    err: null,
+    errName: null,
+    nothingActive: false,
+    newOpen: false,
+    newName: "",
+    confirm: null,
+    confirmVerb: "delete",
+    confirmId: null,
+    unlockAsk: false,
+    unlocked: false,
+    saving: false,
+    saveN: 0,
+    valErr: null,
+    valOk: null,
+    preset: "staging",
+    reveal: {},
+    values: { staging: { BRONTO_KEY: "bro_live_01H8Q2ZR4TVX9M", DATASET: "dev-traces", OTLP_ENDPOINT: "" }, "prod-key": { BRONTO_KEY: "bro_live_PRODUCTION7781", DATASET: "prod", OTLP_ENDPOINT: "otlp.eu.bronto.io:443" }, "customer-x": { BRONTO_KEY: "", DATASET: "cx-shared", OTLP_ENDPOINT: "" } },
+    query: "",
+    level: "all",
+    tail: true,
+    restarting: false,
+    name: "otlp-to-bronto"
+  };
+
+  configs = [
+    { id: "honeycomb", name: "otlp-to-bronto", origin: "builtin", edited: true, presets: ["staging", "prod-key", "customer-x"] },
+    { id: "local-debug", name: "local-debug", origin: "user", presets: ["default"] },
+    { id: "acme", name: "acme-standard", origin: "url", host: "otel.acme.dev", sync: true, presets: ["default", "eu-region"] },
+    { id: "tail", name: "tail-sampling", origin: "url", host: "otel.acme.dev", edited: true, presets: ["default"] },
+    { id: "ebpf", name: "ebpf-profiles", origin: "builtin", presets: ["default"] },
+    { id: "prom", name: "prom-scrape-local", origin: "user", presets: ["default", "high-cardinality"] },
+    { id: "docker", name: "docker-stats", origin: "user", presets: ["default"] },
+    { id: "k8s", name: "k8s-attributes", origin: "url", host: "otel.acme.dev", presets: ["default"] },
+    { id: "logsfile", name: "logs-to-file", origin: "user", presets: ["default"] },
+    { id: "metrics", name: "metrics-only", origin: "builtin", presets: ["default"] },
+    { id: "tracedebug", name: "trace-debug", origin: "user", presets: ["default", "verbose"] },
+    { id: "vector", name: "vector-bridge", origin: "user", presets: ["default"] }
+  ];
+
+  sorted() { return this.configs.slice().sort((a, b) => a.name.localeCompare(b.name)); }
+
+  ICON = { builtin: ["package", "built in to compy"], user: ["user", "yours"], url: ["link", "fetched from a URL"] };
+
+  PATHS = {
+    play: [["polygon", { points: "6 3 20 12 6 21 6 3" }]],
+    pencil: [["path", { d: "M12 20h9" }], ["path", { d: "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" }]],
+    copy: [["rect", { x: "9", y: "9", width: "13", height: "13", rx: "2" }], ["path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" }]],
+    refresh: [["path", { d: "M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" }], ["path", { d: "M3 3v5h5" }], ["path", { d: "M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" }], ["path", { d: "M16 16h5v5" }]],
+    trash: [["path", { d: "M3 6h18" }], ["path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" }], ["path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }], ["line", { x1: "10", y1: "11", x2: "10", y2: "17" }], ["line", { x1: "14", y1: "11", x2: "14", y2: "17" }]],
+    plus: [["path", { d: "M5 12h14" }], ["path", { d: "M12 5v14" }]],
+    chevron: [["path", { d: "m6 9 6 6 6-6" }]],
+    chevronRight: [["path", { d: "m9 18 6-6-6-6" }]],
+    check: [["path", { d: "M20 6 9 17l-5-5" }]],
+    search: [["circle", { cx: "11", cy: "11", r: "7" }], ["path", { d: "m21 21-4.3-4.3" }]],
+    undo: [["path", { d: "M3 7v6h6" }], ["path", { d: "M3 13a9 9 0 1 0 3-7.7L3 8" }]],
+    package: [["path", { d: "m7.5 4.27 9 5.15" }], ["path", { d: "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" }], ["path", { d: "m3.3 7 8.7 5 8.7-5" }], ["path", { d: "M12 22V12" }]],
+    link: [["path", { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }], ["path", { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" }]],
+    user: [["path", { d: "M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" }], ["circle", { cx: "12", cy: "7", r: "4" }]],
+    circle: [["circle", { cx: "12", cy: "12", r: "9" }]],
+    dot: [["circle", { cx: "12", cy: "12", r: "9" }], ["circle", { cx: "12", cy: "12", r: "3.4", fill: "currentColor" }]],
+    save: [["path", { d: "M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" }], ["path", { d: "M17 21v-8H7v8" }], ["path", { d: "M7 3v5h8" }]],
+    list: [["path", { d: "M8 6h13" }], ["path", { d: "M8 12h13" }], ["path", { d: "M8 18h13" }], ["path", { d: "M3 6h.01" }], ["path", { d: "M3 12h.01" }], ["path", { d: "M3 18h.01" }]],
+    activity: [["path", { d: "M22 12h-4l-3 9L9 3l-3 9H2" }]],
+    download: [["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }], ["path", { d: "m7 10 5 5 5-5" }], ["path", { d: "M12 15V3" }]],
+    folder: [["path", { d: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" }]],
+    ban: [["circle", { cx: "12", cy: "12", r: "9" }], ["path", { d: "m5.6 5.6 12.8 12.8" }]],
+    settings: [["line", { x1: "4", y1: "21", x2: "4", y2: "14" }], ["line", { x1: "4", y1: "10", x2: "4", y2: "3" }], ["line", { x1: "12", y1: "21", x2: "12", y2: "12" }], ["line", { x1: "12", y1: "8", x2: "12", y2: "3" }], ["line", { x1: "20", y1: "21", x2: "20", y2: "16" }], ["line", { x1: "20", y1: "12", x2: "20", y2: "3" }], ["line", { x1: "1", y1: "14", x2: "7", y2: "14" }], ["line", { x1: "9", y1: "8", x2: "15", y2: "8" }], ["line", { x1: "17", y1: "16", x2: "23", y2: "16" }]]
+  };
+
+  icon(name, size, fill) {
+    const nodes = this.PATHS[name] || [];
+    return React.createElement("svg", {
+      width: size || 14, height: size || 14, viewBox: "0 0 24 24",
+      fill: fill ? "currentColor" : "none", stroke: "currentColor", strokeWidth: 1.9,
+      strokeLinecap: "round", strokeLinejoin: "round",
+      style: { display: "block", flex: "0 0 auto", overflow: "visible" }
+    }, nodes.map((n, i) => React.createElement(n[0], Object.assign({ key: i }, n[1]))));
+  }
+
+  varRows(preset) {
+    const s = this.state;
+    const defs = [
+      { name: "BRONTO_KEY", description: "ingest key", secret: true, placeholder: "required, no default", origin: "line 17" },
+      { name: "DATASET", description: "dataset name", secret: false, placeholder: "dev", origin: "default" },
+      { name: "OTLP_ENDPOINT", description: "where traces go", secret: false, placeholder: "otlp.eu.bronto.io:443", origin: "default" }
+    ];
+    const vals = s.values[preset] || {};
+    return defs.map(v => {
+      const raw = vals[v.name] || "";
+      const hidden = v.secret && !s.reveal[v.name] && raw;
+      return {
+        name: v.name,
+        description: v.description,
+        origin: v.origin,
+        shown: hidden ? "•".repeat(Math.min(raw.length, 18)) : raw,
+        placeholder: v.placeholder,
+        revealLabel: v.secret ? (s.reveal[v.name] ? "hide" : "reveal") : "",
+        toggle: () => this.setState(st => ({ reveal: Object.assign({}, st.reveal, { [v.name]: !st.reveal[v.name] }) })),
+        onEdit: e => {
+          const t = e.target.value;
+          this.setState(st => ({ values: Object.assign({}, st.values, { [preset]: Object.assign({}, st.values[preset] || {}, { [v.name]: t }) }) }));
+        }
+      };
+    });
+  }
+
+  DIAG = "Error: cannot start pipeline: failed to build pipelines: failed to create \"profiles\" receiver for data type \"profiles\":\n  receiver \"ebpf\" is not supported on darwin/arm64\n    github.com/open-telemetry/opentelemetry-collector-contrib/receiver/ebpfreceiver@v0.108.0/factory.go:71\n2026/08/25 14:22:07 collector server run finished with error: cannot start pipeline\nexit status 1";
+  VALDIAG = "Error: invalid configuration: exporters::otlp/bronto: 'headers' has invalid keys: x-bronto-ket\n  did you mean 'x-bronto-key'?\n    at config.yaml line 18, column 7\n2026/08/25 14:31:44 validation finished with error";
+
+  slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+  set(p) { this.setState(p); }
+
+  download(name, breaks) {
+    if (this.dlTimers && this.dlTimers[name]) return;
+    this.dlTimers = this.dlTimers || {};
+    let pct = 0;
+    const step = () => {
+      pct += 17;
+      if (pct < 100) {
+        this.setState(st => ({ dl: Object.assign({}, st.dl, { [name]: { status: "downloading", pct: pct } }) }));
+        this.dlTimers[name] = setTimeout(step, 260);
+      } else {
+        delete this.dlTimers[name];
+        this.setState(st => ({ dl: Object.assign({}, st.dl, { [name]: { status: breaks ? "failed" : "installed", pct: 100 } }) }));
+      }
+    };
+    this.setState(st => ({ dl: Object.assign({}, st.dl, { [name]: { status: "downloading", pct: 0 } }) }));
+    this.dlTimers[name] = setTimeout(step, 260);
+  }
+
+  MISSINGDIAG = "Error: invalid configuration: exporters::otlp/bronto: 'headers' has invalid value for key 'x-bronto-key':\n  environment variable \"BRONTO_KEY\" is not set and has no default\n    at config.yaml line 17, column 7\n2026/08/25 14:22:07 collector server run finished with error: invalid configuration\nexit status 1";
+
+  activate(id, preset) {
+    if (this.state.busyId) return;
+    this.setState({ busyId: id, err: null, menuId: null, presetsOpenId: null });
+    const cfg = this.configs.find(c => c.id === id);
+    setTimeout(() => {
+      const needsKey = cfg.presets.length > 1 || id === "honeycomb";
+      const missing = needsKey && !((this.state.values[preset] || {}).BRONTO_KEY || "");
+      if (id === "ebpf") this.setState({ busyId: null, err: this.DIAG, errName: cfg.name });
+      else if (missing) this.setState({ busyId: null, err: this.MISSINGDIAG, errName: cfg.name + " · " + preset });
+      else this.setState(st => ({ busyId: null, activeId: id, activePreset: preset, nothingActive: false, err: null, recent: [id].concat(st.recent.filter(r => r !== id)) }));
+    }, id === "ebpf" ? 3400 : 2300);
+  }
+
+  save() {
+    if (this.state.saving) return;
+    this.setState({ saving: true, valErr: null, valOk: null });
+    setTimeout(() => {
+      const n = this.state.saveN + 1;
+      if (n === 1) this.setState({ saving: false, saveN: n, valErr: this.VALDIAG });
+      else this.setState({ saving: false, saveN: n, valOk: "saved and re-applied to the running collector in 2.4s" });
+    }, 1600);
+  }
+
+  logLines() {
+    return [
+      ["14:22:01", "info", "Everything is ready. Begin running and processing data."],
+      ["14:22:01", "info", "Starting otelcol-contrib... {\"Version\": \"0.108.0\", \"NumCPU\": 10}"],
+      ["14:22:01", "info", "Setting up own telemetry... {\"address\": \"localhost:8888\", \"level\": \"Normal\"}"],
+      ["14:22:02", "info", "Starting GRPC server {\"endpoint\": \"0.0.0.0:4317\"}"],
+      ["14:22:02", "info", "Starting HTTP server {\"endpoint\": \"0.0.0.0:4318\"}"],
+      ["14:23:18", "warn", "Exporting failed. Will retry the request after interval. {\"error\": \"rpc error: code = Unavailable desc = connection closed before server preface received\", \"interval\": \"4.812s\"}"],
+      ["14:23:23", "info", "TracesExporter {\"resource spans\": 12, \"spans\": 148}"],
+      ["14:24:02", "info", "TracesExporter {\"resource spans\": 9, \"spans\": 96}"],
+      ["14:24:41", "error", "Permanent error: rpc error: code = InvalidArgument desc = unknown dataset \"dev-traces\" for key bro_live_01H8Q2ZR4TVX9M; dropped 41 spans"],
+      ["14:25:10", "warn", "Dropping data because sending_queue is full. Try increasing queue_size. {\"dropped_items\": 118}"],
+      ["14:25:44", "info", "TracesExporter {\"resource spans\": 14, \"spans\": 203}"],
+      ["14:26:31", "debug", "batch processor flushed after timeout {\"batch_size\": 61, \"timeout\": \"5s\"}"],
+      ["14:27:02", "info", "TracesExporter {\"resource spans\": 11, \"spans\": 132}"],
+      ["14:27:55", "debug", "otlp receiver accepted export request from 127.0.0.1:52981 service=checkout-api"]
+    ];
+  }
+
+  renderVals() {
+    const s = this.state;
+    const active = this.configs.find(c => c.id === s.activeId);
+    const activeName = s.nothingActive || !active ? "nothing active" : active.name;
+    const edit = this.configs.find(c => c.id === s.editId) || this.configs[0];
+
+    const issueCount = this.logLines().filter(l => l[1] === "warn" || l[1] === "error").length;
+    const issues = issueCount ? issueCount + " warn" : "";
+
+    const nav = [
+      ["configs", "configurations", "list", String(this.configs.length)],
+      ["collector", "collector", "activity", issues],
+      ["settings", "settings", "settings", ""]
+    ].map(([k, label, glyph, badge]) => ({ label, glyph: this.icon(glyph, 14), badge, on: s.screen === k || (k === "configs" && s.screen === "editor"), go: () => this.set({ screen: k, menuId: null }) }));
+
+    const find = s.find.trim().toLowerCase();
+    const rows = this.sorted().filter(c => !find || c.name.toLowerCase().includes(find)).map(c => {
+      const isActive = c.id === s.activeId && !s.nothingActive;
+      const busy = c.id === s.busyId;
+      const list = c.presets;
+      const sel = s.presetSel[c.id] || list[0];
+      const many = list.length > 1;
+      const icon = this.ICON[c.origin];
+      const openInline = (preset, isNew) => this.set({ inline: { id: c.id, preset: preset, isNew: isNew }, inlineName: isNew ? "" : preset, presetsOpenId: null });
+      const inlineOn = s.inline && s.inline.id === c.id;
+      const inlinePreset = inlineOn ? s.inline.preset : sel;
+
+      return {
+        name: c.name,
+        busy,
+        open: () => this.set({ screen: "editor", editId: c.id, unlocked: c.origin === "user", yamlOpen: c.origin === "user", unlockAsk: false, valErr: null, valOk: null, name: c.name, preset: sel }),
+
+        activeIcon: this.icon(isActive ? "dot" : "circle", 13),
+        activeColor: isActive ? "var(--accent, #ECAA0D)" : "var(--dim2, #6C6759)",
+        activeTitle: isActive ? "running now" : "not running",
+        typeIcon: this.icon(icon[0], 13),
+        typeTitle: c.origin === "url" ? "fetched from " + c.host : icon[1],
+        nameColor: isActive ? "var(--accent, #ECAA0D)" : "var(--text, #F1EFE7)",
+        rowBg: isActive ? "var(--panel, #262625)" : "transparent",
+        rowMark: isActive ? "inset 2px 0 0 0 var(--accent, #ECAA0D)" : "none",
+
+        presetName: sel,
+        caret: many ? this.icon("chevron", 12) : null,
+        presetCursor: many ? "pointer" : "default",
+        togglePresets: () => many && this.set({ presetsOpenId: s.presetsOpenId === c.id ? null : c.id }),
+        presetsOpen: s.presetsOpenId === c.id,
+        presetList: list.map(p => ({
+          label: (isActive && p === s.activePreset ? "● " : "") + p,
+          color: isActive && p === s.activePreset ? "var(--accent, #ECAA0D)" : "var(--text2, #E2DECC)",
+          pick: () => this.set({ presetSel: Object.assign({}, s.presetSel, { [c.id]: p }), presetsOpenId: null }),
+          play: () => this.activate(c.id, p),
+          edit: () => openInline(p, false),
+          playIcon: this.icon("play", 11, true),
+          editIcon: this.icon("pencil", 12)
+        })),
+        addPreset: () => openInline("", true),
+
+        activate: () => this.activate(c.id, sel),
+        playIcon: this.icon("play", 11, true),
+        editIcon: this.icon("pencil", 12),
+        copyIcon: this.icon("copy", 13),
+        syncIcon: this.icon(c.origin === "builtin" ? "undo" : "refresh", 13),
+        delIcon: this.icon("trash", 13),
+        playTitle: isActive && sel === s.activePreset ? "already running" : "activate " + c.name + " · " + sel,
+        playColor: isActive && sel === s.activePreset ? "var(--faint, #57544A)" : "var(--accent, #ECAA0D)",
+        playBorder: isActive && sel === s.activePreset ? "var(--border, #363631)" : "var(--accentLine, #99753F)",
+        edit: () => openInline(sel, false),
+
+        copy: () => this.set({ newOpen: true, newName: c.name + "-copy" }),
+        copyTitle: "duplicate, including presets",
+        copyColor: "var(--dim, #857F6B)",
+        copyCursor: "pointer",
+        sync: () => {
+          if (c.origin === "builtin") {
+            if (!c.edited) return;
+            return this.set({ confirm: "reset " + c.name + " to the version that ships with compy? your changes are lost.", confirmVerb: "reset", confirmId: c.id });
+          }
+          if (c.origin !== "url") return;
+          if (c.edited) return this.set({ confirm: "re-syncing " + c.name + " throws away your edits.", confirmVerb: "discard & re-sync", confirmId: c.id });
+          c.sync = false;
+          this.set({ note: c.name + " re-synced from " + c.host });
+          setTimeout(() => this.setState(st => (st.note ? { note: null } : {})), 3200);
+        },
+        syncTitle: c.origin === "builtin" ? (c.edited ? "reset to the version that ships with compy" : "this is the shipped version, nothing to reset") : c.origin !== "url" ? "yours from the start, nothing to return to" : c.edited ? "discard my edits and re-sync from " + c.host : c.sync ? "update available from " + c.host : "in sync with " + c.host,
+        syncColor: c.origin === "builtin" ? (c.edited ? "var(--accent, #ECAA0D)" : "var(--faint, #57544A)") : c.origin !== "url" ? "var(--faint, #57544A)" : c.sync || c.edited ? "var(--accent, #ECAA0D)" : "var(--dim, #857F6B)",
+        syncCursor: (c.origin === "url") || (c.origin === "builtin" && c.edited) ? "pointer" : "default",
+        del: () => !isActive && this.set({ confirm: "delete " + c.name + " and its presets?", confirmVerb: "delete", confirmId: c.id }),
+        delTitle: isActive ? "can't delete the running config" : "delete " + c.name,
+        delColor: isActive ? "var(--faint, #57544A)" : "var(--dim, #857F6B)",
+        delCursor: isActive ? "default" : "pointer",
+
+        inlineOpen: !!inlineOn,
+        inlineTitle: inlineOn && s.inline.isNew ? "new preset" : "preset",
+        inlineName: s.inlineName,
+        onInlineName: e => this.set({ inlineName: e.target.value }),
+        inlineVars: this.varRows(inlinePreset),
+        inlineNote: inlineOn && s.inline.isNew ? "starts from the current values. saving does not activate it." : "saving does not restart the collector unless this preset is running.",
+        closeInline: () => this.set({ inline: null }),
+        saveInline: () => this.set({ inline: null })
+      };
+    });
+
+    const presets = edit.presets.map(n => ({
+      name: n,
+      on: n === s.preset,
+      off: n !== s.preset,
+      size: Math.max(n.length, 4),
+      pick: () => this.set({ preset: n }),
+      copyIcon: this.icon("copy", 12),
+      delIcon: this.icon("trash", 12),
+      dup: () => {
+        let c = n + "-copy", i = 2;
+        while (edit.presets.indexOf(c) > -1) { c = n + "-copy-" + i; i++; }
+        edit.presets.push(c);
+        this.setState(st => ({ preset: c, values: Object.assign({}, st.values, { [c]: Object.assign({}, st.values[n] || {}) }) }));
+      },
+      del: () => {
+        if (edit.presets.length < 2) return;
+        if (n === s.activePreset && edit.id === s.activeId && !s.nothingActive) return;
+        const i = edit.presets.indexOf(n);
+        edit.presets.splice(i, 1);
+        this.set({ preset: s.preset === n ? edit.presets[Math.max(i - 1, 0)] : s.preset });
+      },
+      delTitle: edit.presets.length < 2 ? "a config always keeps one preset" : n === s.activePreset && edit.id === s.activeId && !s.nothingActive ? "this preset is running. activate another one first." : "delete " + n,
+      delCursor: edit.presets.length < 2 || (n === s.activePreset && edit.id === s.activeId && !s.nothingActive) ? "default" : "pointer",
+      delColor: edit.presets.length < 2 || (n === s.activePreset && edit.id === s.activeId && !s.nothingActive) ? "var(--faint, #57544A)" : "var(--dim, #857F6B)",
+      rename: e => {
+        const next = this.slug(e.target.value) || n;
+        if (next !== n && edit.presets.indexOf(next) > -1) {
+          this.set({ note: "a preset called " + next + " already exists" });
+          setTimeout(() => this.setState(st => (st.note ? { note: null } : {})), 3000);
+          return;
+        }
+        const i = edit.presets.indexOf(n);
+        if (i > -1) edit.presets[i] = next;
+        this.setState(st => ({ preset: st.preset === n ? next : st.preset, values: Object.assign({}, st.values, { [next]: st.values[n] || {} }) }));
+      }
+    }));
+
+    const vars = this.varRows(s.preset);
+
+    const lvlColor = { error: "var(--err, #C1583B)", warn: "var(--warnText, #D8A21A)", info: "var(--info, #859EFF)", debug: "var(--dim2, #6C6759)" };
+    const q = s.query.trim().toLowerCase();
+    const logs = this.logLines()
+      .filter(l => (s.level === "all" || l[1] === s.level) && (!q || l[2].toLowerCase().includes(q)))
+      .map(l => ({ time: l[0], level: l[1], levelStyle: "color: " + lvlColor[l[1]], text: l[2] }));
+
+    const levels = ["all", "error", "warn", "info", "debug"].map(k => ({ label: k, on: s.level === k, pick: () => this.set({ level: k }) }));
+
+    const BIN = [
+      { name: "otelcol-contrib", kind: "inuse", detail: "~/Library/Application Support/compy/bin/otelcol-contrib · installed with compy" },
+      { name: "otelcol", kind: "installed", detail: "~/Library/Application Support/compy/bin/otelcol" },
+      { name: "otelcol-otlp", kind: "available", detail: "28 MB · verified after download" },
+      { name: "otelcol-k8s", kind: "available", detail: "34 MB · verified after download", breaks: true },
+      { name: "ebpf-profiler", kind: "blocked", detail: "needs Linux kernel probes. compy cannot run it here." },
+      { name: "otelcol-mine", kind: "added", detail: "/usr/local/bin/otelcol-mine" }
+    ];
+    const DIM = "var(--dim, #857F6B)", OFF = "var(--faint, #57544A)";
+    const binaries = BIN.map(b => {
+      const d = s.dl[b.name];
+      if (d && d.status === "installed") b = Object.assign({}, b, { kind: "installed" });
+      const inUse = b.kind === "inuse";
+      const here = b.kind !== "available" && b.kind !== "blocked";
+      const busy = d && d.status === "downloading";
+      const failed = d && d.status === "failed";
+      return {
+        name: b.name,
+        detail: b.detail,
+        state: busy ? "downloading… " + d.pct + "%" : failed ? "download failed · checksum mismatch" : inUse ? "in use" : b.kind === "installed" ? "installed" : b.kind === "available" ? "available to download" : b.kind === "blocked" ? "not available on macOS" : "added by you",
+        stateColor: busy ? "var(--accent, #ECAA0D)" : failed ? "var(--err, #C1583B)" : inUse ? "var(--accent, #ECAA0D)" : b.kind === "blocked" ? OFF : b.kind === "added" ? "var(--info, #859EFF)" : "var(--muted, #9E9782)",
+        progress: busy ? d.pct + "%" : null,
+        icon: this.icon(inUse ? "dot" : b.kind === "blocked" ? "ban" : b.kind === "available" ? "download" : "circle", 13),
+        iconColor: inUse ? "var(--accent, #ECAA0D)" : b.kind === "blocked" ? OFF : "var(--dim2, #6C6759)",
+        nameColor: inUse ? "var(--accent, #ECAA0D)" : "var(--text, #F1EFE7)",
+        rowBg: inUse ? "var(--panel, #262625)" : "transparent",
+        rowMark: inUse ? "inset 2px 0 0 0 var(--accent, #ECAA0D)" : "none",
+
+        useIcon: this.icon("play", 11, true),
+        useTitle: inUse ? "already in use" : here ? "run every config on " + b.name : "download it first",
+        useColor: inUse || !here ? OFF : "var(--accent, #ECAA0D)",
+        useCursor: !inUse && here ? "pointer" : "default",
+        use: () => {},
+
+        getIcon: this.icon("download", 13),
+        getTitle: busy ? "downloading…" : failed ? "try again" : b.kind === "available" ? "download and verify " + b.name : b.kind === "blocked" ? "not available on macOS" : "already installed",
+        getColor: b.kind === "available" || failed ? "var(--accent, #ECAA0D)" : OFF,
+        getCursor: b.kind === "available" || failed ? "pointer" : "default",
+        get: () => { if (b.kind === "available" || failed) this.download(b.name, !!b.breaks); },
+
+        pathIcon: this.icon("folder", 13),
+        pathTitle: here ? "change path" : "nothing installed yet",
+        pathColor: here ? DIM : OFF,
+        pathCursor: here ? "pointer" : "default",
+        path: () => {},
+
+        removeIcon: this.icon("trash", 13),
+        removeTitle: b.kind === "added" ? "remove " + b.name : "only collectors you added can be removed",
+        removeColor: b.kind === "added" ? DIM : OFF,
+        removeCursor: b.kind === "added" ? "pointer" : "default",
+        remove: () => {}
+      };
+    });
+
+    const toggles = [
+      { key: "otelEnv", label: "set OTEL_* variables system-wide", note: "new shells and apps point at compy automatically" }
+    ].map((t, i) => {
+      const on = true;
+      return { label: t.label, note: t.note, trackColor: on ? "var(--accentLine, #99753F)" : "var(--panel, #262625)", knobColor: on ? "var(--accent, #ECAA0D)" : "var(--dim2, #6C6759)", justify: on ? "flex-end" : "flex-start", flip: () => {} };
+    });
+
+    const check = this.icon("check", 12);
+    const byRecent = this.configs.slice().sort((a, b) => {
+      const ia = s.recent.indexOf(a.id), ib = s.recent.indexOf(b.id);
+      if (ia > -1 && ib > -1) return ia - ib;
+      if (ia > -1) return -1;
+      if (ib > -1) return 1;
+      return a.name.localeCompare(b.name);
+    });
+    const menuMain = byRecent.slice(0, 10);
+    const menuRest = byRecent.slice(10).sort((a, b) => a.name.localeCompare(b.name));
+    const menuItem = c => {
+      const on = c.id === s.activeId && !s.nothingActive;
+      const many = c.presets.length > 1;
+      return {
+        name: c.name,
+        color: on ? "var(--accent, #ECAA0D)" : "var(--text2, #E2DECC)",
+        bg: s.menubarId === c.id ? "var(--panel, #262625)" : "transparent",
+        check: on ? check : null,
+        right: many ? this.icon("chevronRight", 12) : null,
+        open: s.menubarId === c.id,
+        click: () => many ? this.set({ menubarId: s.menubarId === c.id ? null : c.id }) : this.activate(c.id, c.presets[0]),
+        presets: c.presets.map(p => ({
+          name: p,
+          color: on && p === s.activePreset ? "var(--accent, #ECAA0D)" : "var(--text2, #E2DECC)",
+          check: on && p === s.activePreset ? check : null,
+          pick: () => { this.set({ menubarId: null }); this.activate(c.id, p); }
+        }))
+      };
+    };
+    const menuConfigs = menuMain.map(menuItem);
+    const menuMore = menuRest.length ? {
+      count: menuRest.length,
+      open: s.menubarId === "__more",
+      click: () => this.set({ menubarId: s.menubarId === "__more" ? null : "__more" }),
+      right: this.icon("chevronRight", 12),
+      items: menuRest.map(c => ({
+        name: c.name,
+        color: c.id === s.activeId && !s.nothingActive ? "var(--accent, #ECAA0D)" : "var(--text2, #E2DECC)",
+        pick: () => { this.set({ menubarId: null }); this.activate(c.id, s.presetSel[c.id] || c.presets[0]); }
+      }))
+    } : null;
+
+    const resolved = this.resolvedTheme();
+    const themes = ["system", "dark", "light"].map(k => ({
+      label: k,
+      color: s.theme === k ? "var(--accent, #ECAA0D)" : "var(--muted, #9E9782)",
+      bg: s.theme === k ? "var(--accentBg, #2E2A1A)" : "transparent",
+      pick: () => { try { localStorage.setItem("compy.theme", k); } catch (e) {} this.set({ theme: k }); }
+    }));
+    const themeNote = s.theme === "system" ? "following macOS — currently " + resolved : "always " + s.theme;
+
+    return {
+      nav, rows, presets, vars, logs, levels, binaries, toggles, themes, themeNote, menuConfigs, menuMore,
+      menuStatus: s.nothingActive ? "Stopped" : s.busyId || s.restarting ? "Restarting…" : "Running · " + activeName + " · " + s.activePreset,
+      menuPorts: s.nothingActive ? "no listeners" : ":4317 :4318 · 2 warnings",
+      menuRestart: s.restarting ? "Restarting…" : "Restart collector",
+      activeName,
+      activePreset: s.activePreset,
+      headerStatus: s.nothingActive ? "stopped" : s.busyId || s.restarting ? "restarting…" : "running",
+      statusDot: s.nothingActive ? "var(--dim2, #6C6759)" : s.busyId || s.restarting ? "var(--accent, #ECAA0D)" : "var(--ok, #53DFA9)",
+      isConfigs: s.screen === "configs",
+      isEditor: s.screen === "editor",
+      isCollector: s.screen === "collector",
+      isSettings: s.screen === "settings",
+      nothingActive: s.nothingActive,
+      note: s.note,
+      find: s.find,
+      onFind: e => this.set({ find: e.target.value, menuId: null }),
+      searchIcon: this.icon("search", 12),
+      noMatches: find && rows.length === 0 ? "no configuration matches “" + s.find.trim() + "”" : null,
+      activationError: s.err,
+      activationErrorTitle: s.err ? "couldn't activate " + s.errName : "",
+      activationErrorKept: activeName === "nothing active" ? "collector still stopped" : activeName + " still running",
+      dismissError: () => this.set({ err: null }),
+      openErrored: () => this.set({ screen: "editor", editId: "ebpf", err: null, unlocked: false, yamlOpen: true, name: "ebpf-profiles", preset: "default" }),
+      copyDiag: () => {},
+      syncAll: () => {},
+      openNew: () => this.set({ newOpen: true, newName: "" }),
+      closeNew: () => this.set({ newOpen: false }),
+      createNew: () => {
+        const name = this.slug(s.newName);
+        if (!name || this.configs.some(c => c.name === name)) return;
+        const url = s.newUrl.trim();
+        if (!url) {
+          this.configs.push({ id: name, name: name, origin: "user", presets: ["default"] });
+          return this.set({ newOpen: false, newName: "", newUrl: "", newErr: null });
+        }
+        this.set({ fetching: true, newErr: null });
+        setTimeout(() => {
+          if (url.indexOf("otel.acme.dev") < 0) return this.set({ fetching: false, newErr: "404 · nothing at that URL. compy kept nothing." });
+          this.configs.push({ id: name, name: name, origin: "url", host: "otel.acme.dev", presets: ["default"] });
+          this.set({ fetching: false, newOpen: false, newName: "", newUrl: "", newErr: null, note: name + " fetched from otel.acme.dev" });
+          setTimeout(() => this.setState(st => (st.note ? { note: null } : {})), 3200);
+        }, 1500);
+      },
+      newOpen: s.newOpen,
+      newName: s.newName,
+      newSlugNote: (() => {
+        const n = this.slug(s.newName);
+        if (!s.newName) return "lowercase, digits, dashes";
+        if (this.configs.some(c => c.name === n)) return n + " already exists";
+        return "saved as " + n;
+      })(),
+      newNoteColor: s.newName && this.configs.some(c => c.name === this.slug(s.newName)) ? "var(--err, #C1583B)" : "var(--dim2, #6C6759)",
+      onNewName: e => this.set({ newName: e.target.value, newErr: null }),
+      onNewUrl: e => this.set({ newUrl: e.target.value, newErr: null }),
+      newUrl: s.newUrl,
+      newUrlNote: s.fetching ? "fetching…" : s.newErr ? s.newErr : "empty means a blank config",
+      newErrColor: s.newErr ? "var(--err, #C1583B)" : "var(--dim2, #6C6759)",
+      createLabel: s.fetching ? "fetching…" : "create",
+      activateSuggested: () => this.activate("local-debug", "default"),
+      confirm: s.confirm,
+      confirmVerb: s.confirmVerb,
+      cancelConfirm: () => this.set({ confirm: null }),
+      okConfirm: () => {
+        if (s.confirmVerb === "reset" && s.confirmId) {
+          const c = this.configs.find(x => x.id === s.confirmId);
+          if (c) { c.edited = false; this.set({ note: c.name + " reset to the shipped version", unlocked: false, yamlOpen: false }); setTimeout(() => this.setState(st => (st.note ? { note: null } : {})), 3200); }
+        }
+        if (s.confirmVerb === "delete" && s.confirmId) {
+          const i = this.configs.findIndex(c => c.id === s.confirmId);
+          if (i > -1) this.configs.splice(i, 1);
+        }
+        this.set({ confirm: null, confirmId: null, menuId: null, inline: null });
+      },
+      backToList: () => this.set({ screen: "configs" }),
+      editName: s.name,
+      onRename: e => {
+        const v = e.target.value;
+        const taken = this.configs.some(c => c.id !== edit.id && c.name === this.slug(v));
+        this.set({ name: v, note: taken ? this.slug(v) + " already exists. name not changed." : s.note });
+      },
+      editIsActive: edit.id === s.activeId && !s.nothingActive,
+      locked: edit.origin !== "user" && !s.unlocked,
+      yamlShown: edit.origin === "user" || s.yamlOpen,
+      yamlHidden: !(edit.origin === "user" || s.yamlOpen),
+      yamlHiddenNote: edit.origin === "url" ? "kept in sync with otel.acme.dev" : "ships with compy. most people never open it.",
+      showYaml: () => this.set({ yamlOpen: true }),
+      unlockAsk: s.unlockAsk,
+      unlockCopy: edit.origin === "url" ? "editing disconnects this from otel.acme.dev. it stops re-syncing." : "your version stays through compy updates.",
+      unlock: () => this.set({ unlockAsk: true }),
+      cancelUnlock: () => this.set({ unlockAsk: false }),
+      confirmUnlock: () => this.set({ unlockAsk: false, unlocked: true }),
+      originKind: edit.origin === "url" ? "fetched from" : edit.origin === "builtin" ? "built in to compy · updates with it until you edit" : "",
+      isUrlOrigin: edit.origin === "url",
+      editTypeIcon: this.icon(this.ICON[edit.origin][0], 14),
+      activeDotIcon: this.icon("dot", 13),
+      plusIcon: this.icon("plus", 13),
+      headerSyncIcon: this.icon(edit.origin === "builtin" ? "undo" : "refresh", 12),
+      editTypeTitle: edit.origin === "url" ? "fetched from " + edit.host : edit.origin === "builtin" ? "built in to compy. updates with it until you edit." : "yours",
+      originUrl: edit.origin === "url" ? "https://otel.acme.dev/configs/" + edit.name + ".yaml" : "",
+      syncState: edit.origin === "url" ? (edit.edited ? "your version" : "in sync, checked 4m ago") : edit.edited ? "your version. resetting discards your changes." : "",
+      resyncLabel: edit.origin === "builtin" ? "reset to shipped" : edit.edited ? "discard edits & re-sync" : "re-sync",
+      showReset: edit.origin === "url" || (edit.origin === "builtin" && edit.edited),
+      resync: () => {},
+      save: () => this.save(),
+      saveLabel: s.saving ? "checking…" : "save",
+      saveHint: s.saving ? "asking the collector…" : "",
+      validationError: s.valErr,
+      validationOk: s.valOk,
+      dismissValidation: () => this.set({ valErr: null }),
+      presetNote: s.preset === "customer-x" ? "customer-x has no ingest key. activating with it will fail." : "",
+      newPreset: () => {
+        let n = "preset", i = 2;
+        while (edit.presets.indexOf(n) > -1) { n = "preset-" + i; i++; }
+        edit.presets.push(n);
+        this.setState(st => ({ preset: n, values: Object.assign({}, st.values, { [n]: {} }) }));
+      },
+      dupPreset: () => {
+        const n = s.preset + "-copy";
+        if (edit.presets.indexOf(n) < 0) edit.presets.push(n);
+        this.setState(st => ({ preset: n, values: Object.assign({}, st.values, { [n]: Object.assign({}, st.values[st.preset] || {}) }) }));
+      },
+      delPreset: () => {
+        if (edit.presets.length < 2) return;
+        const i = edit.presets.indexOf(s.preset);
+        edit.presets.splice(i, 1);
+        this.set({ preset: edit.presets[Math.max(i - 1, 0)] });
+      },
+      noop: () => {},
+      collectorState: s.restarting ? "restarting…" : s.nothingActive ? "stopped" : "running",
+      collectorDot: s.nothingActive ? "var(--dim2, #6C6759)" : s.restarting ? "var(--accent, #ECAA0D)" : "var(--ok, #53DFA9)",
+      restartLabel: s.restarting ? "restarting…" : s.nothingActive ? "start" : "restart",
+      canStop: !s.nothingActive && !s.restarting,
+      collectorMeta: s.nothingActive ? "no process" : "pid 48213 · up 26m",
+      livePreset: s.nothingActive ? "—" : s.activePreset,
+      health: s.nothingActive
+        ? [["received", "—"], ["exported", "—"], ["queue", "—"], ["dropped", "—"]].map(h => ({ label: h[0], value: h[1], color: "var(--dim2, #6C6759)" }))
+        : [
+            { label: "received", value: "1.2k spans/min", color: "var(--text, #F1EFE7)" },
+            { label: "exported", value: "1.1k spans/min", color: "var(--text, #F1EFE7)" },
+            { label: "queue", value: "12%", color: "var(--text, #F1EFE7)" },
+            { label: "dropped", value: "118", color: "var(--accent, #ECAA0D)" }
+          ],
+      healthSource: s.nothingActive ? "no metrics while stopped" : "localhost:8888/metrics",
+      liveListening: s.nothingActive ? "not listening" : ":4317 grpc · :4318 http",
+      liveColor: s.nothingActive ? "var(--dim2, #6C6759)" : "var(--text, #F1EFE7)",
+      sidebarPorts: s.nothingActive ? "otelcol-contrib · not listening" : "otelcol-contrib · :4317 :4318",
+      stop: () => this.set({ nothingActive: true, restarting: false }),
+      goSettings: () => this.set({ screen: "settings" }),
+      restart: () => {
+        if (s.nothingActive) return this.activate(s.activeId, s.activePreset);
+        this.set({ restarting: true });
+        setTimeout(() => this.set({ restarting: false }), 2200);
+      },
+      query: s.query,
+      onQuery: e => this.set({ query: e.target.value }),
+      logCount: logs.length + " of " + this.logLines().length + " lines",
+      noLogs: logs.length === 0,
+      copyLogIcon: this.icon("copy", 13),
+      copyLogTitle: "copy these " + logs.length + " lines",
+      copyLog: () => {
+        const text = logs.map(l => l.time + "  " + l.level.toUpperCase() + "  " + l.text).join("\n");
+        if (navigator.clipboard) navigator.clipboard.writeText(text);
+        this.set({ note: logs.length + " log lines copied" });
+        setTimeout(() => this.setState(st => (st.note ? { note: null } : {})), 2600);
+      },
+      tailLabel: s.nothingActive ? "no output" : s.tail ? "live tail" : "paused",
+      tailDot: s.nothingActive || !s.tail ? "var(--dim2, #6C6759)" : "var(--ok, #53DFA9)",
+      toggleTail: () => this.set({ tail: !s.tail })
+    };
+  }
+}
+</script>
+</body>
+</html>
