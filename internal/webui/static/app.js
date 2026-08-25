@@ -43,6 +43,46 @@ function apiJSON(path, method, obj) {
   });
 }
 
+/* ── in-page dialogs ──────────────────────────────────────────────
+   compy's own window (internal/window) is a WKWebView via webview_go,
+   which registers a WKUIDelegate implementing only the file-open panel —
+   none of the JavaScript panel methods. WebKit's fallback for a delegate
+   that doesn't implement them is to show nothing and return the "dismissed"
+   answer: prompt returns null, confirm returns false. So in the
+   real app every prompt/confirm-gated action (copy, del, rename, + new
+   set, edit a protected config, roll back) silently did nothing, and the
+   unsaved-changes guard trapped you in the editor. <dialog> is supported,
+   so ask() replaces both. Deliberately plain — the redesign owns styling. */
+function ask(message, initial) {
+  return new Promise((resolve) => {
+    const input = initial == null ? null : el("input", {
+      class: "field-input", attrs: { "aria-label": message }, props: { value: initial },
+    });
+    const form = el("form", { attrs: { method: "dialog" } }, [
+      el("p", { class: "ask-msg", text: message }),
+      input,
+      el("div", { class: "form-actions" }, [
+        el("button", { class: "solid-btn", attrs: { value: "ok" }, text: "OK" }),
+        el("button", { class: "act", attrs: { value: "cancel" }, text: "Cancel" }),
+      ]),
+    ]);
+    const dlg = el("dialog", { class: "ask" }, [form]);
+    dlg.addEventListener("close", () => {
+      const ok = dlg.returnValue === "ok"; // Escape closes with "" — a cancel
+      const typed = input ? input.value.trim() : "";
+      dlg.remove();
+      resolve(input ? (ok && typed ? typed : null) : ok);
+    });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    if (input) input.select();
+  });
+}
+// askText prompts for a string (null = cancelled or left empty);
+// askConfirm asks a yes/no question.
+function askText(message, initial) { return ask(message, initial == null ? "" : initial); }
+function askConfirm(message) { return ask(message, null); }
+
 /* ── error / message console ─────────────────────────────────────── */
 const errorStrip = document.getElementById("error-strip");
 const errorMessage = document.getElementById("error-message");
@@ -142,10 +182,17 @@ async function renderRoute() {
 // unsaved editor work either gets confirmed or the hash is put back (which
 // re-fires hashchange — the first line swallows that one).
 let navHash = location.hash;
-window.addEventListener("hashchange", () => {
+window.addEventListener("hashchange", async () => {
   if (location.hash === navHash) return;
-  if (editorHasUnsaved() && !window.confirm("Leave this configuration? Unsaved changes will be lost.")) {
+  if (editorHasUnsaved()) {
+    // The answer arrives asynchronously, so put the hash back first (that
+    // re-fires hashchange, which the line above swallows) and re-navigate
+    // only once the user has said yes.
+    const target = location.hash;
     location.hash = navHash;
+    if (!(await askConfirm("Leave this configuration? Unsaved changes will be lost."))) return;
+    resetEditor(null); // answered yes: the unsaved work is forfeit, so stop guarding it
+    location.hash = target;
     return;
   }
   navHash = location.hash;
@@ -293,7 +340,7 @@ function buildConfigRow(c, active) {
     class: "act", text: "copy",
     on: {
       click: async () => {
-        const dst = window.prompt("New configuration name (copy of " + c.name + "):");
+        const dst = await askText("New configuration name (copy of " + c.name + "):", "");
         if (!dst) return;
         try {
           await apiJSON("/api/configs/" + encodeURIComponent(c.name) + "/copy", "POST", { dst });
@@ -328,7 +375,7 @@ function buildConfigRow(c, active) {
       class: "act danger", text: "del",
       on: {
         click: async () => {
-          if (!window.confirm('Delete configuration "' + c.name + '"? This cannot be undone.')) return;
+          if (!(await askConfirm('Delete configuration "' + c.name + '"? This cannot be undone.'))) return;
           try {
             await api("/api/configs/" + encodeURIComponent(c.name), { method: "DELETE" });
           } catch (err) {
@@ -508,7 +555,7 @@ function buildPropertiesGroup(name, info, meta, distros) {
       class: "act danger", text: "discard local edits & re-sync",
       on: {
         click: async (e) => {
-          if (!window.confirm("Refetch " + name + " from its remote URL? Your local edits to this configuration are discarded.")) return;
+          if (!(await askConfirm("Refetch " + name + " from its remote URL? Your local edits to this configuration are discarded."))) return;
           e.target.disabled = true;
           try {
             await api("/api/configs/" + encodeURIComponent(name) + "/resync", { method: "POST" });
@@ -561,10 +608,10 @@ function buildVariablesGroup(name, info, meta) {
         class: "primary-act", text: "+ new set",
         on: {
           click: async () => {
-            const set = window.prompt("Name for the new variable set:");
-            if (!set || !set.trim()) return;
+            const set = await askText("Name for the new variable set:", "");
+            if (!set) return;
             try {
-              await apiJSON("/api/configs/" + encodeURIComponent(name) + "/sets/" + encodeURIComponent(set.trim()), "PUT", { values: {} });
+              await apiJSON("/api/configs/" + encodeURIComponent(name) + "/sets/" + encodeURIComponent(set), "PUT", { values: {} });
             } catch (err) {
               showError(err);
             }
@@ -659,10 +706,10 @@ function buildSetHeader(name, set, stored, isActive) {
     class: "act", text: "rename",
     on: {
       click: async () => {
-        const to = window.prompt("Rename variable set:", set);
-        if (!to || !to.trim() || to.trim() === set) return;
+        const to = await askText("Rename variable set:", set);
+        if (!to || to === set) return;
         try {
-          await apiJSON(base + "/rename", "POST", { to: to.trim() });
+          await apiJSON(base + "/rename", "POST", { to });
           delete editor.drafts[set];
         } catch (err) {
           showError(err);
@@ -678,7 +725,7 @@ function buildSetHeader(name, set, stored, isActive) {
     delBtn.title = "Can't delete the active set";
   } else {
     delBtn.addEventListener("click", async () => {
-      if (!window.confirm('Delete variable set "' + set + '"?')) return;
+      if (!(await askConfirm('Delete variable set "' + set + '"?'))) return;
       try {
         await api(base, { method: "DELETE" });
         delete editor.drafts[set];
@@ -742,11 +789,11 @@ function buildYamlGroup(name, info, yaml) {
     actions.appendChild(el("button", {
       class: "act", text: "edit",
       on: {
-        click: () => {
+        click: async () => {
           const msg = prov === "remote"
             ? "Editing detaches this configuration from its remote source. Sync will stop; \"Discard local edits & re-sync\" brings it back."
             : "Editing makes this configuration yours. Your version will be kept on future compy updates. Continue?";
-          if (!window.confirm(msg)) return;
+          if (!(await askConfirm(msg))) return;
           editor.editable = true;
           renderConfigView(name).catch(showError);
         },
@@ -878,7 +925,7 @@ async function renderCollectorView() {
         on: {
           click: async (e) => {
             e.target.disabled = true;
-            if (!window.confirm("Roll back to the last known-good configuration and settings?")) {
+            if (!(await askConfirm("Roll back to the last known-good configuration and settings?"))) {
               e.target.disabled = false;
               return;
             }
@@ -1101,7 +1148,7 @@ function buildRemoveButton(d) {
     removeBtn.title = "Can't remove the selected distro";
   } else {
     removeBtn.addEventListener("click", async () => {
-      if (!window.confirm('Remove distro "' + d.name + '"?')) return;
+      if (!(await askConfirm('Remove distro "' + d.name + '"?'))) return;
       try {
         const res = await api("/api/distros/" + encodeURIComponent(d.name), { method: "DELETE" });
         if (res && res.reverted) showMessage('"' + d.name + '" reverted to its shipped definition.', "info");
