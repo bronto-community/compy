@@ -144,7 +144,17 @@ window.addEventListener("hashchange", () => {
     return;
   }
   navHash = location.hash;
+  errorStrip.classList.add("hidden"); // stale message from the old view shouldn't follow to the new one
   renderRoute();
+});
+
+// Same guard for a browser-level reload/close: unsaved editor work triggers
+// the native "leave site?" prompt. Browsers ignore custom strings and show
+// their own wording, but a returnValue is still required to arm it.
+window.addEventListener("beforeunload", (e) => {
+  if (!editorHasUnsaved()) return;
+  e.preventDefault();
+  e.returnValue = "Leave this configuration? Unsaved changes will be lost.";
 });
 
 /* ── nav status (LED + text), refreshed independently ────────────── */
@@ -163,7 +173,7 @@ async function refreshNavStatus() {
 
 /* ── Configurations view ──────────────────────────────────────────── */
 async function renderConfigsView() {
-  const [configs, status] = [await api("/api/configs"), state.status || (await api("/api/status"))];
+  const [configs, status] = await Promise.all([api("/api/configs"), api("/api/status")]);
   const active = status.config || "";
 
   clear(viewRoot);
@@ -811,7 +821,7 @@ function applyLogFilter() {
 }
 
 async function renderCollectorView() {
-  const status = state.status || (await api("/api/status"));
+  const status = await api("/api/status");
 
   clear(viewRoot);
   viewRoot.appendChild(el("h1", { text: "Collector" }));
@@ -915,7 +925,7 @@ async function renderSettingsView() {
   const [distros, settings, status] = await Promise.all([
     api("/api/distros"),
     api("/api/settings"),
-    state.status ? Promise.resolve(state.status) : api("/api/status"),
+    api("/api/status"),
   ]);
 
   clear(viewRoot);
@@ -936,9 +946,60 @@ function buildDistrosGroup(distros) {
   for (const d of distros) {
     card.appendChild(buildDistroRow(d));
   }
+  const toolbar = el("div", { class: "srow", attrs: { style: "padding:0 0 10px" } });
+  toolbar.appendChild(el("button", {
+    class: "pill-btn", text: "+ Add distribution",
+    on: { click: () => toggleAddDistroForm() },
+  }));
   return el("div", { class: "group" }, [
     el("div", { class: "group-title", text: "Distributions" }),
+    toolbar,
+    buildAddDistroForm(),
     card,
+  ]);
+}
+
+function toggleAddDistroForm() {
+  const card = document.getElementById("add-distro-card");
+  if (card) card.classList.toggle("hidden");
+  if (card && !card.classList.contains("hidden")) {
+    const nameInput = card.querySelector('input[name="name"]');
+    if (nameInput) nameInput.focus();
+  }
+}
+
+function buildAddDistroForm() {
+  const form = el("form", { class: "form-grid" });
+  const nameLabel = el("label", {}, [
+    el("span", { text: "Name" }),
+    el("input", { class: "field-input", attrs: { name: "name", required: "required", placeholder: "my-distro" } }),
+  ]);
+  const pathLabel = el("label", {}, [
+    el("span", { text: "Path" }),
+    el("input", { class: "field-input path-input", attrs: { name: "path", required: "required", placeholder: "/path/to/otelcol" } }),
+  ]);
+  const actions = el("div", { class: "form-actions" }, [
+    el("button", { class: "solid-btn", attrs: { type: "submit" }, text: "Add" }),
+    el("button", { class: "pill-btn", attrs: { type: "button" }, text: "Cancel", on: { click: () => toggleAddDistroForm() } }),
+  ]);
+  form.append(nameLabel, pathLabel, actions);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = form.name.value.trim();
+    const path = form.path.value.trim();
+    if (!name || !path) return;
+    try {
+      const res = await apiJSON("/api/distros", "POST", { name, path });
+      if (res && res.warning) showMessage(res.warning, "info");
+      form.reset();
+      toggleAddDistroForm();
+    } catch (err) {
+      showError(err);
+    }
+    await renderSettingsView();
+  });
+  return el("div", { class: "card hidden", attrs: { id: "add-distro-card" } }, [
+    el("div", { class: "card-extra" }, [form]),
   ]);
 }
 
