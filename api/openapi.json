@@ -3,7 +3,7 @@
   "info": {
     "title": "compy",
     "description": "Local OpenTelemetry Collector manager: REST API served by whatever UI process is running (compy ui / window / tray). Localhost-only; see internal/webui's host-check + CSRF middleware.",
-    "version": "2.0.0"
+    "version": "3.0.0"
   },
   "servers": [
     { "url": "http://127.0.0.1:8080" }
@@ -26,7 +26,7 @@
           "http_port": { "type": "integer" },
           "endpoint": { "type": "string" },
           "config": { "type": "string" },
-          "set": { "type": "string" },
+          "preset": { "type": "string" },
           "os_env": { "type": "boolean" }
         }
       },
@@ -34,8 +34,7 @@
         "type": "object",
         "properties": {
           "grpc_port": { "type": "integer" },
-          "http_port": { "type": "integer" },
-          "menu_distro_swap": { "type": "boolean" }
+          "http_port": { "type": "integer" }
         }
       },
       "SettingsUpdate": {
@@ -43,8 +42,7 @@
         "description": "Partial: an absent field leaves that setting unchanged. Port changes take effect on next apply.",
         "properties": {
           "grpc_port": { "type": "integer" },
-          "http_port": { "type": "integer" },
-          "menu_distro_swap": { "type": "boolean" }
+          "http_port": { "type": "integer" }
         }
       },
       "Var": {
@@ -66,16 +64,15 @@
             "type": "object",
             "properties": {
               "remote_url": { "type": "string" },
-              "distro": { "type": "string" },
               "pristine_sha256": { "type": "string" },
-              "variable_sets": {
+              "presets": {
                 "type": "object",
                 "additionalProperties": {
                   "type": "object",
                   "additionalProperties": { "type": "string" }
                 }
               },
-              "active_set": { "type": "string" }
+              "active_preset": { "type": "string" }
             }
           },
           "vars": {
@@ -196,7 +193,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -252,26 +249,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
-          },
-          "500": {
-            "description": "Error",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
-          }
-        }
-      }
-    },
-    "/api/service/rollback": {
-      "post": {
-        "summary": "Restore and re-activate the last known-good configuration + settings",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
-          },
-          "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -402,7 +380,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfigDetail" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -422,7 +400,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -451,7 +429,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -473,7 +451,6 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "distro": { "type": "string" },
                   "remote_url": { "type": "string" }
                 }
               }
@@ -548,7 +525,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": { "set": { "type": "string" } }
+                "properties": { "preset": { "type": "string" } }
               }
             }
           }
@@ -559,7 +536,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -606,7 +583,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -628,7 +605,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -656,7 +633,7 @@
             }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -666,12 +643,12 @@
         }
       }
     },
-    "/api/configs/{name}/sets/{set}": {
+    "/api/configs/{name}/presets/{preset}": {
       "put": {
-        "summary": "Create or replace a whole variable set",
+        "summary": "Create or replace a whole preset",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "set", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "preset", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "requestBody": {
           "content": {
@@ -706,10 +683,10 @@
         }
       },
       "delete": {
-        "summary": "Delete a variable set (never the active one)",
+        "summary": "Delete a preset (never the active one)",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "set", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "preset", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
           "200": {
@@ -717,7 +694,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -727,12 +704,12 @@
         }
       }
     },
-    "/api/configs/{name}/sets/{set}/use": {
+    "/api/configs/{name}/presets/{preset}/use": {
       "post": {
-        "summary": "Make this variable set the configuration's active one",
+        "summary": "Make this preset the configuration's active one",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "set", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "preset", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
           "200": {
@@ -740,7 +717,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -750,12 +727,12 @@
         }
       }
     },
-    "/api/configs/{name}/sets/{set}/rename": {
+    "/api/configs/{name}/presets/{preset}/rename": {
       "post": {
-        "summary": "Rename this variable set (the active set follows the rename)",
+        "summary": "Rename this preset (the active preset follows the rename)",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "set", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "preset", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "requestBody": {
           "content": {
@@ -782,7 +759,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
-            "description": "Error (set missing, or the new name already exists)",
+            "description": "Error (preset missing, or the new name already exists)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           }
         }
@@ -928,7 +905,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -950,7 +927,7 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or set, a configuration the collector rejects, a binary that isn't there)",
+            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {

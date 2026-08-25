@@ -2,9 +2,9 @@
 
 // Package tray implements compy's macOS menu-bar item: the service status,
 // the configurations inline as checkable items (overflowing into a "More
-// configurations" submenu only when there are many), an optional distro
-// switcher, and rollback; "Open compy" spawns the standalone window for
-// everything else. (The full menu-bar rework is P4.)
+// configurations" submenu only when there are many), and the active
+// configuration's presets; "Open compy" opens the standalone window for
+// everything else. (The full menu-bar rework is v3 task 3.)
 package tray
 
 import (
@@ -18,7 +18,6 @@ import (
 	"fyne.io/systray"
 
 	"github.com/bronto-io/compy/internal/app"
-	"github.com/bronto-io/compy/internal/state"
 )
 
 // refreshInterval is how often the status line and menu check-states are
@@ -43,15 +42,13 @@ type menu struct {
 	mu          sync.Mutex // serializes apply-triggering actions and guards the fields below
 	status      *systray.MenuItem
 	statusLine2 *systray.MenuItem
-	distros     *systray.MenuItem
 
-	slots            []*systray.MenuItem // pre-created inline config items (fixed menu position)
-	slotNames        []string            // slotNames[i] = config shown in slots[i], "" = hidden
-	more             *systray.MenuItem   // overflow submenu parent
-	moreItems        map[string]*systray.MenuItem
-	variableSet      *systray.MenuItem // "Variable set" submenu parent, shown only for a multi-set active config
-	variableSetItems map[string]*systray.MenuItem
-	distroItems      map[string]*systray.MenuItem
+	slots       []*systray.MenuItem // pre-created inline config items (fixed menu position)
+	slotNames   []string            // slotNames[i] = config shown in slots[i], "" = hidden
+	more        *systray.MenuItem   // overflow submenu parent
+	moreItems   map[string]*systray.MenuItem
+	preset      *systray.MenuItem // "Preset" submenu parent, shown only for a multi-preset active config
+	presetItems map[string]*systray.MenuItem
 }
 
 func onReady(a *app.App) {
@@ -59,10 +56,9 @@ func onReady(a *app.App) {
 	systray.SetTooltip("compy — local OpenTelemetry Collector manager")
 
 	m := &menu{
-		a:                a,
-		moreItems:        map[string]*systray.MenuItem{},
-		variableSetItems: map[string]*systray.MenuItem{},
-		distroItems:      map[string]*systray.MenuItem{},
+		a:           a,
+		moreItems:   map[string]*systray.MenuItem{},
+		presetItems: map[string]*systray.MenuItem{},
 	}
 
 	m.status = systray.AddMenuItem("...", "service status")
@@ -81,11 +77,8 @@ func onReady(a *app.App) {
 	}
 	m.more = systray.AddMenuItem("More configurations", "the rest of your configurations")
 	m.more.Hide()
-	m.variableSet = systray.AddMenuItem("Variable set", "switch the active configuration's variable set")
-	m.variableSet.Hide()
-	m.distros = systray.AddMenuItem("Distro", "switch the collector distribution")
-	m.distros.Hide() // shown by sync() only when settings.MenuDistroSwap is on
-	rollback := systray.AddMenuItem("Rollback", "restore the last known-good config")
+	m.preset = systray.AddMenuItem("Preset", "switch the active configuration's preset")
+	m.preset.Hide()
 	systray.AddSeparator()
 	openApp := systray.AddMenuItem("Open compy", "open the compy window")
 	quit := systray.AddMenuItem("Quit", "quit the compy menu bar item")
@@ -102,11 +95,6 @@ func onReady(a *app.App) {
 			m.mu.Unlock()
 		}
 	}()
-	go func() {
-		for range rollback.ClickedCh {
-			m.act("rolling back…", m.a.Rollback)
-		}
-	}()
 	go handleOpenApp(openApp)
 	go func() {
 		<-quit.ClickedCh
@@ -114,8 +102,8 @@ func onReady(a *app.App) {
 	}()
 }
 
-// sync reconciles the status line, the configuration picker, and the distro
-// radio items with what is on disk right now.
+// sync reconciles the status line, the configuration picker, and the preset
+// items with what is on disk right now.
 func (m *menu) sync() {
 	st, err := m.a.Status()
 	if err != nil {
@@ -163,48 +151,25 @@ func (m *menu) sync() {
 			m.more.Hide()
 		}
 
-		setNames, activeSet, show := activeVariableSets(configs, st.Config)
+		presetNames, activePreset, show := activePresets(configs, st.Config)
 		if show {
 			seen := map[string]bool{}
-			for _, name := range setNames {
+			for _, name := range presetNames {
 				seen[name] = true
-				item, ok := m.variableSetItems[name]
+				item, ok := m.presetItems[name]
 				if !ok {
-					item = m.variableSet.AddSubMenuItemCheckbox(name, "switch to variable set "+name, false)
-					m.variableSetItems[name] = item
-					go m.handleVariableSetClicks(name, item)
+					item = m.preset.AddSubMenuItemCheckbox(name, "switch to preset "+name, false)
+					m.presetItems[name] = item
+					go m.handlePresetClicks(name, item)
 				}
-				setChecked(item, name == activeSet)
+				setChecked(item, name == activePreset)
 			}
-			removeStale(m.variableSetItems, seen)
-			m.variableSet.Show()
+			removeStale(m.presetItems, seen)
+			m.preset.Show()
 		} else {
-			removeStale(m.variableSetItems, map[string]bool{})
-			m.variableSet.Hide()
+			removeStale(m.presetItems, map[string]bool{})
+			m.preset.Hide()
 		}
-	}
-
-	s, err := state.LoadSettings()
-	if err != nil || !s.MenuDistroSwap {
-		m.distros.Hide()
-		return
-	}
-	m.distros.Show()
-	distros, err := m.a.Distros()
-	if err == nil {
-		seen := map[string]bool{}
-		for _, d := range distros {
-			name, _ := d["name"].(string)
-			seen[name] = true
-			item, ok := m.distroItems[name]
-			if !ok {
-				item = m.distros.AddSubMenuItemCheckbox(name, "switch to "+name, false)
-				m.distroItems[name] = item
-				go m.handleDistroClicks(name, item)
-			}
-			setChecked(item, name == st.Distro)
-		}
-		removeStale(m.distroItems, seen)
 	}
 }
 
@@ -227,7 +192,7 @@ func removeStale(items map[string]*systray.MenuItem, seen map[string]bool) {
 
 func (m *menu) handleConfigClicks(name string, item *systray.MenuItem) {
 	for range item.ClickedCh {
-		// Activate with the configuration's own active set ("" keeps it).
+		// Activate with the configuration's own active preset ("" keeps it).
 		m.act("activating "+name+"…", func() error { return m.a.Activate(name, "") })
 	}
 }
@@ -247,23 +212,17 @@ func (m *menu) handleSlotClicks(i int, slot *systray.MenuItem) {
 	}
 }
 
-func (m *menu) handleDistroClicks(name string, item *systray.MenuItem) {
+// handlePresetClicks resolves the active configuration at click time — the
+// submenu is only shown for it, but that may have changed since the menu was
+// drawn.
+func (m *menu) handlePresetClicks(preset string, item *systray.MenuItem) {
 	for range item.ClickedCh {
-		m.act("switching distro…", func() error { return m.a.UseDistro(name) })
-	}
-}
-
-// handleVariableSetClicks resolves the active configuration at click time —
-// the submenu is only shown for it, but that may have changed since the
-// menu was drawn.
-func (m *menu) handleVariableSetClicks(set string, item *systray.MenuItem) {
-	for range item.ClickedCh {
-		m.act("switching set…", func() error {
+		m.act("switching preset…", func() error {
 			st, err := m.a.Status()
 			if err != nil {
 				return err
 			}
-			return m.a.Activate(st.Config, set)
+			return m.a.Activate(st.Config, preset)
 		})
 	}
 }

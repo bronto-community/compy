@@ -168,7 +168,7 @@ func TestActivateHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !st.Running || st.Config != "mine" || st.Set != "prod" || st.Distro != "fake" || st.GRPCPort != port {
+	if !st.Running || st.Config != "mine" || st.Preset != "prod" || st.Distro != "fake" || st.GRPCPort != port {
 		t.Errorf("Status() = %+v", st)
 	}
 }
@@ -335,7 +335,7 @@ func TestWriteYAMLReactivatesWhenActive(t *testing.T) {
 	}
 }
 
-func TestReplaceSetReactivatesWhenActiveSet(t *testing.T) {
+func TestReplacePresetReactivatesWhenActivePreset(t *testing.T) {
 	calls := setup(t, "")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
@@ -355,16 +355,16 @@ func TestReplaceSetReactivatesWhenActiveSet(t *testing.T) {
 	}
 
 	*calls = nil
-	// Replacing a set on an inactive config must not re-apply.
-	if err := a.ReplaceSet("other", "prod", map[string]string{"K": "v2"}); err != nil {
+	// Replacing a preset on an inactive config must not re-apply.
+	if err := a.ReplacePreset("other", "prod", map[string]string{"K": "v2"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(*calls) != 0 {
-		t.Errorf("replacing a set on an inactive config re-applied: %v", *calls)
+		t.Errorf("replacing a preset on an inactive config re-applied: %v", *calls)
 	}
 
-	// Give "debug" a set and activate it so it becomes the active config AND
-	// active set together.
+	// Give "debug" a preset and activate it so it becomes the active config
+	// AND active preset together.
 	if err := a.SetVar("debug", "prod", "K", "v1"); err != nil {
 		t.Fatal(err)
 	}
@@ -373,32 +373,32 @@ func TestReplaceSetReactivatesWhenActiveSet(t *testing.T) {
 	}
 
 	*calls = nil
-	if err := a.ReplaceSet("debug", "prod", map[string]string{"K": "v2"}); err != nil {
-		t.Fatalf("ReplaceSet: %v", err)
+	if err := a.ReplacePreset("debug", "prod", map[string]string{"K": "v2"}); err != nil {
+		t.Fatalf("ReplacePreset: %v", err)
 	}
 	if !called(*calls, "bootstrap") {
-		t.Errorf("replacing the active set did not re-activate: %v", *calls)
+		t.Errorf("replacing the active preset did not re-activate: %v", *calls)
 	}
 	info, _, err := cfgstore.Get(a.Dir, "debug")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Meta.VariableSets["prod"]["K"] != "v2" {
-		t.Errorf("VariableSets = %+v, want K=v2", info.Meta.VariableSets)
+	if info.Meta.Presets["prod"]["K"] != "v2" {
+		t.Errorf("Presets = %+v, want K=v2", info.Meta.Presets)
 	}
 
 	*calls = nil
-	// Replacing a *different, non-active* set on the active config must not
-	// re-apply.
-	if err := a.ReplaceSet("debug", "staging", map[string]string{"K": "v1"}); err != nil {
+	// Replacing a *different, non-active* preset on the active config must
+	// not re-apply.
+	if err := a.ReplacePreset("debug", "staging", map[string]string{"K": "v1"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(*calls) != 0 {
-		t.Errorf("replacing a non-active set on the active config re-applied: %v", *calls)
+		t.Errorf("replacing a non-active preset on the active config re-applied: %v", *calls)
 	}
 }
 
-func TestUpdateConfigMetaPartialAndDistroValidation(t *testing.T) {
+func TestUpdateConfigMetaRemoteURL(t *testing.T) {
 	setup(t, "")
 	a, err := app.New()
 	if err != nil {
@@ -409,8 +409,8 @@ func TestUpdateConfigMetaPartialAndDistroValidation(t *testing.T) {
 	}
 
 	url := "https://example.com/c.yaml"
-	if err := a.UpdateConfigMeta("mine", nil, &url); err != nil {
-		t.Fatalf("UpdateConfigMeta (remote only): %v", err)
+	if err := a.UpdateConfigMeta("mine", &url); err != nil {
+		t.Fatalf("UpdateConfigMeta: %v", err)
 	}
 	info, _, err := cfgstore.Get(a.Dir, "mine")
 	if err != nil {
@@ -419,49 +419,22 @@ func TestUpdateConfigMetaPartialAndDistroValidation(t *testing.T) {
 	if info.Meta.RemoteURL != url {
 		t.Errorf("RemoteURL = %q, want %q", info.Meta.RemoteURL, url)
 	}
-	if info.Meta.Distro != "" {
-		t.Errorf("Distro = %q, want unchanged (nil param)", info.Meta.Distro)
-	}
 
-	// distro must exist in the registry (shipped def "core" always does).
-	distroName := "core"
-	if err := a.UpdateConfigMeta("mine", &distroName, nil); err != nil {
-		t.Fatalf("UpdateConfigMeta (known distro): %v", err)
+	// nil leaves it alone; "" clears it.
+	if err := a.UpdateConfigMeta("mine", nil); err != nil {
+		t.Fatalf("UpdateConfigMeta(nil): %v", err)
 	}
-	info, _, err = cfgstore.Get(a.Dir, "mine")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Meta.Distro != "core" {
-		t.Errorf("Distro = %q, want core", info.Meta.Distro)
-	}
+	info, _, _ = cfgstore.Get(a.Dir, "mine")
 	if info.Meta.RemoteURL != url {
-		t.Errorf("RemoteURL = %q, want unchanged", info.Meta.RemoteURL)
+		t.Errorf("RemoteURL = %q after a nil update, want unchanged", info.Meta.RemoteURL)
 	}
-
-	bogus := "no-such-distro"
-	if err := a.UpdateConfigMeta("mine", &bogus, nil); err == nil || !state.IsBadRequest(err) {
-		t.Fatalf("UpdateConfigMeta with unknown distro: err=%v, want a state.BadRequest-marked error", err)
-	}
-	info, _, err = cfgstore.Get(a.Dir, "mine")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Meta.Distro != "core" {
-		t.Errorf("Distro = %q after rejected update, want unchanged core", info.Meta.Distro)
-	}
-
-	// "" clears back to the global default.
 	empty := ""
-	if err := a.UpdateConfigMeta("mine", &empty, nil); err != nil {
-		t.Fatalf("UpdateConfigMeta (clear distro): %v", err)
+	if err := a.UpdateConfigMeta("mine", &empty); err != nil {
+		t.Fatalf("UpdateConfigMeta(clear): %v", err)
 	}
-	info, _, err = cfgstore.Get(a.Dir, "mine")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Meta.Distro != "" {
-		t.Errorf("Distro = %q, want cleared", info.Meta.Distro)
+	info, _, _ = cfgstore.Get(a.Dir, "mine")
+	if info.Meta.RemoteURL != "" {
+		t.Errorf("RemoteURL = %q, want cleared", info.Meta.RemoteURL)
 	}
 }
 
@@ -480,7 +453,7 @@ func TestUpdateConfigMetaReactivatesWhenActive(t *testing.T) {
 
 	*calls = nil
 	url := "https://example.com/c.yaml"
-	if err := a.UpdateConfigMeta("debug", nil, &url); err != nil {
+	if err := a.UpdateConfigMeta("debug", &url); err != nil {
 		t.Fatalf("UpdateConfigMeta: %v", err)
 	}
 	if !called(*calls, "bootstrap") {
@@ -504,20 +477,19 @@ func TestGetPutSettings(t *testing.T) {
 	}
 
 	grpc := 5000
-	swap := true
-	if err := a.PutSettings(&grpc, nil, &swap); err != nil {
+	if err := a.PutSettings(&grpc, nil); err != nil {
 		t.Fatalf("PutSettings: %v", err)
 	}
 	s, err = a.GetSettings()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.GRPCPort != 5000 || s.HTTPPort != 14318 || !s.MenuDistroSwap {
+	if s.GRPCPort != 5000 || s.HTTPPort != 14318 {
 		t.Errorf("GetSettings() after partial PutSettings = %+v", s)
 	}
 
 	bad := 70000
-	if err := a.PutSettings(&bad, nil, nil); err == nil {
+	if err := a.PutSettings(&bad, nil); err == nil {
 		t.Fatal("PutSettings with out-of-range port: want error, got nil")
 	}
 	s, err = a.GetSettings()
@@ -529,7 +501,7 @@ func TestGetPutSettings(t *testing.T) {
 	}
 
 	zero := 0
-	if err := a.PutSettings(nil, &zero, nil); err == nil {
+	if err := a.PutSettings(nil, &zero); err == nil {
 		t.Fatal("PutSettings with port 0: want error, got nil")
 	}
 }
@@ -777,21 +749,21 @@ func TestRenameSetApp(t *testing.T) {
 	if err := a.SetVar("cfg", "prod", "HOST", "example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.UseSet("cfg", "prod"); err != nil {
+	if err := a.UsePreset("cfg", "prod"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.RenameSet("cfg", "prod", "production"); err != nil {
-		t.Fatalf("RenameSet: %v", err)
+	if err := a.RenamePreset("cfg", "prod", "production"); err != nil {
+		t.Fatalf("RenamePreset: %v", err)
 	}
 	info, _, err := a.Config("cfg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Meta.ActiveSet != "production" || info.Meta.VariableSets["production"]["HOST"] != "example.com" {
+	if info.Meta.ActivePreset != "production" || info.Meta.Presets["production"]["HOST"] != "example.com" {
 		t.Fatalf("info.Meta = %+v, want the active set renamed with its values intact", info.Meta)
 	}
 
-	if err := a.RenameSet("cfg", "no-such-set", "x"); err == nil {
+	if err := a.RenamePreset("cfg", "no-such-preset", "x"); err == nil {
 		t.Fatal("RenameSet from a nonexistent set: want error, got nil")
 	}
 }
@@ -857,41 +829,7 @@ func TestLogStats(t *testing.T) {
 	}
 }
 
-func TestRollbackRestoresAndApplies(t *testing.T) {
-	calls := setup(t, "")
-	fakeDistro(t, "exit 0")
-	listenPort(t)
-
-	a, err := app.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Activate("debug", ""); err != nil {
-		t.Fatal(err)
-	}
-	// Break the config behind compy's back (a write through the app would
-	// re-activate and snapshot the broken config as the new last-good).
-	if err := cfgstore.WriteYAML(a.Dir, "debug", "broken: true\n"); err != nil {
-		t.Fatal(err)
-	}
-
-	*calls = nil
-	if err := a.Rollback(); err != nil {
-		t.Fatalf("Rollback() = %v, want nil", err)
-	}
-	_, yaml, err := cfgstore.Get(a.Dir, "debug")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(yaml, "broken") {
-		t.Errorf("config not restored: %q", yaml)
-	}
-	if !called(*calls, "bootstrap") {
-		t.Errorf("rollback did not re-apply: %v", *calls)
-	}
-}
-
-func TestApplyProbeFailureHintsRollback(t *testing.T) {
+func TestActivateStartupFailureReportsTheLog(t *testing.T) {
 	// Bind then release a port: nothing listens there, so the probe fails
 	// (and we are not at the mercy of whatever holds the default port).
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -923,9 +861,6 @@ func TestApplyProbeFailureHintsRollback(t *testing.T) {
 	err = a.Activate("debug", "")
 	if err == nil {
 		t.Fatal("Activate() = nil, want probe failure")
-	}
-	if !strings.Contains(err.Error(), "compy rollback") {
-		t.Errorf("error = %q, want a rollback hint", err)
 	}
 	if !strings.Contains(err.Error(), "bind: address already in use") {
 		t.Errorf("error = %q, want the log tail", err)
@@ -1307,26 +1242,25 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 		{"DeleteConfig unknown", func() error { return a.DeleteConfig(nosuch) }},
 		{"DeleteConfig active", func() error { return a.DeleteConfig("mine") }},
 		{"WriteConfigYAML unknown", func() error { return a.WriteConfigYAML(nosuch, "") }},
-		{"UpdateConfigMeta unknown config", func() error { return a.UpdateConfigMeta(nosuch, nil, nil) }},
-		{"UpdateConfigMeta unknown distro", func() error { return a.UpdateConfigMeta("mine", &nosuch, nil) }},
+		{"UpdateConfigMeta unknown config", func() error { return a.UpdateConfigMeta(nosuch, nil) }},
 		{"Activate unknown config", func() error { return a.Activate(nosuch, "") }},
-		{"Activate unknown set", func() error { return a.Activate("mine", nosuch) }},
+		{"Activate unknown preset", func() error { return a.Activate("mine", nosuch) }},
 		{"ValidateConfig unknown config", func() error { return a.ValidateConfig(nosuch) }},
 		{"Sync non-remote", func() error { return a.Sync("mine") }},
 		{"Resync non-remote", func() error { return a.Resync("mine") }},
-		{"ReplaceSet unknown config", func() error { return a.ReplaceSet(nosuch, "dev", nil) }},
-		{"ReplaceSet invalid set name", func() error { return a.ReplaceSet("mine", "Bad Set", nil) }},
-		{"UseSet unknown set", func() error { return a.UseSet("other", nosuch) }},
-		{"DeleteSet unknown set", func() error { return a.DeleteSet("mine", nosuch) }},
-		{"DeleteSet active set", func() error { return a.DeleteSet("mine", "dev") }},
-		{"RenameSet unknown set", func() error { return a.RenameSet("mine", nosuch, "fresh") }},
-		{"RenameSet invalid target", func() error { return a.RenameSet("mine", "dev", "Bad Set") }},
-		{"SetVar invalid set name", func() error { return a.SetVar("mine", "Bad Set", "K", "v") }},
+		{"ReplaceSet unknown config", func() error { return a.ReplacePreset(nosuch, "dev", nil) }},
+		{"ReplaceSet invalid set name", func() error { return a.ReplacePreset("mine", "Bad Preset", nil) }},
+		{"UseSet unknown set", func() error { return a.UsePreset("other", nosuch) }},
+		{"DeleteSet unknown set", func() error { return a.DeletePreset("mine", nosuch) }},
+		{"DeletePreset active preset", func() error { return a.DeletePreset("mine", "dev") }},
+		{"RenamePreset unknown preset", func() error { return a.RenamePreset("mine", nosuch, "fresh") }},
+		{"RenamePreset invalid target", func() error { return a.RenamePreset("mine", "dev", "Bad Preset") }},
+		{"SetVar invalid preset name", func() error { return a.SetVar("mine", "Bad Preset", "K", "v") }},
 		{"AddDistro duplicate", func() error { return a.AddDistro("fake", missing) }},
 		{"AddDistro missing binary", func() error { return a.AddDistro("fresh", missing) }},
 		{"UseDistro unknown", func() error { return a.UseDistro(nosuch) }},
 		{"FetchDistro unknown", func() error { return a.FetchDistro(nosuch) }},
-		{"PutSettings port out of range", func() error { p := 99999; return a.PutSettings(&p, nil, nil) }},
+		{"PutSettings port out of range", func() error { p := 99999; return a.PutSettings(&p, nil) }},
 	}
 	for _, tc := range cases {
 		err := tc.fn()
@@ -1341,7 +1275,14 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 
 	// A configuration the collector itself rejects is the user's YAML being
 	// wrong, not our fault: the collector's diagnostics are the whole answer.
-	if err := a.UpdateConfigMeta("other", strPtr("broken"), nil); err != nil {
+	// (The reject is faked by pointing the one collector at the failing
+	// binary registered above.)
+	sel, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel.Distro = "broken"
+	if err := state.SaveSettings(sel); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.ValidateConfig("other"); err == nil || !state.IsBadRequest(err) {
@@ -1351,8 +1292,6 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 		t.Errorf("Activate with a config the collector rejects: err = %v, want state.BadRequest-marked", err)
 	}
 }
-
-func strPtr(s string) *string { return &s }
 
 // TestBadRequestSurvivesWrapping guards the marker against the commonest way
 // to lose it: a caller adding context with fmt.Errorf("%w").

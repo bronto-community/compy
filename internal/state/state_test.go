@@ -16,7 +16,6 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 	s.ActiveConfig = "debug"
 	s.Distro = "core"
-	s.MenuDistroSwap = true
 	if err := SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +47,7 @@ func TestLoadSettingsAcceptsV1File(t *testing.T) {
 	if s.GRPCPort != 14317 || s.Distro != "core" || !s.OSEnv {
 		t.Errorf("known fields lost: %+v", s)
 	}
-	if s.ActiveConfig != "" || s.MenuDistroSwap {
+	if s.ActiveConfig != "" {
 		t.Errorf("new fields not defaulted: %+v", s)
 	}
 }

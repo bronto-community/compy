@@ -1,5 +1,5 @@
 // Package app orchestrates compy's pieces: it turns the active
-// configuration (plus its variable set) into a validated, installed, running
+// configuration (plus its preset) into a validated, installed, running
 // collector, and exposes the same operations to the CLI, the web UI, and the
 // tray.
 package app
@@ -44,7 +44,7 @@ type Status struct {
 	GRPCPort int    `json:"grpc_port"`
 	HTTPPort int    `json:"http_port"`
 	Config   string `json:"config"`
-	Set      string `json:"set"`
+	Preset   string `json:"preset"`
 	OSEnv    bool   `json:"os_env"`
 }
 
@@ -95,7 +95,7 @@ func (a *App) configDetail(name string) (any, error) {
 }
 
 // ActiveConfig returns the active configuration's name and its active
-// variable set. Both are "" when nothing has been activated yet.
+// preset. Both are "" when nothing has been activated yet.
 func (a *App) ActiveConfig() (string, string, error) {
 	s, err := state.LoadSettings()
 	if err != nil || s.ActiveConfig == "" {
@@ -105,11 +105,11 @@ func (a *App) ActiveConfig() (string, string, error) {
 	if err != nil {
 		return s.ActiveConfig, "", err
 	}
-	return s.ActiveConfig, info.Meta.ActiveSet, nil
+	return s.ActiveConfig, info.Meta.ActivePreset, nil
 }
 
 // activationEnv is the LaunchAgent's EnvironmentVariables dict: the active
-// set's values plus compy's port variables, which the set may not override
+// preset's values plus compy's port variables, which the preset may not override
 // (shipped configs bind their receivers to them).
 func activationEnv(values map[string]string, s state.Settings) map[string]string {
 	env := maps.Clone(values)
@@ -123,23 +123,23 @@ func activationEnv(values map[string]string, s state.Settings) map[string]string
 
 // Activate makes name the running configuration: it resolves the distro
 // (downloading a shipped definition on first use), validates, installs and
-// restarts the LaunchAgent with the set's variables in its environment,
+// restarts the LaunchAgent with the preset's variables in its environment,
 // waits for the collector to answer, and snapshots the result as last-good.
-// An empty set keeps the configuration's current active_set.
-func (a *App) Activate(name, set string) error {
+// An empty preset keeps the configuration's current active_preset.
+func (a *App) Activate(name, preset string) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
-	if set == "" {
-		set = info.Meta.ActiveSet
+	if preset == "" {
+		preset = info.Meta.ActivePreset
 	}
-	if set != "" {
-		if _, ok := info.Meta.VariableSets[set]; !ok {
-			return state.BadRequest(fmt.Errorf("config %q has no variable set %q", name, set))
+	if preset != "" {
+		if _, ok := info.Meta.Presets[preset]; !ok {
+			return state.BadRequest(fmt.Errorf("config %q has no preset %q", name, preset))
 		}
 	}
-	bin, err := a.EnsureDistro(info.Meta.Distro)
+	bin, err := a.EnsureDistro("")
 	if err != nil {
 		return err
 	}
@@ -147,7 +147,7 @@ func (a *App) Activate(name, set string) error {
 	if err != nil {
 		return err
 	}
-	env := activationEnv(info.Meta.VariableSets[set], s)
+	env := activationEnv(info.Meta.Presets[preset], s)
 	args := []string{"--config", a.ConfigPath(name)}
 
 	// A config the collector rejects is the user's YAML being wrong, not a
@@ -157,8 +157,8 @@ func (a *App) Activate(name, set string) error {
 		return state.BadRequest(err)
 	}
 
-	if set != "" && set != info.Meta.ActiveSet {
-		if err := cfgstore.UseSet(a.Dir, name, set); err != nil {
+	if preset != "" && preset != info.Meta.ActivePreset {
+		if err := cfgstore.UsePreset(a.Dir, name, preset); err != nil {
 			return err
 		}
 	}
@@ -178,14 +178,14 @@ func (a *App) Activate(name, set string) error {
 		// there" — launchd is the authority on whether the job is up.
 		if running, rerr := launchd.Running(); rerr != nil || !running {
 			tail, _ := collector.TailLog(a.LogPath(), 20)
-			return fmt.Errorf("collector did not come up: %w\n%s\nrun: compy rollback", err, tail)
+			return fmt.Errorf("collector did not come up: %w\n%s", err, tail)
 		}
 	}
 	// Snapshot only now, with the configuration proven to actually start.
 	return cfgstore.SnapshotActive(a.Dir, name)
 }
 
-// Apply re-activates the current configuration and set.
+// Apply re-activates the current configuration and preset.
 func (a *App) Apply() error {
 	name, _, err := a.activeName()
 	if err != nil {
@@ -206,15 +206,6 @@ func (a *App) activeName() (string, state.Settings, error) {
 	return s.ActiveConfig, s, nil
 }
 
-// Rollback restores the last known-good configuration + settings and
-// re-activates them.
-func (a *App) Rollback() error {
-	if err := cfgstore.RestoreActive(a.Dir); err != nil {
-		return err
-	}
-	return a.Apply()
-}
-
 // Validate checks the active configuration against its distro without
 // touching the running service.
 func (a *App) Validate() error {
@@ -226,14 +217,14 @@ func (a *App) Validate() error {
 }
 
 // ValidateConfig checks name's configuration against its own distro, using
-// its own active set's environment — unlike Validate, name need not be the
+// its own active preset's environment — unlike Validate, name need not be the
 // active configuration.
 func (a *App) ValidateConfig(name string) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
-	bin, err := a.EnsureDistro(info.Meta.Distro)
+	bin, err := a.EnsureDistro("")
 	if err != nil {
 		return err
 	}
@@ -241,7 +232,7 @@ func (a *App) ValidateConfig(name string) error {
 	if err != nil {
 		return err
 	}
-	env := activationEnv(info.Meta.VariableSets[info.Meta.ActiveSet], s)
+	env := activationEnv(info.Meta.Presets[info.Meta.ActivePreset], s)
 	if err := collector.Validate(bin, []string{"--config", a.ConfigPath(name)}, env); err != nil {
 		return state.BadRequest(err)
 	}
@@ -256,10 +247,10 @@ func (a *App) Status() (Status, error) {
 	}
 	// An error here means the job is not loaded, i.e. not running.
 	running, _ := launchd.Running()
-	set := ""
+	preset := ""
 	if s.ActiveConfig != "" {
 		if info, _, err := cfgstore.Get(a.Dir, s.ActiveConfig); err == nil {
-			set = info.Meta.ActiveSet
+			preset = info.Meta.ActivePreset
 		}
 	}
 	return Status{
@@ -268,7 +259,7 @@ func (a *App) Status() (Status, error) {
 		GRPCPort: s.GRPCPort,
 		HTTPPort: s.HTTPPort,
 		Config:   s.ActiveConfig,
-		Set:      set,
+		Preset:   preset,
 		OSEnv:    s.OSEnv,
 	}, nil
 }
@@ -315,41 +306,15 @@ func (a *App) WriteConfigYAML(name, yaml string) error {
 	return a.reactivateIf(name)
 }
 
-// SetDistro sets a configuration's collector distribution ("" = the global
-// default), re-activating if it is the running one.
-func (a *App) SetDistro(name, distroName string) error {
-	info, _, err := cfgstore.Get(a.Dir, name)
-	if err != nil {
-		return err
-	}
-	info.Meta.Distro = distroName
-	if err := cfgstore.WriteMeta(a.Dir, name, info.Meta); err != nil {
-		return err
-	}
-	return a.reactivateIf(name)
-}
-
-// UpdateConfigMeta partially updates a configuration's distro and/or remote
-// URL (nil = unchanged), re-activating if it is the running one. A non-empty
-// distro must name an entry in the distro registry.
-func (a *App) UpdateConfigMeta(name string, distroP, remoteURLP *string) error {
+// UpdateConfigMeta updates a configuration's remote URL (nil = unchanged),
+// re-activating if it is the running one. There is no per-config collector
+// binary to update: one collector runs every configuration.
+func (a *App) UpdateConfigMeta(name string, remoteURLP *string) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
 	m := info.Meta
-	if distroP != nil {
-		if *distroP != "" {
-			reg, err := distro.Registry(a.Dir)
-			if err != nil {
-				return err
-			}
-			if !slices.ContainsFunc(reg, func(d state.Distro) bool { return d.Name == *distroP }) {
-				return state.BadRequest(fmt.Errorf("no such distro %q", *distroP))
-			}
-		}
-		m.Distro = *distroP
-	}
 	if remoteURLP != nil {
 		m.RemoteURL = *remoteURLP
 	}
@@ -395,54 +360,56 @@ func (a *App) SyncAll() ([]string, error) {
 	return synced, nil
 }
 
-// SetVar sets a variable in a set (creating the set), re-activating if that
-// set is the running one.
-func (a *App) SetVar(name, set, key, value string) error {
-	if err := cfgstore.SetVar(a.Dir, name, set, key, value); err != nil {
+// SetVar sets a variable in a preset (creating the preset), re-activating if that
+// preset is the running one.
+func (a *App) SetVar(name, preset, key, value string) error {
+	if err := cfgstore.SetVar(a.Dir, name, preset, key, value); err != nil {
 		return err
 	}
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
-	if info.Meta.ActiveSet == set {
+	if info.Meta.ActivePreset == preset {
 		return a.reactivateIf(name)
 	}
 	return nil
 }
 
-// ReplaceSet creates or replaces a variable set's entire contents,
-// re-activating if the configuration is active and set is its active_set.
-func (a *App) ReplaceSet(name, set string, values map[string]string) error {
-	if err := cfgstore.WriteSet(a.Dir, name, set, values); err != nil {
+// ReplacePreset creates or replaces a preset's entire contents,
+// re-activating if the configuration is active and preset is its active_preset.
+func (a *App) ReplacePreset(name, preset string, values map[string]string) error {
+	if err := cfgstore.WritePreset(a.Dir, name, preset, values); err != nil {
 		return err
 	}
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
-	if info.Meta.ActiveSet == set {
+	if info.Meta.ActivePreset == preset {
 		return a.reactivateIf(name)
 	}
 	return nil
 }
 
-// UseSet makes set the configuration's active variable set, re-activating if
+// UsePreset makes preset the configuration's active preset, re-activating if
 // the configuration is the running one.
-func (a *App) UseSet(name, set string) error {
+func (a *App) UsePreset(name, preset string) error {
 	if a.isActive(name) {
-		return a.Activate(name, set)
+		return a.Activate(name, preset)
 	}
-	return cfgstore.UseSet(a.Dir, name, set)
+	return cfgstore.UsePreset(a.Dir, name, preset)
 }
 
-// DeleteSet removes a variable set (never the active one).
-func (a *App) DeleteSet(name, set string) error { return cfgstore.DeleteSet(a.Dir, name, set) }
+// DeletePreset removes a preset (never the active one).
+func (a *App) DeletePreset(name, preset string) error {
+	return cfgstore.DeletePreset(a.Dir, name, preset)
+}
 
-// RenameSet renames a variable set (the active set follows the rename
+// RenamePreset renames a preset (the active preset follows the rename
 // automatically, in cfgstore).
-func (a *App) RenameSet(name, from, to string) error {
-	return cfgstore.RenameSet(a.Dir, name, from, to)
+func (a *App) RenamePreset(name, from, to string) error {
+	return cfgstore.RenamePreset(a.Dir, name, from, to)
 }
 
 // Log returns the last n lines of the collector log.
@@ -601,7 +568,7 @@ func validateDistroBinary(path string) (string, error) {
 	return abs, nil
 }
 
-// selectDistroIfNone makes name the global default distro if none is set
+// selectDistroIfNone makes name the global default distro if none is preset
 // yet (first registration).
 func selectDistroIfNone(name string) error {
 	s, err := state.LoadSettings()
@@ -764,16 +731,15 @@ func (a *App) settingsMap() (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"grpc_port":        s.GRPCPort,
-		"http_port":        s.HTTPPort,
-		"menu_distro_swap": s.MenuDistroSwap,
+		"grpc_port": s.GRPCPort,
+		"http_port": s.HTTPPort,
 	}, nil
 }
 
 // PutSettings partially updates compy's global settings (nil = unchanged);
 // grpcP/httpP must be in 1-65535. Port changes take effect on the next
 // Apply/Activate, not immediately.
-func (a *App) PutSettings(grpcP, httpP *int, menuSwapP *bool) error {
+func (a *App) PutSettings(grpcP, httpP *int) error {
 	s, err := state.LoadSettings()
 	if err != nil {
 		return err
@@ -790,9 +756,6 @@ func (a *App) PutSettings(grpcP, httpP *int, menuSwapP *bool) error {
 			return state.BadRequest(fmt.Errorf("http port %d out of range 1-65535", *httpP))
 		}
 		s.HTTPPort = *httpP
-	}
-	if menuSwapP != nil {
-		s.MenuDistroSwap = *menuSwapP
 	}
 	return state.SaveSettings(s)
 }
@@ -833,7 +796,7 @@ func (a *App) statusMap() (map[string]any, error) {
 		"http_port": st.HTTPPort,
 		"endpoint":  fmt.Sprintf("http://127.0.0.1:%d", st.HTTPPort),
 		"config":    st.Config,
-		"set":       st.Set,
+		"preset":    st.Preset,
 		"os_env":    st.OSEnv,
 	}, nil
 }
@@ -851,7 +814,6 @@ func (a *App) WebUIAPI() webui.API {
 		PutSettings: a.PutSettings,
 
 		Apply:    a.Apply,
-		Rollback: a.Rollback,
 		Validate: a.Validate,
 
 		Configs:        func() (any, error) { return a.Configs() },
@@ -868,10 +830,10 @@ func (a *App) WebUIAPI() webui.API {
 		Resync:         a.Resync,
 		SyncAll:        a.SyncAll,
 
-		PutSet:    a.ReplaceSet,
-		DeleteSet: a.DeleteSet,
-		UseSet:    a.UseSet,
-		RenameSet: a.RenameSet,
+		PutPreset:    a.ReplacePreset,
+		DeletePreset: a.DeletePreset,
+		UsePreset:    a.UsePreset,
+		RenamePreset: a.RenamePreset,
 
 		Distros: func() (any, error) { return a.Distros() },
 		AddDistro: func(name, path string) (string, error) {

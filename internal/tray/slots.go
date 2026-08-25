@@ -10,7 +10,7 @@ import (
 	"github.com/bronto-io/compy/internal/cfgstore"
 )
 
-// statusLines renders the two status-block lines: the running/config/set
+// statusLines renders the two status-block lines: the running/config/preset
 // summary, and the ports line with an error/warning tail (from
 // app.LogStats) shown only when there's something to report.
 func statusLines(st app.Status, errs, warns int) (line1, line2 string) {
@@ -22,8 +22,8 @@ func statusLines(st app.Status, errs, warns int) (line1, line2 string) {
 			state = "running"
 		}
 		line1 = fmt.Sprintf("%s — %s", state, st.Config)
-		if st.Set != "" {
-			line1 += fmt.Sprintf(" (%s)", st.Set)
+		if st.Preset != "" {
+			line1 += fmt.Sprintf(" (%s)", st.Preset)
 		}
 	}
 	line2 = fmt.Sprintf("grpc :%d · http :%d", st.GRPCPort, st.HTTPPort)
@@ -33,10 +33,10 @@ func statusLines(st app.Status, errs, warns int) (line1, line2 string) {
 	return line1, line2
 }
 
-// activeVariableSets reports the active configuration's variable sets
-// (sorted) and its currently-active set, and whether the picker should be
-// shown at all: only when there is an active config with 2+ sets.
-func activeVariableSets(configs []cfgstore.Info, activeConfig string) (names []string, activeSet string, show bool) {
+// activePresets reports the active configuration's presets (sorted) and its
+// currently-active preset, and whether the picker should be shown at all:
+// only when there is an active config with 2+ presets.
+func activePresets(configs []cfgstore.Info, activeConfig string) (names []string, activePreset string, show bool) {
 	if activeConfig == "" {
 		return nil, "", false
 	}
@@ -44,15 +44,15 @@ func activeVariableSets(configs []cfgstore.Info, activeConfig string) (names []s
 		if c.Name != activeConfig {
 			continue
 		}
-		if len(c.Meta.VariableSets) < 2 {
+		if len(c.Meta.Presets) < 2 {
 			return nil, "", false
 		}
-		names = make([]string, 0, len(c.Meta.VariableSets))
-		for n := range c.Meta.VariableSets {
+		names = make([]string, 0, len(c.Meta.Presets))
+		for n := range c.Meta.Presets {
 			names = append(names, n)
 		}
 		slices.Sort(names)
-		return names, c.Meta.ActiveSet, true
+		return names, c.Meta.ActivePreset, true
 	}
 	return nil, "", false
 }

@@ -216,7 +216,7 @@ async function refreshNavStatus() {
     state.status = s;
     document.getElementById("nav-led").classList.toggle("on", !!s.running);
     document.getElementById("nav-status-text").textContent = s.running
-      ? "running" + (s.config ? " · " + s.config + (s.set ? " · " + s.set : "") : "")
+      ? "running" + (s.config ? " · " + s.config + (s.preset ? " · " + s.preset : "") : "")
       : "stopped";
   } catch (e) {
     // surfaced already by whatever view fetch failed; don't double-report.
@@ -335,7 +335,7 @@ function buildConfigRow(c, active) {
 
   let sourceText = c.provenance;
   if (c.modified) sourceText += " · modified";
-  if (c.meta && c.meta.active_set) sourceText += " · set " + c.meta.active_set;
+  if (c.meta && c.meta.active_preset) sourceText += " · set " + c.meta.active_preset;
   const source = el("div", { class: "state-muted", text: sourceText });
 
   const state = el("div", {
@@ -493,10 +493,7 @@ function editorBusy() {
 
 async function renderConfigView(name) {
   if (editor.name !== name) resetEditor(name);
-  const [detail, distros] = await Promise.all([
-    api("/api/configs/" + encodeURIComponent(name)),
-    api("/api/distros"),
-  ]);
+  const detail = await api("/api/configs/" + encodeURIComponent(name));
   const info = detail.info || {};
   const meta = info.meta || {};
 
@@ -504,14 +501,14 @@ async function renderConfigView(name) {
   editor.cm = null; // the old instance goes with the cleared DOM
   viewRoot.appendChild(el("a", { class: "back-link", text: "← Configurations", attrs: { href: "#/configs" } }));
   viewRoot.appendChild(el("h1", { text: name }));
-  viewRoot.appendChild(el("p", { class: "page-desc", text: "Properties, variable sets, and the collector YAML itself." }));
+  viewRoot.appendChild(el("p", { class: "page-desc", text: "Properties, presets, and the collector YAML itself." }));
 
-  viewRoot.appendChild(buildPropertiesGroup(name, info, meta, distros));
+  viewRoot.appendChild(buildPropertiesGroup(name, info, meta));
   viewRoot.appendChild(buildVariablesGroup(name, info, meta));
   viewRoot.appendChild(buildYamlGroup(name, info, detail.yaml || ""));
 }
 
-function buildPropertiesGroup(name, info, meta, distros) {
+function buildPropertiesGroup(name, info, meta) {
   const prov = info.provenance || "local";
   const sourceText = prov + (info.modified ? " · modified" : "");
 
@@ -529,23 +526,6 @@ function buildPropertiesGroup(name, info, meta, distros) {
       showError(err);
     }
     await renderConfigView(name);
-  });
-
-  const selected = distros.find((d) => d.selected);
-  const distroSelect = el("select", { class: "field-input", attrs: { "aria-label": "Default distribution" } }, [
-    el("option", { text: "Global default" + (selected ? " (" + selected.name + ")" : ""), attrs: { value: "" } }),
-    ...distros.map((d) => el("option", { text: d.name, attrs: { value: d.name } })),
-  ]);
-  distroSelect.value = meta.distro || "";
-  distroSelect.addEventListener("change", async () => {
-    try {
-      await apiJSON("/api/configs/" + encodeURIComponent(name) + "/meta", "PUT", { distro: distroSelect.value });
-    } catch (err) {
-      showError(err);
-      distroSelect.value = meta.distro || "";
-    }
-    await renderConfigView(name);
-    await refreshNavStatus();
   });
 
   const syncActions = el("div", { class: "actions" });
@@ -586,7 +566,6 @@ function buildPropertiesGroup(name, info, meta, distros) {
   const bar = el("div", { class: "srow props-bar" }, [
     el("span", { class: "state-muted props-source", text: sourceText }),
     urlInput,
-    distroSelect,
     syncActions,
   ]);
   return el("div", { class: "group" }, [el("div", { class: "card" }, [bar])]);
@@ -600,9 +579,9 @@ function draftFor(set) {
 
 function buildVariablesGroup(name, info, meta) {
   const vars = info.vars || [];
-  const sets = meta.variable_sets || {};
+  const sets = meta.presets || {};
   const setNames = Object.keys(sets).sort();
-  const active = meta.active_set || "";
+  const active = meta.active_preset || "";
 
   const card = el("div", { class: "card" });
   if (!vars.length) {
@@ -616,16 +595,16 @@ function buildVariablesGroup(name, info, meta) {
   }
 
   const footer = el("div", { class: "srow" }, [
-    el("div", { class: "grow" }, [el("div", { class: "desc", text: setNames.length ? "One column per set; the active set (amber) is the one the collector runs with." : "Variable sets hold values for these variables — dev, prod, a customer, …" })]),
+    el("div", { class: "grow" }, [el("div", { class: "desc", text: setNames.length ? "One column per preset; the active preset (amber) is the one the collector runs with." : "Presets hold values for these variables — dev, prod, a customer, …" })]),
     el("div", { class: "actions" }, [
       el("button", {
-        class: "primary-act", text: "+ new set",
+        class: "primary-act", text: "+ new preset",
         on: {
           click: async () => {
-            const set = await askText("Name for the new variable set:", "");
+            const set = await askText("Name for the new preset:", "");
             if (!set) return;
             try {
-              await apiJSON("/api/configs/" + encodeURIComponent(name) + "/sets/" + encodeURIComponent(set), "PUT", { values: {} });
+              await apiJSON("/api/configs/" + encodeURIComponent(name) + "/presets/" + encodeURIComponent(set), "PUT", { values: {} });
             } catch (err) {
               showError(err);
             }
@@ -644,7 +623,7 @@ function buildVarsTable(name, vars, sets, setNames, active) {
   const table = el("table", { class: "vars-table" });
   const headRow = el("tr", {}, [el("th", { class: "var-col", text: "Variable" })]);
   for (const set of setNames) headRow.appendChild(buildSetHeader(name, set, sets[set] || {}, set === active));
-  if (!setNames.length) headRow.appendChild(el("th", { class: "desc", text: "no sets yet" }));
+  if (!setNames.length) headRow.appendChild(el("th", { class: "desc", text: "no presets yet" }));
   table.appendChild(el("thead", {}, [headRow]));
 
   const body = el("tbody");
@@ -678,7 +657,7 @@ function buildVarsTable(name, vars, sets, setNames, active) {
 }
 
 function buildSetHeader(name, set, stored, isActive) {
-  const base = "/api/configs/" + encodeURIComponent(name) + "/sets/" + encodeURIComponent(set);
+  const base = "/api/configs/" + encodeURIComponent(name) + "/presets/" + encodeURIComponent(set);
 
   const radio = el("input", {
     attrs: { type: "radio", name: "active-set", "aria-label": "Use set " + set },
@@ -720,7 +699,7 @@ function buildSetHeader(name, set, stored, isActive) {
     class: "act", text: "rename",
     on: {
       click: async () => {
-        const to = await askText("Rename variable set:", set);
+        const to = await askText("Rename preset:", set);
         if (!to || to === set) return;
         try {
           await apiJSON(base + "/rename", "POST", { to });
@@ -739,7 +718,7 @@ function buildSetHeader(name, set, stored, isActive) {
     delBtn.title = "Can't delete the active set";
   } else {
     delBtn.addEventListener("click", async () => {
-      if (!(await askConfirm('Delete variable set "' + set + '"?'))) return;
+      if (!(await askConfirm('Delete preset "' + set + '"?'))) return;
       try {
         await api(base, { method: "DELETE" });
         delete editor.drafts[set];
@@ -931,7 +910,7 @@ async function renderCollectorView() {
       // Always name the set, "(none)" included: which variables the running
       // collector actually got is not something to leave the reader guessing.
       text: status.config
-        ? status.config + " · set " + (status.set || "(none)")
+        ? status.config + " · preset " + (status.preset || "(none)")
         : "no configuration active",
     })]),
     el("tr", {}, [el("th", { text: "distro" }), el("td", { text: status.distro || "(none)" })]),
@@ -947,25 +926,6 @@ async function renderCollectorView() {
             e.target.disabled = true;
             try {
               await api("/api/service/apply", { method: "POST" });
-            } catch (err) {
-              showError(err);
-            }
-            await renderCollectorView();
-            await refreshNavStatus();
-          },
-        },
-      }),
-      el("button", {
-        class: "act", text: "roll back",
-        on: {
-          click: async (e) => {
-            e.target.disabled = true;
-            if (!(await askConfirm("Roll back to the last known-good configuration and settings?"))) {
-              e.target.disabled = false;
-              return;
-            }
-            try {
-              await api("/api/service/rollback", { method: "POST" });
             } catch (err) {
               showError(err);
             }
@@ -1018,18 +978,17 @@ async function renderCollectorView() {
 
 /* ── Settings view ────────────────────────────────────────────────── */
 async function renderSettingsView() {
-  const [distros, settings, status] = await Promise.all([
+  const [distros, status] = await Promise.all([
     api("/api/distros"),
-    api("/api/settings"),
     api("/api/status"),
   ]);
 
   clear(viewRoot);
   viewRoot.appendChild(el("h1", { text: "Settings" }));
-  viewRoot.appendChild(el("p", { class: "page-desc", text: "Collector distributions and menu bar / environment behavior." }));
+  viewRoot.appendChild(el("p", { class: "page-desc", text: "Collector distributions and environment behavior." }));
 
   viewRoot.appendChild(buildDistrosGroup(distros));
-  viewRoot.appendChild(buildTogglesGroup(settings, status));
+  viewRoot.appendChild(buildTogglesGroup(status));
 }
 
 function buildDistrosGroup(distros) {
@@ -1204,27 +1163,7 @@ function buildRemoveButton(d) {
   return removeBtn;
 }
 
-function buildTogglesGroup(settings, status) {
-  const menuRow = el("div", { class: "srow" }, [
-    el("div", { class: "grow" }, [
-      el("div", { class: "title", text: "Show distro switcher in menu bar" }),
-      el("div", { class: "desc", text: "Off by default — most people never need to swap collector binaries from the tray." }),
-    ]),
-    el("input", {
-      class: "sq-check",
-      attrs: { type: "checkbox", "aria-label": "Show distro switcher in menu bar" },
-      props: { checked: !!settings.menu_distro_swap },
-      on: {
-        change: async (e) => {
-          try {
-            await apiJSON("/api/settings", "PUT", { menu_distro_swap: e.target.checked });
-          } catch (err) {
-            showError(err);
-          }
-        },
-      },
-    }),
-  ]);
+function buildTogglesGroup(status) {
   const osEnvRow = el("div", { class: "srow" }, [
     el("div", { class: "grow" }, [
       el("div", { class: "title", text: "Set variables system-wide" }),
@@ -1247,8 +1186,8 @@ function buildTogglesGroup(settings, status) {
     }),
   ]);
   return el("div", { class: "group" }, [
-    el("div", { class: "group-title", text: "Menu bar & environment" }),
-    el("div", { class: "card" }, [menuRow, osEnvRow]),
+    el("div", { class: "group-title", text: "Environment" }),
+    el("div", { class: "card" }, [osEnvRow]),
   ]);
 }
 
