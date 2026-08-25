@@ -215,15 +215,26 @@ func (a *App) Rollback() error {
 // Validate checks the active configuration against its distro without
 // touching the running service.
 func (a *App) Validate() error {
-	name, s, err := a.activeName()
+	name, _, err := a.activeName()
 	if err != nil {
 		return err
 	}
+	return a.ValidateConfig(name)
+}
+
+// ValidateConfig checks name's configuration against its own distro, using
+// its own active set's environment — unlike Validate, name need not be the
+// active configuration.
+func (a *App) ValidateConfig(name string) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
 	bin, err := a.EnsureDistro(info.Meta.Distro)
+	if err != nil {
+		return err
+	}
+	s, err := state.LoadSettings()
 	if err != nil {
 		return err
 	}
@@ -700,18 +711,19 @@ func (a *App) WebUIAPI() webui.API {
 		Rollback: a.Rollback,
 		Validate: a.Validate,
 
-		Configs:       func() (any, error) { return a.Configs() },
-		CreateConfig:  a.CreateConfig,
-		CreateFromURL: a.CreateFromURL,
-		GetConfig:     a.configDetail,
-		PutConfigYAML: a.WriteConfigYAML,
-		PutConfigMeta: a.UpdateConfigMeta,
-		DeleteConfig:  a.DeleteConfig,
-		CopyConfig:    a.CopyConfig,
-		Activate:      a.Activate,
-		Sync:          a.Sync,
-		Resync:        a.Resync,
-		SyncAll:       a.SyncAll,
+		Configs:        func() (any, error) { return a.Configs() },
+		CreateConfig:   a.CreateConfig,
+		CreateFromURL:  a.CreateFromURL,
+		GetConfig:      a.configDetail,
+		PutConfigYAML:  a.WriteConfigYAML,
+		PutConfigMeta:  a.UpdateConfigMeta,
+		DeleteConfig:   a.DeleteConfig,
+		CopyConfig:     a.CopyConfig,
+		Activate:       a.Activate,
+		ValidateConfig: a.ValidateConfig,
+		Sync:           a.Sync,
+		Resync:         a.Resync,
+		SyncAll:        a.SyncAll,
 
 		PutSet:    a.ReplaceSet,
 		DeleteSet: a.DeleteSet,

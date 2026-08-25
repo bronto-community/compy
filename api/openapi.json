@@ -96,10 +96,10 @@
         "properties": {
           "name": { "type": "string" },
           "path": { "type": "string" },
-          "available": { "type": "boolean" },
-          "downloaded": { "type": "boolean" },
           "selected": { "type": "boolean" },
-          "version": { "type": "string" }
+          "definition": { "type": "boolean" },
+          "available": { "type": "boolean" },
+          "downloaded": { "type": "boolean" }
         }
       }
     }
@@ -204,6 +204,10 @@
             "description": "Malformed body",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -293,6 +297,10 @@
             "description": "Malformed body",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -321,6 +329,10 @@
           "200": { "description": "OK" },
           "400": {
             "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "Body too large",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
@@ -372,6 +384,10 @@
         },
         "responses": {
           "200": { "description": "OK" },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -404,6 +420,10 @@
             "description": "Malformed body",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -434,6 +454,10 @@
             "description": "Malformed body",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -461,6 +485,31 @@
           "200": { "description": "OK" },
           "500": {
             "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/validate": {
+      "post": {
+        "summary": "Validate this configuration against its own distro, using its own active set's environment (any config, not just the active one)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "ok": { "type": "boolean" } }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Invalid (the collector's own diagnostics, verbatim)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           }
         }
@@ -546,6 +595,10 @@
             "description": "Malformed body",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "500": {
             "description": "Error",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
@@ -627,6 +680,10 @@
           },
           "400": {
             "description": "Malformed body",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "Body too large",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
