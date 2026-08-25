@@ -1120,7 +1120,9 @@ function buildDistroRow(d) {
     await renderSettingsView();
   });
 
-  let stateText = d.downloaded ? "downloaded" : "not downloaded";
+  // "downloaded" only means anything for a shipped definition compy fetches
+  // itself; a binary the user pointed at is simply there.
+  let stateText = d.definition ? (d.downloaded ? "downloaded" : "not downloaded") : "ready";
   let stateClass = "state-muted";
   if (d.definition && !d.available) { stateText = "unavailable"; stateClass = "state-warn"; }
   if (d.selected) { stateText = "selected"; stateClass = "state-active"; }
@@ -1144,7 +1146,9 @@ function buildDistroRow(d) {
       },
     }));
   }
-  if (!d.selected) {
+  // "available" is false only for a shipped definition with no build for
+  // this platform — offering "use" there could only ever fail.
+  if (!d.selected && d.available) {
     actions.appendChild(el("button", {
       class: "act", text: "use",
       on: {

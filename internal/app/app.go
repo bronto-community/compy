@@ -715,7 +715,14 @@ func (a *App) UseDistro(name string) error {
 	if s.ActiveConfig == "" {
 		return nil
 	}
-	return a.Apply()
+	// The default is switched either way — it is a global preference, not
+	// something one configuration gets to veto. Say plainly that the active
+	// configuration did not come up with it, rather than returning the bare
+	// collector diagnostics as a server fault.
+	if err := a.Apply(); err != nil {
+		return webui.BadRequest(fmt.Errorf("default collector is now %q, but the active configuration does not run with it: %w", name, err))
+	}
+	return nil
 }
 
 // Vars returns the OTEL_* environment variables for the current settings.
