@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -1255,5 +1256,113 @@ func TestMigrationStaleGuardFiresWithoutActiveConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "config")); !os.IsNotExist(err) {
 		t.Errorf("stale tree not archived: %v", err)
+	}
+}
+
+// TestUserMistakesAreBadRequests locks in that every failure a person can
+// cause from the UI or CLI — a bad name, a missing or duplicate config, a
+// config the collector rejects, a distro that isn't there — is marked
+// webui.BadRequest, so the REST layer answers 400. The web UI appends a
+// collector log tail only to a 5xx (a real fault of ours); a user mistake
+// answered 500 buries its own message under an irrelevant log dump, which
+// is exactly what the 2026-08-25 UI feedback reported.
+func TestUserMistakesAreBadRequests(t *testing.T) {
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("other", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetVar("mine", "dev", "K", "v"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("mine", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	badBin := filepath.Join(t.TempDir(), "broken")
+	if err := os.WriteFile(badBin, []byte("#!/bin/sh\necho 'unknown type: \"nope\"' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SetDistroPath("broken", badBin); err != nil {
+		t.Fatal(err)
+	}
+
+	missing := filepath.Join(t.TempDir(), "missing")
+	nosuch := "nosuch"
+	cases := []struct {
+		name string
+		fn   func() error
+	}{
+		{"CreateConfig invalid name", func() error { return a.CreateConfig("Bad Name", "") }},
+		{"CreateConfig duplicate", func() error { return a.CreateConfig("mine", "") }},
+		{"CreateFromURL invalid name", func() error { return a.CreateFromURL("Bad Name", "http://x/y") }},
+		{"CopyConfig invalid dst", func() error { return a.CopyConfig("mine", "Bad Name") }},
+		{"CopyConfig existing dst", func() error { return a.CopyConfig("mine", "other") }},
+		{"CopyConfig unknown src", func() error { return a.CopyConfig(nosuch, "fresh") }},
+		{"DeleteConfig unknown", func() error { return a.DeleteConfig(nosuch) }},
+		{"DeleteConfig active", func() error { return a.DeleteConfig("mine") }},
+		{"WriteConfigYAML unknown", func() error { return a.WriteConfigYAML(nosuch, "") }},
+		{"UpdateConfigMeta unknown config", func() error { return a.UpdateConfigMeta(nosuch, nil, nil) }},
+		{"UpdateConfigMeta unknown distro", func() error { return a.UpdateConfigMeta("mine", &nosuch, nil) }},
+		{"Activate unknown config", func() error { return a.Activate(nosuch, "") }},
+		{"Activate unknown set", func() error { return a.Activate("mine", nosuch) }},
+		{"ValidateConfig unknown config", func() error { return a.ValidateConfig(nosuch) }},
+		{"Sync non-remote", func() error { return a.Sync("mine") }},
+		{"Resync non-remote", func() error { return a.Resync("mine") }},
+		{"ReplaceSet unknown config", func() error { return a.ReplaceSet(nosuch, "dev", nil) }},
+		{"ReplaceSet invalid set name", func() error { return a.ReplaceSet("mine", "Bad Set", nil) }},
+		{"UseSet unknown set", func() error { return a.UseSet("other", nosuch) }},
+		{"DeleteSet unknown set", func() error { return a.DeleteSet("mine", nosuch) }},
+		{"DeleteSet active set", func() error { return a.DeleteSet("mine", "dev") }},
+		{"RenameSet unknown set", func() error { return a.RenameSet("mine", nosuch, "fresh") }},
+		{"RenameSet invalid target", func() error { return a.RenameSet("mine", "dev", "Bad Set") }},
+		{"SetVar invalid set name", func() error { return a.SetVar("mine", "Bad Set", "K", "v") }},
+		{"AddDistro duplicate", func() error { return a.AddDistro("fake", missing) }},
+		{"AddDistro missing binary", func() error { return a.AddDistro("fresh", missing) }},
+		{"UseDistro unknown", func() error { return a.UseDistro(nosuch) }},
+		{"FetchDistro unknown", func() error { return a.FetchDistro(nosuch) }},
+		{"PutSettings port out of range", func() error { p := 99999; return a.PutSettings(&p, nil, nil) }},
+	}
+	for _, tc := range cases {
+		err := tc.fn()
+		if err == nil {
+			t.Errorf("%s: err = nil, want an error", tc.name)
+			continue
+		}
+		if !webui.IsBadRequest(err) {
+			t.Errorf("%s: err = %v, want it marked webui.BadRequest (400, no collector log tail)", tc.name, err)
+		}
+	}
+
+	// A configuration the collector itself rejects is the user's YAML being
+	// wrong, not our fault: the collector's diagnostics are the whole answer.
+	if err := a.UpdateConfigMeta("other", strPtr("broken"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ValidateConfig("other"); err == nil || !webui.IsBadRequest(err) {
+		t.Errorf("ValidateConfig with a config the collector rejects: err = %v, want webui.BadRequest-marked", err)
+	}
+	if err := a.Activate("other", ""); err == nil || !webui.IsBadRequest(err) {
+		t.Errorf("Activate with a config the collector rejects: err = %v, want webui.BadRequest-marked", err)
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
+// TestBadRequestSurvivesWrapping guards the marker against the commonest way
+// to lose it: a caller adding context with fmt.Errorf("%w").
+func TestBadRequestSurvivesWrapping(t *testing.T) {
+	wrapped := fmt.Errorf("activating mine: %w", webui.BadRequest(errors.New("boom")))
+	if !webui.IsBadRequest(wrapped) {
+		t.Errorf("IsBadRequest(wrapped) = false, want true")
+	}
+	if !errors.Is(webui.BadRequest(os.ErrNotExist), os.ErrNotExist) {
+		t.Errorf("BadRequest must not hide the error it marks from errors.Is")
 	}
 }

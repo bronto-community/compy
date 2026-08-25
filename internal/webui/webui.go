@@ -72,14 +72,21 @@ type API struct {
 // own error types back.
 type badRequestErr struct{ error }
 
+// Unwrap keeps the marked error reachable through errors.Is/As, so marking
+// never hides what actually went wrong.
+func (e badRequestErr) Unwrap() error { return e.error }
+
 // BadRequest marks err to be reported as 400 Bad Request instead of the
 // default 500, keeping err's message untouched.
 func BadRequest(err error) error { return badRequestErr{err} }
 
-// IsBadRequest reports whether err was marked with BadRequest.
+// IsBadRequest reports whether err, or anything it wraps, was marked with
+// BadRequest. It unwraps rather than type-asserting: callers routinely add
+// context with fmt.Errorf("...: %w", err), and a marker that a single %w
+// silently drops is a marker you cannot rely on.
 func IsBadRequest(err error) bool {
-	_, ok := err.(badRequestErr)
-	return ok
+	var b badRequestErr
+	return errors.As(err, &b)
 }
 
 // route is one API endpoint: the drift test (TestOpenAPIDriftAgainstRoutes)
