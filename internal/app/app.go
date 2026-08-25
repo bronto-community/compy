@@ -552,9 +552,9 @@ func (a *App) statusMap() (map[string]any, error) {
 // stopgap (P3 rebuilds it): status, the configuration list, and activation.
 func (a *App) WebUIAPI() webui.API {
 	return webui.API{
-		Status:    a.statusMap,
-		Configs:   func() (any, error) { return a.Configs() },
-		Activate:  func(name string) error { return a.Activate(name, "") },
-		LastError: func() (string, error) { return collector.TailLog(a.LogPath(), 50) },
+		Status:   a.statusMap,
+		Configs:  func() (any, error) { return a.Configs() },
+		Activate: func(name string) error { return a.Activate(name, "") },
+		Log:      func() (string, error) { return collector.TailLog(a.LogPath(), 50) },
 	}
 }
