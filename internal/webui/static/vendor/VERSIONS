@@ -1,0 +1,21 @@
+CodeMirror 5.65.21 (latest 5.65.x patch as of 2026-08-25)
+Source: https://cdnjs.com/libraries/codemirror
+License: MIT, see LICENSE-codemirror (verbatim from
+  https://raw.githubusercontent.com/codemirror/codemirror5/5.65.21/LICENSE)
+
+Files (downloaded once, pinned to the exact version in the URL):
+
+codemirror.min.js
+  https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.21/codemirror.min.js
+  sha256: d649a8d6bd5d0ca9bb3bef8212c9de6fa5599af3e3fe2898f94861dfe87bea7d
+
+codemirror.min.css
+  https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.21/codemirror.min.css
+  sha256: 22f18b4dec95cc981a96f8e69f61f595314162fd102ba401abcd20b0674d9846
+
+yaml.min.js
+  https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.21/mode/yaml/yaml.min.js
+  sha256: 502bed0f3a9db7ee6c3dfea6984eab3b0a4c474387621b06a04a3cff92a5c312
+
+Verify with:
+  shasum -a 256 codemirror.min.js codemirror.min.css yaml.min.js

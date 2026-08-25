@@ -618,3 +618,17 @@ type simpleErr string
 func (e simpleErr) Error() string { return string(e) }
 
 func errWithMessage(msg string) error { return simpleErr(msg) }
+
+// TestServesVendoredCodeMirror confirms the go:embed directive on "static"
+// picks up the static/vendor subdirectory too, and Handler serves its
+// contents as plain static files (embed wiring for Task 2's vendored JS).
+func TestServesVendoredCodeMirror(t *testing.T) {
+	api := fakeAPI()
+	req := httptest.NewRequest(http.MethodGet, "/vendor/codemirror.min.js", nil)
+	req.Host = "localhost"
+	rec := httptest.NewRecorder()
+	Handler(api).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
