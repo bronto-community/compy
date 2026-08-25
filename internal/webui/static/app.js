@@ -883,21 +883,37 @@ async function saveAndValidate(name, btn) {
 /* ── Collector view ───────────────────────────────────────────────── */
 let lastLogText = "";
 
+// logLines is how much of the collector log the view loads — and, since the
+// search box filters exactly that text client-side, how far the search
+// reaches. It used to be 500, so searching for anything older than the last
+// 500 lines answered "(no matching lines)" about a line that is right there
+// in the log. 2000 is the API's own cap (webui.maxLogLines); the note beside
+// the search box says how much was actually loaded, so a miss is legible
+// instead of a lie.
+const logLines = 2000;
+
 function applyLogFilter() {
   const pre = document.getElementById("log-view");
   if (!pre) return;
+  const note = document.getElementById("log-note");
+  const all = lastLogText ? lastLogText.split("\n") : [];
   const q = state.logFilter.toLowerCase();
-  if (!q) {
-    pre.textContent = lastLogText || "(empty)";
-    return;
+  const lines = q ? all.filter((l) => l.toLowerCase().includes(q)) : all;
+  pre.textContent = lines.length ? lines.join("\n") : (q ? "(no matching lines)" : "(empty)");
+  if (note) {
+    note.textContent = q
+      ? lines.length + " of the " + all.length + " loaded lines match"
+      : all.length + " lines loaded";
   }
-  const lines = lastLogText.split("\n").filter((l) => l.toLowerCase().includes(q));
-  pre.textContent = lines.length ? lines.join("\n") : "(no matching lines)";
 }
 
 async function renderCollectorView() {
   const status = await api("/api/status");
 
+  const prevLog = document.getElementById("log-view");
+  const prevScroll = prevLog
+    ? { top: prevLog.scrollTop, atBottom: prevLog.scrollHeight - prevLog.scrollTop - prevLog.clientHeight < 4 }
+    : null;
   clear(viewRoot);
   viewRoot.appendChild(el("h1", { text: "Collector" }));
   viewRoot.appendChild(el("p", { class: "page-desc", text: "The OpenTelemetry Collector compy runs for you as a background service." }));
@@ -976,19 +992,23 @@ async function renderCollectorView() {
     },
   });
   toolbar.appendChild(filterInput);
+  toolbar.appendChild(el("span", { class: "desc", attrs: { id: "log-note" } }));
   const pre = el("pre", { class: "code-panel", attrs: { id: "log-view" } });
   logCard.append(toolbar, el("div", { class: "card-extra" }, [pre]));
   logGroup.appendChild(logCard);
   viewRoot.appendChild(logGroup);
 
   try {
-    const j = await api("/api/log?lines=500");
+    const j = await api("/api/log?lines=" + logLines);
     lastLogText = j.log || "";
   } catch (err) {
     lastLogText = "";
     showError(err);
   }
   applyLogFilter();
+  // The background refresh rebuilds this whole view every 5s, which used to
+  // snap the log back to the top mid-read; carry the reading position over.
+  if (prevScroll) pre.scrollTop = prevScroll.atBottom ? pre.scrollHeight : prevScroll.top;
 }
 
 /* ── Settings view ────────────────────────────────────────────────── */
