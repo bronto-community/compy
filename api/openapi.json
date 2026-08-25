@@ -694,6 +694,65 @@
         }
       }
     },
+    "/api/configs/{name}/reset": {
+      "post": {
+        "summary": "Restore a modified built-in configuration to its shipped version (presets kept; the running configuration is re-applied)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request — a caller mistake (invalid name, unknown configuration, a configuration that is not a built-in, or one already matching the shipped version)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/rename": {
+      "post": {
+        "summary": "Rename a configuration (the active configuration follows the rename; a running one is re-applied)",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "to": { "type": "string" } },
+                "required": ["to"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request — a malformed body, an invalid or unknown name, or a target name that already exists",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
     "/api/configs/sync-all": {
       "post": {
         "summary": "Sync every unmodified remote configuration",

@@ -419,6 +419,55 @@ func Resync(root, name string, fetch Fetch) error {
 	return refetch(root, name, fetch)
 }
 
+// Reset restores a modified shipped configuration's config.yaml to the
+// embedded default and recomputes the pristine hash; presets and the rest
+// of meta are kept. It is the builtin twin of Resync: it refuses
+// non-builtins and unmodified builtins (nothing to reset).
+func Reset(root, name string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	info, _, err := buildInfo(root, name)
+	if err != nil {
+		return err
+	}
+	if info.Provenance != "shipped" {
+		return userErrf("config %q is not a built-in config; only built-ins can be reset", name)
+	}
+	if !info.Modified {
+		return userErrf("config %q already matches the shipped version; nothing to reset", name)
+	}
+	content, err := embeddedDefaults.ReadFile("defaults/" + name + ".yaml")
+	if err != nil {
+		return userErrf("config %q has no shipped default to reset to", name)
+	}
+	yaml := string(content)
+	if err := writeYAMLFile(root, name, yaml); err != nil {
+		return err
+	}
+	m := info.Meta
+	m.PristineSHA256 = hashOf(yaml)
+	return writeMeta(root, name, m)
+}
+
+// Rename moves a configuration from -> to, keeping its YAML, provenance,
+// and presets. It refuses a missing source and an existing target.
+func Rename(root, from, to string) error {
+	if err := validateName(from); err != nil {
+		return err
+	}
+	if err := validateName(to); err != nil {
+		return err
+	}
+	if !exists(root, from) {
+		return userErrf("config %q not found", from)
+	}
+	if exists(root, to) {
+		return userErrf("config %q already exists", to)
+	}
+	return os.Rename(configDir(root, from), configDir(root, to))
+}
+
 // SetVar sets a key/value pair in a preset, creating the preset on first
 // write.
 func SetVar(root, name, preset, key, value string) error {

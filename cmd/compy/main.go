@@ -35,9 +35,10 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy status [--json]
   compy apply | validate | stop | start
   compy config list
-  compy config show|edit|delete|sync|resync <name>
+  compy config show|edit|delete|sync|resync|reset <name>
   compy config create <name> [--from-url URL]
   compy config copy <src> <dst>
+  compy config rename <old> <new>
   compy config sync-all
   compy config set-url <config> <url|-->
   compy use <config> [<preset>]
@@ -249,6 +250,11 @@ func cmdConfig(args []string) error {
 			return errors.New("config copy: need <src> <dst>")
 		}
 		return withApp(func(a *app.App) error { return a.CopyConfig(rest[0], rest[1]) })
+	case "rename":
+		if len(rest) != 2 {
+			return errors.New("config rename: need <old> <new>")
+		}
+		return withApp(func(a *app.App) error { return a.RenameConfig(rest[0], rest[1]) })
 	case "set-url":
 		if len(rest) != 2 {
 			return errors.New("config set-url: need <config> <url|-->")
@@ -260,7 +266,7 @@ func cmdConfig(args []string) error {
 			p = &cleared
 		}
 		return withApp(func(a *app.App) error { return a.UpdateConfigMeta(name, p) })
-	case "show", "edit", "delete", "sync", "resync":
+	case "show", "edit", "delete", "sync", "resync", "reset":
 		if len(rest) != 1 {
 			return fmt.Errorf("config %s: need exactly one name", sub)
 		}
@@ -280,6 +286,8 @@ func cmdConfig(args []string) error {
 				return a.Sync(name)
 			case "resync":
 				return a.Resync(name)
+			case "reset":
+				return a.Reset(name)
 			default:
 				if !state.ValidBackendName(name) {
 					return fmt.Errorf("invalid config name %q", name)

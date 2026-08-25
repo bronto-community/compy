@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bronto-io/compy/internal/state"
 )
 
 func TestCreateGetListDelete(t *testing.T) {
@@ -580,6 +582,9 @@ func TestAllNamedFunctionsRejectTraversal(t *testing.T) {
 		{"WriteMeta", func() error { return WriteMeta(root, bad, Meta{}) }},
 		{"Sync", func() error { return Sync(root, bad, fetch) }},
 		{"Resync", func() error { return Resync(root, bad, fetch) }},
+		{"Reset", func() error { return Reset(root, bad) }},
+		{"Rename(from)", func() error { return Rename(root, bad, "dst") }},
+		{"Rename(to)", func() error { return Rename(root, "src", bad) }},
 		{"SetVar", func() error { return SetVar(root, bad, "set", "K", "V") }},
 		{"WritePreset", func() error { return WritePreset(root, bad, "set", map[string]string{"K": "V"}) }},
 		{"DeletePreset", func() error { return DeletePreset(root, bad, "set") }},
@@ -591,6 +596,127 @@ func TestAllNamedFunctionsRejectTraversal(t *testing.T) {
 		if err := c.call(); err == nil {
 			t.Errorf("%s(%q): traversal name accepted, want error", c.name, bad)
 		}
+	}
+}
+
+func TestResetRestoresShippedYAML(t *testing.T) {
+	root := t.TempDir()
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+	_, shipped, err := Get(root, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetVar(root, "debug", "prod", "K", "V"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteYAML(root, "debug", "edited: true\n"); err != nil {
+		t.Fatal(err)
+	}
+	if info, _, _ := Get(root, "debug"); !info.Modified {
+		t.Fatal("setup: debug should be modified after WriteYAML")
+	}
+
+	if err := Reset(root, "debug"); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	info, yaml, err := Get(root, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if yaml != shipped {
+		t.Fatalf("yaml after Reset = %q, want the shipped default", yaml)
+	}
+	if info.Modified {
+		t.Fatal("Reset config still reports modified; pristine hash not recomputed")
+	}
+	if info.Provenance != "shipped" {
+		t.Fatalf("provenance after Reset = %q, want shipped", info.Provenance)
+	}
+	if info.Meta.Presets["prod"]["K"] != "V" {
+		t.Fatalf("presets after Reset = %+v, want K=V kept", info.Meta.Presets)
+	}
+}
+
+func TestResetRefusals(t *testing.T) {
+	root := t.TempDir()
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unmodified builtin: nothing to reset.
+	if err := Reset(root, "debug"); err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("Reset unmodified builtin = %v, want BadRequest", err)
+	}
+
+	// Local config: not a builtin.
+	if err := Create(root, "mine", "x: 1\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Reset(root, "mine"); err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("Reset local config = %v, want BadRequest", err)
+	}
+
+	// Remote config, even modified: resync is its path, not reset.
+	fetch := func(url string) ([]byte, error) { return []byte("r: 1\n"), nil }
+	if err := CreateFromURL(root, "linked", "https://example.com/c.yaml", fetch); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteYAML(root, "linked", "r: 2\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Reset(root, "linked"); err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("Reset remote config = %v, want BadRequest", err)
+	}
+
+	// Missing config.
+	if err := Reset(root, "ghost"); err == nil {
+		t.Fatal("Reset missing config: want error, got nil")
+	}
+}
+
+func TestRenameConfig(t *testing.T) {
+	root := t.TempDir()
+	fetch := func(url string) ([]byte, error) { return []byte("r: 1\n"), nil }
+	if err := CreateFromURL(root, "old", "https://example.com/c.yaml", fetch); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetVar(root, "old", "prod", "K", "V"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Rename(root, "old", "new"); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	info, yaml, err := Get(root, "new")
+	if err != nil {
+		t.Fatalf("Get renamed: %v", err)
+	}
+	if yaml != "r: 1\n" || info.Provenance != "remote" || info.Meta.Presets["prod"]["K"] != "V" {
+		t.Fatalf("renamed config = %+v yaml %q, want provenance and presets kept", info, yaml)
+	}
+	if _, _, err := Get(root, "old"); err == nil {
+		t.Fatal("Get old name after rename: want error, got nil")
+	}
+
+	// Collision: refused, both sides untouched.
+	if err := Create(root, "other", "o: 1\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rename(root, "new", "other"); err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("Rename onto existing = %v, want BadRequest", err)
+	}
+	if _, _, err := Get(root, "new"); err != nil {
+		t.Fatalf("source gone after refused rename: %v", err)
+	}
+	if _, y, _ := Get(root, "other"); y != "o: 1\n" {
+		t.Fatalf("collision target clobbered, yaml = %q", y)
+	}
+
+	// Missing source.
+	if err := Rename(root, "ghost", "x"); err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("Rename missing source = %v, want BadRequest", err)
 	}
 }
 

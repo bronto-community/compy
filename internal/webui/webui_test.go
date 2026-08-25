@@ -38,6 +38,8 @@ func fakeAPI() API {
 		ValidateConfig: func(name string) error { return nil },
 		Sync:           func(name string) error { return nil },
 		Resync:         func(name string) error { return nil },
+		Reset:          func(name string) error { return nil },
+		RenameConfig:   func(from, to string) error { return nil },
 		SyncAll:        func() ([]string, error) { return nil, nil },
 
 		PutPreset:    func(name, preset string, values map[string]string) error { return nil },
@@ -626,6 +628,75 @@ func TestRenamePresetRoute(t *testing.T) {
 
 	api.RenamePreset = func(name, from, to string) error { return errWithMessage("already exists") }
 	rec = call(handleRenamePreset(api), http.MethodPost, `{"to":"production"}`, pv)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("closure error status = %d, want 500", rec.Code)
+	}
+}
+
+func TestResetRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotName string
+	api.Reset = func(name string) error { gotName = name; return nil }
+	pv := map[string]string{"name": "debug"}
+
+	rec := call(handleReset(api), http.MethodPost, "", pv)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotName != "debug" {
+		t.Fatalf("Reset got name=%q, want debug", gotName)
+	}
+
+	// A user mistake (unmodified builtin, non-builtin) is BadRequest-marked
+	// by the closure and must arrive as 400.
+	api.Reset = func(name string) error {
+		return markBadRequest(errWithMessage(`config "debug" already matches the shipped version; nothing to reset`))
+	}
+	rec = call(handleReset(api), http.MethodPost, "", pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("BadRequest-marked closure error status = %d, want 400", rec.Code)
+	}
+
+	api.Reset = func(name string) error { return errWithMessage("disk on fire") }
+	rec = call(handleReset(api), http.MethodPost, "", pv)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("closure error status = %d, want 500", rec.Code)
+	}
+}
+
+func TestRenameConfigRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotFrom, gotTo string
+	api.RenameConfig = func(from, to string) error {
+		gotFrom, gotTo = from, to
+		return nil
+	}
+	pv := map[string]string{"name": "old"}
+
+	rec := call(handleRenameConfig(api), http.MethodPost, `{"to":"new"}`, pv)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotFrom != "old" || gotTo != "new" {
+		t.Fatalf("RenameConfig got from=%q to=%q", gotFrom, gotTo)
+	}
+
+	rec = call(handleRenameConfig(api), http.MethodPost, `not json`, pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed body status = %d, want 400", rec.Code)
+	}
+
+	// A collision is the caller's mistake: BadRequest-marked, 400.
+	api.RenameConfig = func(from, to string) error {
+		return markBadRequest(errWithMessage(`config "new" already exists`))
+	}
+	rec = call(handleRenameConfig(api), http.MethodPost, `{"to":"new"}`, pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("collision (BadRequest-marked) status = %d, want 400", rec.Code)
+	}
+
+	api.RenameConfig = func(from, to string) error { return errWithMessage("rename failed") }
+	rec = call(handleRenameConfig(api), http.MethodPost, `{"to":"new"}`, pv)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("closure error status = %d, want 500", rec.Code)
 	}
