@@ -4,6 +4,7 @@ package collector
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"os"
@@ -50,8 +51,19 @@ func Probe(port int, timeout time.Duration) error {
 	}
 }
 
+// tailReadCap bounds how much of the log file TailLog reads, measured back
+// from the end. The collector log is append-only and never rotated, and
+// pollers (tray, web UI) call TailLog every few seconds, so scanning the
+// whole file on every poll is unbounded work against an ever-growing file;
+// a generous fixed window keeps the cost constant regardless of log size.
+// Overridable (var, not const) so tests can exercise the boundary without
+// writing hundreds of KB of fixture data.
+var tailReadCap int64 = 512 * 1024 // ~2000+ lines of zap output
+
 // TailLog returns the last n lines of the file at path, or "" with no error
-// if the file does not exist.
+// if the file does not exist. Only the last tailReadCap bytes of the file
+// are read; if that read starts mid-file, the first (partial) line is
+// dropped.
 func TailLog(path string, n int) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -62,9 +74,26 @@ func TailLog(path string, n int) (string, error) {
 	}
 	defer f.Close()
 
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	start := int64(0)
+	if info.Size() > tailReadCap {
+		start = info.Size() - tailReadCap
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return "", err
+	}
+
 	var lines []string
 	scanner := bufio.NewScanner(f)
+	skipFirst := start > 0
 	for scanner.Scan() {
+		if skipFirst {
+			skipFirst = false
+			continue // partial line: started before our read window
+		}
 		lines = append(lines, scanner.Text())
 		if len(lines) > n {
 			lines = lines[1:]
