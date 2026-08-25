@@ -53,6 +53,23 @@ type menu struct {
 	morePresets map[string]map[string]*systray.MenuItem // per overflow config: its preset submenu items
 
 	restart *systray.MenuItem
+
+	// presetOwner records which (config, preset) each live preset-submenu
+	// item currently represents, so its click handler can resolve that at
+	// click time (like handleSlotClicks does via slotNames) instead of
+	// trusting a name captured in a closure at item-creation time. That
+	// distinction matters because slot positions are fixed and reused
+	// across configs (recency reorders who sits at slot i): a preset-name
+	// cache keyed only by "default" would otherwise let one config's leftover
+	// item — and its stale closure — silently activate a different config
+	// that happens to share a preset name (T3 review finding).
+	presetOwner map[*systray.MenuItem]presetTarget
+}
+
+// presetTarget is the (config, preset) one preset-submenu item currently
+// stands for; see menu.presetOwner.
+type presetTarget struct {
+	config, preset string
 }
 
 func onReady(a *app.App) {
@@ -63,6 +80,7 @@ func onReady(a *app.App) {
 		a:           a,
 		moreItems:   map[string]*systray.MenuItem{},
 		morePresets: map[string]map[string]*systray.MenuItem{},
+		presetOwner: map[*systray.MenuItem]presetTarget{},
 	}
 
 	m.status = systray.AddMenuItem("...", "service status")
@@ -142,10 +160,18 @@ func (m *menu) sync() {
 		if i >= len(inline) {
 			m.slotNames[i] = ""
 			slot.Hide()
-			removeStale(m.slotPresets[i], map[string]bool{})
+			m.removeStale(m.slotPresets[i], map[string]bool{})
 			continue
 		}
 		name := inline[i]
+		if m.slotNames[i] != name {
+			// This slot changed which config it shows (recency reordered).
+			// Drop its whole preset cache rather than let a same-named
+			// preset item survive into a different config's ownership —
+			// belt-and-braces alongside the click-time resolution in
+			// syncRow/resolvePresetClick (T3 review finding).
+			m.removeStale(m.slotPresets[i], map[string]bool{})
+		}
 		m.slotNames[i] = name
 		slot.SetTitle(name)
 		slot.Show()
@@ -168,6 +194,7 @@ func (m *menu) sync() {
 		if !seen[name] {
 			item.Remove()
 			delete(m.moreItems, name)
+			m.removeStale(m.morePresets[name], map[string]bool{}) // drop that config's own preset-item ownership too
 			delete(m.morePresets, name)
 		}
 	}
@@ -183,12 +210,19 @@ func (m *menu) sync() {
 // (ACCEPTANCE C5.4) — its preset submenu, lazily created in presetItems
 // (that row's own cache, since systray can only append items). Clicking a
 // preset row is itself the activation; the running preset is checked.
+//
+// Every preset item's ownership is (re)recorded here on every sync, whether
+// the item is newly created or reused from a previous sync — the click
+// handler (handlePresetClicks/resolvePresetClick) resolves it from
+// m.presetOwner at click time rather than a name closed over at creation,
+// so a cache entry that outlives a config change never misdirects the
+// activation (T3 review finding).
 func (m *menu) syncRow(item *systray.MenuItem, presetItems map[string]*systray.MenuItem, name string, info cfgstore.Info, st app.Status) {
 	active := name == st.Config
 	setChecked(item, active)
 	presets, multi := presetChoices(info)
 	if !multi {
-		removeStale(presetItems, map[string]bool{})
+		m.removeStale(presetItems, map[string]bool{})
 		return
 	}
 	seen := map[string]bool{}
@@ -198,11 +232,30 @@ func (m *menu) syncRow(item *systray.MenuItem, presetItems map[string]*systray.M
 		if !ok {
 			pi = item.AddSubMenuItemCheckbox(preset, "activate "+name+" · "+preset, false)
 			presetItems[preset] = pi
-			go m.handlePresetClicks(name, preset, pi)
+			go m.handlePresetClicks(pi)
 		}
+		pi.SetTooltip("activate " + name + " · " + preset)
+		m.setPresetOwner(pi, name, preset)
 		setChecked(pi, active && preset == st.Preset)
 	}
-	removeStale(presetItems, seen)
+	m.removeStale(presetItems, seen)
+}
+
+// setPresetOwner records which (config, preset) item currently represents.
+// Called only from sync() (directly, or via syncRow), which every caller
+// except the very first (onReady's initial, single-threaded m.sync()) makes
+// under m.mu — the same discipline slotNames already relies on.
+func (m *menu) setPresetOwner(item *systray.MenuItem, config, preset string) {
+	m.presetOwner[item] = presetTarget{config: config, preset: preset}
+}
+
+// resolvePresetClick looks up what a preset-submenu item currently stands
+// for, under mu, at click time — see menu.presetOwner.
+func (m *menu) resolvePresetClick(item *systray.MenuItem) (presetTarget, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, ok := m.presetOwner[item]
+	return target, ok
 }
 
 func setChecked(item *systray.MenuItem, want bool) {
@@ -213,11 +266,15 @@ func setChecked(item *systray.MenuItem, want bool) {
 	}
 }
 
-func removeStale(items map[string]*systray.MenuItem, seen map[string]bool) {
+// removeStale removes every item in items not named in seen, dropping its
+// preset ownership record too (a no-op for items that were never a preset
+// row's key, e.g. the top-level "More…" entries).
+func (m *menu) removeStale(items map[string]*systray.MenuItem, seen map[string]bool) {
 	for name, item := range items {
 		if !seen[name] {
 			item.Remove()
 			delete(items, name)
+			delete(m.presetOwner, item)
 		}
 	}
 }
@@ -246,11 +303,20 @@ func (m *menu) handleSlotClicks(i int, slot *systray.MenuItem) {
 	}
 }
 
-// handlePresetClicks activates the (name, preset) this specific submenu row
-// stands for — "picking a preset is the activation" (README § 5).
-func (m *menu) handlePresetClicks(name, preset string, item *systray.MenuItem) {
+// handlePresetClicks activates whatever (config, preset) this submenu item
+// currently owns, per m.presetOwner — resolved fresh at click time rather
+// than a name captured when the item was created, since a fixed-position
+// row's preset items can end up reused for a different config across
+// recency reorders. "Picking a preset is the activation" (README § 5).
+func (m *menu) handlePresetClicks(item *systray.MenuItem) {
 	for range item.ClickedCh {
-		m.act("activating "+name+" · "+preset+"…", func() error { return m.a.Activate(name, preset) })
+		target, ok := m.resolvePresetClick(item)
+		if !ok {
+			continue
+		}
+		m.act("activating "+target.config+" · "+target.preset+"…", func() error {
+			return m.a.Activate(target.config, target.preset)
+		})
 	}
 }
 

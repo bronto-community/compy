@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 
+	"fyne.io/systray"
+
 	"github.com/bronto-io/compy/internal/app"
 	"github.com/bronto-io/compy/internal/cfgstore"
 )
@@ -136,6 +138,38 @@ func TestPresetChoices(t *testing.T) {
 		if multi != c.wantMulti || !reflect.DeepEqual(names, c.wantNames) {
 			t.Errorf("%s: presetChoices() = %v, %v, want %v, %v", c.name, names, multi, c.wantNames, c.wantMulti)
 		}
+	}
+}
+
+// TestPresetOwnershipFollowsSlotReassignment is the T3 review's regression:
+// slot i is a fixed menu position, and a recency reorder can put a
+// different configuration there between syncs. Config acme{default,prod}
+// occupies slot i, then a re-sync reassigns it to beta{default,us} — both
+// configs have a "default" preset, so the slot's preset-item cache (keyed
+// by preset name only) reuses the very same *systray.MenuItem for
+// "default" under both configs. Without click-time resolution, that item's
+// click would still fire against acme (whoever it was created for);
+// clicking it must activate beta, the config it currently represents.
+//
+// This drives menu.setPresetOwner/resolvePresetClick directly — the two
+// syncRow calls a real reorder would make — rather than through syncRow's
+// actual systray.MenuItem creation: AddSubMenuItemCheckbox blocks on the
+// Cocoa main-thread run loop that only exists once systray.Run is driving
+// it, so calling it here (outside Run) would hang the test rather than
+// fail it.
+func TestPresetOwnershipFollowsSlotReassignment(t *testing.T) {
+	m := &menu{presetOwner: map[*systray.MenuItem]presetTarget{}}
+	item := &systray.MenuItem{} // slot i's "default" preset row, reused across configs
+
+	m.setPresetOwner(item, "acme", "default") // acme{default,prod} occupies slot i
+	m.setPresetOwner(item, "beta", "default") // re-sync: beta{default,us} took the slot
+
+	target, ok := m.resolvePresetClick(item)
+	if !ok {
+		t.Fatal("resolvePresetClick: no owner recorded")
+	}
+	if target.config != "beta" || target.preset != "default" {
+		t.Errorf("resolvePresetClick = %+v, want {config:beta preset:default} — a click on the reused item must activate whoever owns it now, not acme", target)
 	}
 }
 
