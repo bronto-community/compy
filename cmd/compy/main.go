@@ -396,6 +396,9 @@ func cmdPresets(args []string) error {
 			return a.UsePreset(name, preset)
 		case "delete":
 			return a.DeletePreset(name, preset)
+		case "set":
+			// Three args reached "set" only by leaving the value off.
+			return errors.New("presets set: need <config> <preset> KEY=VALUE")
 		default:
 			return fmt.Errorf("presets: unknown subcommand %q", sub)
 		}

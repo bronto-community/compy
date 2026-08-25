@@ -93,7 +93,7 @@ func TestStatusLines(t *testing.T) {
 	}
 }
 
-func TestActiveVariableSets(t *testing.T) {
+func TestActivePresets(t *testing.T) {
 	configs := []cfgstore.Info{
 		{Name: "solo", Meta: cfgstore.Meta{Presets: map[string]map[string]string{"default": {}}, ActivePreset: "default"}},
 		{Name: "multi", Meta: cfgstore.Meta{

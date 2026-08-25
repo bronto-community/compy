@@ -1021,16 +1021,7 @@
         ],
         "responses": {
           "200": {
-            "description": "OK",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
-          },
-          "400": {
-            "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
-          },
-          "500": {
-            "description": "Error",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+            "description": "Accepted \u2014 the download has started (or the binary was already present). Nothing else is reported here: an unknown name, a checksum mismatch or a network failure all surface through .../progress as status \"failed\", since this request is long gone by then."
           }
         }
       }
