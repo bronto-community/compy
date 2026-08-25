@@ -881,6 +881,31 @@ func TestNoNativeDialogsInAppJS(t *testing.T) {
 	}
 }
 
+// TestNoInnerHTMLInAppJS guards the house rule that every API-derived string
+// reaches the DOM through textContent: el() and createElementNS are the only
+// two ways this app builds nodes, which keeps the XSS surface auditable in
+// one place. The v3 window builds Lucide glyphs from vendored path data, so
+// the tempting shortcut — assigning author-controlled SVG markup — is right
+// there; this test is what makes taking it a build failure.
+func TestNoInnerHTMLInAppJS(t *testing.T) {
+	src, err := staticFiles.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{".innerHTML", ".outerHTML", "insertAdjacentHTML", "document.write("} {
+		for _, line := range strings.Split(string(src), "\n") {
+			trimmed := strings.TrimSpace(line)
+			// The header comment names innerHTML to say it is not used.
+			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "/*") {
+				continue
+			}
+			if strings.Contains(line, banned) {
+				t.Errorf("app.js uses %s — build nodes with el()/createElementNS instead:\n%s", banned, trimmed)
+			}
+		}
+	}
+}
+
 // markBadRequest stands in for internal/state.BadRequest: webui recognises a
 // marked error structurally (a BadRequest() bool method), so these tests
 // don't need — and this package must not have — the import.
