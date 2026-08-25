@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenderPlist(t *testing.T) {
-	out := RenderPlist("/usr/local/bin/otelcol", []string{"--config", "a & b.yaml"}, "/tmp/a & b.log")
+	out := RenderPlist("/usr/local/bin/otelcol", []string{"--config", "a & b.yaml"}, "/tmp/a & b.log", nil)
 	s := string(out)
 
 	if !strings.Contains(s, "<key>Label</key><string>"+Label+"</string>") {
@@ -31,6 +31,29 @@ func TestRenderPlist(t *testing.T) {
 	if strings.Contains(s, "a & b.yaml") {
 		t.Fatalf("raw unescaped & leaked through: %s", s)
 	}
+	if strings.Contains(s, "EnvironmentVariables") {
+		t.Fatalf("nil env should not emit EnvironmentVariables: %s", s)
+	}
+}
+
+func TestRenderPlistEnvDict(t *testing.T) {
+	out := RenderPlist("/usr/local/bin/otelcol", nil, "/tmp/a.log", map[string]string{
+		"ZEBRA": "z & q",
+		"ALPHA": "a",
+	})
+	s := string(out)
+
+	if !strings.Contains(s, "<key>EnvironmentVariables</key><dict>") {
+		t.Fatalf("missing EnvironmentVariables dict: %s", s)
+	}
+	alphaIdx := strings.Index(s, "<key>ALPHA</key>")
+	zebraIdx := strings.Index(s, "<key>ZEBRA</key>")
+	if alphaIdx == -1 || zebraIdx == -1 || alphaIdx > zebraIdx {
+		t.Fatalf("keys not sorted (ALPHA before ZEBRA): %s", s)
+	}
+	if !strings.Contains(s, "<key>ZEBRA</key><string>z &amp; q</string>") {
+		t.Fatalf("value not escaped: %s", s)
+	}
 }
 
 func TestInstallCallsLaunchctl(t *testing.T) {
@@ -44,7 +67,7 @@ func TestInstallCallsLaunchctl(t *testing.T) {
 	}
 	defer func() { Exec = orig }()
 
-	if err := Install("/usr/local/bin/otelcol", []string{"--config", "x.yaml"}, "/tmp/out.log"); err != nil {
+	if err := Install("/usr/local/bin/otelcol", []string{"--config", "x.yaml"}, "/tmp/out.log", nil); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 
@@ -99,7 +122,7 @@ func TestInstallRetriesBootstrapAfterBootoutRace(t *testing.T) {
 	}
 	defer func() { Exec = orig }()
 
-	if err := Install("/usr/local/bin/otelcol", nil, "/tmp/out.log"); err != nil {
+	if err := Install("/usr/local/bin/otelcol", nil, "/tmp/out.log", nil); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 	if attempts != 3 {
@@ -108,11 +131,11 @@ func TestInstallRetriesBootstrapAfterBootoutRace(t *testing.T) {
 }
 
 func TestRenderPlistKeepAliveVariants(t *testing.T) {
-	on := string(renderPlist(Label, "/bin/otelcol", nil, "/tmp/x.log", true))
+	on := string(renderPlist(Label, "/bin/otelcol", nil, "/tmp/x.log", true, nil))
 	if !strings.Contains(on, "<key>KeepAlive</key><true/>") {
 		t.Fatalf("keepAlive=true missing <true/>: %s", on)
 	}
-	off := string(renderPlist(TrayLabel, "/bin/compy", []string{"tray"}, "/tmp/t.log", false))
+	off := string(renderPlist(TrayLabel, "/bin/compy", []string{"tray"}, "/tmp/t.log", false, nil))
 	if !strings.Contains(off, "<key>KeepAlive</key><false/>") {
 		t.Fatalf("keepAlive=false missing <false/>: %s", off)
 	}
@@ -133,7 +156,7 @@ func TestInstallAgentTrayLabel(t *testing.T) {
 	}
 	defer func() { Exec = orig }()
 
-	if err := InstallAgent(TrayLabel, "/bin/compy", []string{"tray"}, "/tmp/t.log", false); err != nil {
+	if err := InstallAgent(TrayLabel, "/bin/compy", []string{"tray"}, "/tmp/t.log", false, nil); err != nil {
 		t.Fatalf("InstallAgent: %v", err)
 	}
 	path := filepath.Join(home, "Library", "LaunchAgents", TrayLabel+".plist")
