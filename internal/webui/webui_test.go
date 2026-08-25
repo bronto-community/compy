@@ -845,3 +845,32 @@ func TestServesAppShellStaticFiles(t *testing.T) {
 		}
 	}
 }
+
+// TestNoNativeDialogsInAppJS guards a bug that shipped once and is invisible
+// in a browser: compy's own window (internal/window) is a WKWebView whose
+// WKUIDelegate implements no JavaScript panel methods, so window.prompt()
+// returns null and window.confirm() returns false without showing anything.
+// Every action gated on one silently did nothing there — copy, del, rename,
+// "+ new set", unlocking a protected config, roll back — while working fine
+// in a test browser. app.js uses its own <dialog>-based ask() instead.
+func TestNoNativeDialogsInAppJS(t *testing.T) {
+	src, err := staticFiles.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{"window.prompt(", "window.confirm(", "window.alert("} {
+		// The explanatory comment names them without calling them.
+		for _, line := range strings.Split(string(src), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "/*") {
+				continue
+			}
+			if strings.Contains(line, banned) {
+				t.Errorf("app.js calls %s — dead in compy's WKWebView window; use ask()/askText()/askConfirm():\n%s", banned, trimmed)
+			}
+		}
+	}
+	if !strings.Contains(string(src), "function ask(") {
+		t.Error("app.js is missing the ask() dialog helper")
+	}
+}

@@ -476,3 +476,20 @@ button.activate-dot:hover { color: var(--ink); }
     min-width: 560px;
   }
 }
+
+/* ── ask() dialog ─────────────────────────────────────────
+   Stands in for window.prompt/confirm, which do nothing at all in the
+   WKWebView compy's own window uses (see app.js "in-page dialogs").
+   Deliberately plain: the redesign owns how this should look. */
+dialog.ask {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 20px;
+  min-width: min(420px, 80vw);
+  max-width: 90vw;
+}
+dialog.ask::backdrop { background: rgba(0, 0, 0, 0.35); }
+dialog.ask .ask-msg { margin: 0 0 14px; font-size: 13.5px; line-height: 1.45; }
+dialog.ask .field-input { width: 100%; margin-bottom: 16px; }
+dialog.ask .form-actions { display: flex; gap: 16px; align-items: center; }
