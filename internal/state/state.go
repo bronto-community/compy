@@ -15,12 +15,36 @@ import (
 // (v1's "enabled"/"raw_mode") are ignored on load, and missing fields keep
 // their defaults, so a v1 file loads without error.
 type Settings struct {
-	GRPCPort       int    `json:"grpc_port"`        // default 14317
-	HTTPPort       int    `json:"http_port"`        // default 14318
-	Distro         string `json:"distro"`           // global default distro, "" = none
-	ActiveConfig   string `json:"active_config"`    // active configuration, "" = none
-	MenuDistroSwap bool   `json:"menu_distro_swap"` // show the tray's distro submenu
-	OSEnv          bool   `json:"os_env"`           // OS-level env injection active
+	GRPCPort     int    `json:"grpc_port"`     // default 14317
+	HTTPPort     int    `json:"http_port"`     // default 14318
+	Distro       string `json:"distro"`        // global default distro, "" = none
+	ActiveConfig string `json:"active_config"` // active configuration, "" = none
+	OSEnv        bool   `json:"os_env"`        // OS-level env injection active
+
+	// Recent is the configurations that have run, most recent first. The
+	// menu bar orders by it (the window sorts alphabetically everywhere).
+	Recent []string `json:"recent,omitempty"`
+}
+
+// recentCap is how many configurations Recent keeps. The menu shows ten and
+// overflows the rest into More…; twice that is plenty of history for an
+// ordering nobody scrolls.
+const recentCap = 20
+
+// Remember returns recent with name moved to the front, keeping every other
+// entry's order and dropping the oldest past the cap.
+func Remember(recent []string, name string) []string {
+	out := make([]string, 0, len(recent)+1)
+	out = append(out, name)
+	for _, n := range recent {
+		if n != name {
+			out = append(out, n)
+		}
+	}
+	if len(out) > recentCap {
+		out = out[:recentCap]
+	}
+	return out
 }
 
 // Distro describes a selectable collector distribution.
@@ -66,6 +90,28 @@ func IsBadRequest(err error) bool {
 	var b badRequestErr
 	return errors.As(err, &b)
 }
+
+// stillRunningErr carries what is running instead, when an activation fails
+// and the previous configuration is put back. The REST layer copies it into
+// the error body as "still_running" so the failure panel can reassure with
+// the same words the design asks for ("otlp-to-bronto still running").
+//
+// Like BadRequest it lives here, in the leaf package, and internal/webui
+// matches it structurally (a StillRunning() string method).
+type stillRunningErr struct {
+	error
+	desc string
+}
+
+// StillRunning reports what kept running, e.g. "otlp-to-bronto · staging".
+func (e stillRunningErr) StillRunning() string { return e.desc }
+
+// Unwrap keeps the marked error reachable through errors.Is/As.
+func (e stillRunningErr) Unwrap() error { return e.error }
+
+// StillRunning marks err with the configuration (and preset) that is running
+// instead, keeping err's message untouched.
+func StillRunning(err error, desc string) error { return stillRunningErr{err, desc} }
 
 var backendNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 

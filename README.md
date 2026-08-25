@@ -26,15 +26,17 @@ go build -o compy ./cmd/compy
 ## Configuration model
 
 compy manages **configurations**: whole collector `config.yaml` documents,
-each with named **variable sets** (e.g. `default`, `staging`) of values for
+each with named **presets** (e.g. `default`, `staging`) of values for
 the `${VAR}` / `${VAR:-default}` / `${env:VAR}` / `${env:VAR:-default}`
-references it contains. Exactly one configuration, and one of its variable
-sets, is active at a time — activating installs and restarts the collector
-with that set's values in its environment, so the collector expands them
-natively. compy ships three default configurations (`debug`, `otlp`,
-`bronto`); edit any of them and it becomes "locally modified" and is
-skipped by future compy upgrades, or `sync`/`resync` a configuration created
-`--from-url` to pull in changes from its source (refused if locally
+references it contains. Exactly one configuration, and one of its presets,
+is active at a time — activating installs and restarts the collector
+with that preset's values in its environment, so the collector expands them
+natively. If activation succeeds but the collector then fails to start,
+compy automatically restores the previously running configuration and
+preset. compy ships three configurations built in to compy (`debug`,
+`otlp`, `bronto`); edit any of them and it becomes "locally modified" and
+is skipped by future compy upgrades, or `sync`/`resync` a configuration
+created `--from-url` to pull in changes from its source (refused if locally
 modified, unless you `resync` to discard your edits).
 
 ## Quickstart
@@ -63,33 +65,40 @@ Point it at a real backend instead of `debug`, e.g. the shipped `bronto`
 configuration:
 
 ```
-./compy set bronto default BRONTO_API_KEY=...
+./compy presets set bronto default BRONTO_API_KEY=...
 ./compy use bronto default
 ```
 
-(`compy set <config> <set> KEY=VALUE` takes one variable per call; `compy
-use <config> <set>` both selects and activates a variable set.)
+(`compy presets set <config> <preset> KEY=VALUE` takes one variable per
+call; `compy use <config> <preset>` both selects and activates a preset.)
 
 ## Command surface
 
 ```
 compy status [--json]
-compy apply | rollback | validate
+compy apply | validate | stop | start
 compy config list
 compy config show|edit|delete|sync|resync <name>
 compy config create <name> [--from-url URL]
 compy config copy <src> <dst>
 compy config sync-all
-compy use <config> [<set>]
+compy config set-url <config> <url|-->
+compy use <config> [<preset>]
 compy vars <config>
-compy set <config> <set> KEY=VALUE
-compy sets use|delete <config> <set>
+compy presets set <config> <preset> KEY=VALUE
+compy presets use|delete <config> <preset>
+compy presets rename <config> <from> <to>
+compy settings
+compy settings set [--grpc-port N] [--http-port N]
 compy distro list
 compy distro add <name> <path>
+compy distro set-path <name> <path>
+compy distro remove <name>
 compy distro use|fetch <name>
 compy service install|uninstall|status
 compy env [--shell sh|fish|pwsh]
 compy env set-os | unset-os
+compy log [--lines N]
 compy run -- <cmd...>
 compy ui [--port N]
 compy tray [install|uninstall]

@@ -1,5 +1,5 @@
 // Package app orchestrates compy's pieces: it turns the active
-// configuration (plus its variable set) into a validated, installed, running
+// configuration (plus its preset) into a validated, installed, running
 // collector, and exposes the same operations to the CLI, the web UI, and the
 // tray.
 package app
@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bronto-io/compy/internal/cfgstore"
@@ -32,20 +33,90 @@ const probeTimeout = 5 * time.Second
 
 // App holds the resolved state directory. Settings are re-read per
 // operation so concurrent editors (CLI and web UI) never fight over a
-// cached copy.
+// cached copy. Download progress is the one thing App does keep: it belongs
+// to the process doing the downloading and is meaningless to anyone else.
 type App struct {
 	Dir string
+
+	mu        sync.Mutex
+	downloads map[string]download
+}
+
+// download is one collector binary's in-flight (or finished) fetch, as the
+// Settings screen renders it: a progress bar while it runs, "download
+// failed · <reason>" when it does not.
+type download struct {
+	status string // "downloading" | "done" | "failed"
+	pct    int
+	err    string
+}
+
+// beginDownload marks name as downloading, reporting false if a fetch for it
+// is already in flight (two extracts into one directory is nobody's idea of
+// a good time).
+func (a *App) beginDownload(name string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.downloads == nil {
+		a.downloads = map[string]download{}
+	}
+	if a.downloads[name].status == "downloading" {
+		return false
+	}
+	a.downloads[name] = download{status: "downloading"}
+	return true
+}
+
+// setDownloadProgress records bytes-so-far as a percentage. A server that
+// declares no length leaves the bar where it is — an indeterminate strip is
+// the UI's problem, not a made-up number's.
+func (a *App) setDownloadProgress(name string, done, total int64) {
+	if total <= 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.downloads[name] = download{status: "downloading", pct: int(done * 100 / total)}
+}
+
+// endDownload records how the fetch finished.
+func (a *App) endDownload(name string, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil {
+		a.downloads[name] = download{status: "failed", err: err.Error()}
+		return
+	}
+	a.downloads[name] = download{status: "done", pct: 100}
+}
+
+// DownloadProgress reports how name's fetch is going. A name nobody has
+// fetched in this process is "idle" — including one that is already on disk,
+// which the distro list says separately.
+func (a *App) DownloadProgress(name string) (any, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	d, ok := a.downloads[name]
+	if !ok {
+		d = download{status: "idle"}
+	}
+	out := map[string]any{"status": d.status, "pct": d.pct}
+	if d.err != "" {
+		out["error"] = d.err
+	}
+	return out, nil
 }
 
 // Status is the machine-readable service summary (`compy status --json`).
 type Status struct {
-	Running  bool   `json:"running"`
-	Distro   string `json:"distro"`
-	GRPCPort int    `json:"grpc_port"`
-	HTTPPort int    `json:"http_port"`
-	Config   string `json:"config"`
-	Set      string `json:"set"`
-	OSEnv    bool   `json:"os_env"`
+	Running  bool     `json:"running"`
+	Distro   string   `json:"distro"`
+	GRPCPort int      `json:"grpc_port"`
+	HTTPPort int      `json:"http_port"`
+	Config   string   `json:"config"`
+	Preset   string   `json:"preset"`
+	OSEnv    bool     `json:"os_env"`
+	Recent   []string `json:"recent"`
 }
 
 // New resolves the state dir, migrates a v1 layout if one is found, and
@@ -95,7 +166,7 @@ func (a *App) configDetail(name string) (any, error) {
 }
 
 // ActiveConfig returns the active configuration's name and its active
-// variable set. Both are "" when nothing has been activated yet.
+// preset. Both are "" when nothing has been activated yet.
 func (a *App) ActiveConfig() (string, string, error) {
 	s, err := state.LoadSettings()
 	if err != nil || s.ActiveConfig == "" {
@@ -105,11 +176,11 @@ func (a *App) ActiveConfig() (string, string, error) {
 	if err != nil {
 		return s.ActiveConfig, "", err
 	}
-	return s.ActiveConfig, info.Meta.ActiveSet, nil
+	return s.ActiveConfig, info.Meta.ActivePreset, nil
 }
 
 // activationEnv is the LaunchAgent's EnvironmentVariables dict: the active
-// set's values plus compy's port variables, which the set may not override
+// preset's values plus compy's port variables, which the preset may not override
 // (shipped configs bind their receivers to them).
 func activationEnv(values map[string]string, s state.Settings) map[string]string {
 	env := maps.Clone(values)
@@ -121,25 +192,16 @@ func activationEnv(values map[string]string, s state.Settings) map[string]string
 	return env
 }
 
-// Activate makes name the running configuration: it resolves the distro
-// (downloading a shipped definition on first use), validates, installs and
-// restarts the LaunchAgent with the set's variables in its environment,
-// waits for the collector to answer, and snapshots the result as last-good.
-// An empty set keeps the configuration's current active_set.
-func (a *App) Activate(name, set string) error {
+// launch (re)installs the collector LaunchAgent for configuration name with
+// preset's variables in its environment, and kickstarts it. It is the part
+// of Activate that actually changes what runs, and the part restorePrevious
+// replays.
+func (a *App) launch(name, preset string) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
-	if set == "" {
-		set = info.Meta.ActiveSet
-	}
-	if set != "" {
-		if _, ok := info.Meta.VariableSets[set]; !ok {
-			return state.BadRequest(fmt.Errorf("config %q has no variable set %q", name, set))
-		}
-	}
-	bin, err := a.EnsureDistro(info.Meta.Distro)
+	bin, err := a.EnsureDistro("", nil)
 	if err != nil {
 		return err
 	}
@@ -147,7 +209,73 @@ func (a *App) Activate(name, set string) error {
 	if err != nil {
 		return err
 	}
-	env := activationEnv(info.Meta.VariableSets[set], s)
+	env := activationEnv(info.Meta.Presets[preset], s)
+	if err := launchd.Install(bin, []string{"--config", a.ConfigPath(name)}, a.LogPath(), env); err != nil {
+		return err
+	}
+	return launchd.Kickstart()
+}
+
+// restorePrevious puts back the last setup that actually started — the
+// snapshot's YAML, its preset, and the settings that named it, collector
+// binary included — and starts it again, returning what it put back
+// ("otlp-to-bronto · staging"). It deliberately does not re-probe: that
+// configuration was up moments ago, and a second probe timeout on the
+// failure path only delays the diagnostic the user is waiting for.
+func (a *App) restorePrevious() (string, error) {
+	if err := cfgstore.RestoreActive(a.Dir); err != nil {
+		return "", err
+	}
+	name, preset, err := a.ActiveConfig()
+	if err != nil {
+		return "", err
+	}
+	if err := a.launch(name, preset); err != nil {
+		return "", err
+	}
+	if preset == "" {
+		return name, nil
+	}
+	return name + " · " + preset, nil
+}
+
+// Activate makes name the running configuration: it resolves the collector
+// binary (downloading a shipped definition on first use), validates,
+// installs and restarts the LaunchAgent with the preset's variables in its
+// environment, and waits for the collector to answer. An empty preset keeps
+// the configuration's current active_preset.
+//
+// A configuration the collector rejects changes nothing. A configuration it
+// accepts but cannot start restores the last-good snapshot — the last setup
+// that actually started — per the design's guarantee that "on failure the
+// previously active configuration keeps running".
+//
+// The snapshot is taken on success, never before the install. Every
+// reactivating caller (WriteConfigYAML, Sync, UseDistro, the preset writes)
+// persists the user's intent BEFORE re-activating, so a snapshot taken here
+// would capture the very edit that is about to fail and "restore" it.
+func (a *App) Activate(name, preset string) error {
+	info, _, err := cfgstore.Get(a.Dir, name)
+	if err != nil {
+		return err
+	}
+	if preset == "" {
+		preset = info.Meta.ActivePreset
+	}
+	if preset != "" {
+		if _, ok := info.Meta.Presets[preset]; !ok {
+			return state.BadRequest(fmt.Errorf("config %q has no preset %q", name, preset))
+		}
+	}
+	bin, err := a.EnsureDistro("", nil)
+	if err != nil {
+		return err
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		return err
+	}
+	env := activationEnv(info.Meta.Presets[preset], s)
 	args := []string{"--config", a.ConfigPath(name)}
 
 	// A config the collector rejects is the user's YAML being wrong, not a
@@ -157,8 +285,8 @@ func (a *App) Activate(name, set string) error {
 		return state.BadRequest(err)
 	}
 
-	if set != "" && set != info.Meta.ActiveSet {
-		if err := cfgstore.UseSet(a.Dir, name, set); err != nil {
+	if preset != "" && preset != info.Meta.ActivePreset {
+		if err := cfgstore.UsePreset(a.Dir, name, preset); err != nil {
 			return err
 		}
 	}
@@ -166,26 +294,65 @@ func (a *App) Activate(name, set string) error {
 	if err := state.SaveSettings(s); err != nil {
 		return err
 	}
-	if err := launchd.Install(bin, args, a.LogPath(), env); err != nil {
-		return err
-	}
-	if err := launchd.Kickstart(); err != nil {
+	if err := a.launch(name, preset); err != nil {
 		return err
 	}
 	if err := collector.Probe(s.GRPCPort, probeTimeout); err != nil {
-		// v2 configurations own their receivers and may bind nowhere near
+		// Configurations own their receivers and may bind nowhere near
 		// compy's ports, so a failed probe only means "not listening
 		// there" — launchd is the authority on whether the job is up.
 		if running, rerr := launchd.Running(); rerr != nil || !running {
 			tail, _ := collector.TailLog(a.LogPath(), 20)
-			return fmt.Errorf("collector did not come up: %w\n%s\nrun: compy rollback", err, tail)
+			failure := fmt.Errorf("collector did not come up: %w\n%s", err, tail)
+			if !cfgstore.HasSnapshot(a.Dir) {
+				return failure // nothing ever started; nothing to come back to
+			}
+			still, rerr := a.restorePrevious()
+			if rerr != nil {
+				return fmt.Errorf("%w\nand restoring the last working setup failed too: %v", failure, rerr)
+			}
+			// The reassurance is a claim about the world, so make it only
+			// when launchd agrees: a restore that itself failed to start
+			// must not be reported as "still running".
+			if back, _ := launchd.Running(); !back {
+				return failure
+			}
+			return state.StillRunning(failure, still)
 		}
 	}
-	// Snapshot only now, with the configuration proven to actually start.
-	return cfgstore.SnapshotActive(a.Dir, name)
+	// Proven to have started: this is the setup a later failure comes back
+	// to. Snapshot before remember() so the two writes to settings.json
+	// cannot interleave into a snapshot of a half-updated file.
+	if err := cfgstore.SnapshotActive(a.Dir, name); err != nil {
+		return err
+	}
+	return a.remember(name)
 }
 
-// Apply re-activates the current configuration and set.
+// remember moves name to the front of the recency list. It runs only after
+// a successful activation — the menu bar orders by what has actually run.
+func (a *App) remember(name string) error {
+	s, err := state.LoadSettings()
+	if err != nil {
+		return err
+	}
+	s.Recent = state.Remember(s.Recent, name)
+	return state.SaveSettings(s)
+}
+
+// Stop stops the collector by removing its LaunchAgent entirely. Booting the
+// job out while leaving the plist behind would only stop it until the next
+// login — the plist carries RunAtLoad — and "stopped" has to mean stopped.
+// Start reinstalls it. Nothing is recorded: a stopped collector is simply one
+// whose job is absent, and the active configuration stays named so the window
+// can show it dimmed rather than forget it.
+func (a *App) Stop() error { return launchd.Uninstall() }
+
+// Start runs the active configuration again — the same operation as Apply,
+// under the word the UI and CLI use for it.
+func (a *App) Start() error { return a.Apply() }
+
+// Apply re-activates the current configuration and preset.
 func (a *App) Apply() error {
 	name, _, err := a.activeName()
 	if err != nil {
@@ -206,15 +373,6 @@ func (a *App) activeName() (string, state.Settings, error) {
 	return s.ActiveConfig, s, nil
 }
 
-// Rollback restores the last known-good configuration + settings and
-// re-activates them.
-func (a *App) Rollback() error {
-	if err := cfgstore.RestoreActive(a.Dir); err != nil {
-		return err
-	}
-	return a.Apply()
-}
-
 // Validate checks the active configuration against its distro without
 // touching the running service.
 func (a *App) Validate() error {
@@ -226,14 +384,14 @@ func (a *App) Validate() error {
 }
 
 // ValidateConfig checks name's configuration against its own distro, using
-// its own active set's environment — unlike Validate, name need not be the
+// its own active preset's environment — unlike Validate, name need not be the
 // active configuration.
 func (a *App) ValidateConfig(name string) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
-	bin, err := a.EnsureDistro(info.Meta.Distro)
+	bin, err := a.EnsureDistro("", nil)
 	if err != nil {
 		return err
 	}
@@ -241,7 +399,7 @@ func (a *App) ValidateConfig(name string) error {
 	if err != nil {
 		return err
 	}
-	env := activationEnv(info.Meta.VariableSets[info.Meta.ActiveSet], s)
+	env := activationEnv(info.Meta.Presets[info.Meta.ActivePreset], s)
 	if err := collector.Validate(bin, []string{"--config", a.ConfigPath(name)}, env); err != nil {
 		return state.BadRequest(err)
 	}
@@ -256,10 +414,10 @@ func (a *App) Status() (Status, error) {
 	}
 	// An error here means the job is not loaded, i.e. not running.
 	running, _ := launchd.Running()
-	set := ""
+	preset := ""
 	if s.ActiveConfig != "" {
 		if info, _, err := cfgstore.Get(a.Dir, s.ActiveConfig); err == nil {
-			set = info.Meta.ActiveSet
+			preset = info.Meta.ActivePreset
 		}
 	}
 	return Status{
@@ -268,8 +426,9 @@ func (a *App) Status() (Status, error) {
 		GRPCPort: s.GRPCPort,
 		HTTPPort: s.HTTPPort,
 		Config:   s.ActiveConfig,
-		Set:      set,
+		Preset:   preset,
 		OSEnv:    s.OSEnv,
+		Recent:   s.Recent,
 	}, nil
 }
 
@@ -279,10 +438,14 @@ func (a *App) isActive(name string) bool {
 	return err == nil && s.ActiveConfig == name
 }
 
-// reactivateIf re-applies when name is the active configuration.
+// reactivateIf re-applies when name is the active configuration AND the
+// collector is running: a stopped collector stays stopped — editing,
+// resetting, or resyncing the active config must not start it.
 func (a *App) reactivateIf(name string) error {
 	if a.isActive(name) {
-		return a.Activate(name, "")
+		if running, _ := launchd.Running(); running {
+			return a.Activate(name, "")
+		}
 	}
 	return nil
 }
@@ -315,41 +478,15 @@ func (a *App) WriteConfigYAML(name, yaml string) error {
 	return a.reactivateIf(name)
 }
 
-// SetDistro sets a configuration's collector distribution ("" = the global
-// default), re-activating if it is the running one.
-func (a *App) SetDistro(name, distroName string) error {
-	info, _, err := cfgstore.Get(a.Dir, name)
-	if err != nil {
-		return err
-	}
-	info.Meta.Distro = distroName
-	if err := cfgstore.WriteMeta(a.Dir, name, info.Meta); err != nil {
-		return err
-	}
-	return a.reactivateIf(name)
-}
-
-// UpdateConfigMeta partially updates a configuration's distro and/or remote
-// URL (nil = unchanged), re-activating if it is the running one. A non-empty
-// distro must name an entry in the distro registry.
-func (a *App) UpdateConfigMeta(name string, distroP, remoteURLP *string) error {
+// UpdateConfigMeta updates a configuration's remote URL (nil = unchanged),
+// re-activating if it is the running one. There is no per-config collector
+// binary to update: one collector runs every configuration.
+func (a *App) UpdateConfigMeta(name string, remoteURLP *string) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
 	m := info.Meta
-	if distroP != nil {
-		if *distroP != "" {
-			reg, err := distro.Registry(a.Dir)
-			if err != nil {
-				return err
-			}
-			if !slices.ContainsFunc(reg, func(d state.Distro) bool { return d.Name == *distroP }) {
-				return state.BadRequest(fmt.Errorf("no such distro %q", *distroP))
-			}
-		}
-		m.Distro = *distroP
-	}
 	if remoteURLP != nil {
 		m.RemoteURL = *remoteURLP
 	}
@@ -375,6 +512,48 @@ func (a *App) Resync(name string) error {
 	return a.reactivateIf(name)
 }
 
+// Reset restores a modified built-in configuration to its shipped version,
+// re-activating it if it is the running one (the builtin twin of Resync).
+func (a *App) Reset(name string) error {
+	if err := cfgstore.Reset(a.Dir, name); err != nil {
+		return err
+	}
+	return a.reactivateIf(name)
+}
+
+// RenameConfig moves a configuration to a new name. The active configuration
+// follows the rename in settings (Recent included); if it is also running,
+// the LaunchAgent is re-applied so its plist tracks the new config path. A
+// stopped collector is left stopped — its plist is already gone, and
+// re-applying would kickstart it.
+func (a *App) RenameConfig(from, to string) error {
+	if err := cfgstore.Rename(a.Dir, from, to); err != nil {
+		return err
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		return err
+	}
+	active := s.ActiveConfig == from
+	if active {
+		s.ActiveConfig = to
+	}
+	for i, n := range s.Recent {
+		if n == from {
+			s.Recent[i] = to
+		}
+	}
+	if err := state.SaveSettings(s); err != nil {
+		return err
+	}
+	if active {
+		if running, _ := launchd.Running(); running {
+			return a.Activate(to, "")
+		}
+	}
+	return nil
+}
+
 // SyncAll syncs every unmodified remote configuration, reporting the names
 // it synced.
 func (a *App) SyncAll() ([]string, error) {
@@ -395,54 +574,70 @@ func (a *App) SyncAll() ([]string, error) {
 	return synced, nil
 }
 
-// SetVar sets a variable in a set (creating the set), re-activating if that
-// set is the running one.
-func (a *App) SetVar(name, set, key, value string) error {
-	if err := cfgstore.SetVar(a.Dir, name, set, key, value); err != nil {
+// SetVar sets a variable in a preset (creating the preset), re-activating if that
+// preset is the running one.
+func (a *App) SetVar(name, preset, key, value string) error {
+	if err := cfgstore.SetVar(a.Dir, name, preset, key, value); err != nil {
 		return err
 	}
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
-	if info.Meta.ActiveSet == set {
+	if info.Meta.ActivePreset == preset {
 		return a.reactivateIf(name)
 	}
 	return nil
 }
 
-// ReplaceSet creates or replaces a variable set's entire contents,
-// re-activating if the configuration is active and set is its active_set.
-func (a *App) ReplaceSet(name, set string, values map[string]string) error {
-	if err := cfgstore.WriteSet(a.Dir, name, set, values); err != nil {
+// ReplacePreset creates or replaces a preset's entire contents,
+// re-activating if the configuration is active and preset is its active_preset.
+func (a *App) ReplacePreset(name, preset string, values map[string]string) error {
+	if err := cfgstore.WritePreset(a.Dir, name, preset, values); err != nil {
 		return err
 	}
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
-	if info.Meta.ActiveSet == set {
+	if info.Meta.ActivePreset == preset {
 		return a.reactivateIf(name)
 	}
 	return nil
 }
 
-// UseSet makes set the configuration's active variable set, re-activating if
+// UsePreset makes preset the configuration's active preset, re-activating if
 // the configuration is the running one.
-func (a *App) UseSet(name, set string) error {
+func (a *App) UsePreset(name, preset string) error {
 	if a.isActive(name) {
-		return a.Activate(name, set)
+		return a.Activate(name, preset)
 	}
-	return cfgstore.UseSet(a.Dir, name, set)
+	return cfgstore.UsePreset(a.Dir, name, preset)
 }
 
-// DeleteSet removes a variable set (never the active one).
-func (a *App) DeleteSet(name, set string) error { return cfgstore.DeleteSet(a.Dir, name, set) }
+// DeletePreset removes a preset (never the active one).
+func (a *App) DeletePreset(name, preset string) error {
+	return cfgstore.DeletePreset(a.Dir, name, preset)
+}
 
-// RenameSet renames a variable set (the active set follows the rename
+// RenamePreset renames a preset (the active preset follows the rename
 // automatically, in cfgstore).
-func (a *App) RenameSet(name, from, to string) error {
-	return cfgstore.RenameSet(a.Dir, name, from, to)
+func (a *App) RenamePreset(name, from, to string) error {
+	return cfgstore.RenamePreset(a.Dir, name, from, to)
+}
+
+// Health reports what the running collector's own telemetry says about the
+// data moving through it. It never fails: a stopped or unreachable collector
+// answers {"available": false}, which is what the Collector screen shows as
+// dashes.
+func (a *App) Health() (any, error) {
+	// Only our own collector's numbers are ours to show. :8888 is otelcol's
+	// default, so a second collector on the machine answers there when ours
+	// is stopped — and its throughput is not this one's.
+	if running, err := launchd.Running(); err != nil || !running {
+		return collector.Health{}, nil
+	}
+	return collector.Scrape(), nil
 }
 
 // Log returns the last n lines of the collector log.
@@ -473,23 +668,25 @@ func (a *App) LogStats(lines int) (errors, warnings int, err error) {
 	return errors, warnings, nil
 }
 
-// httpFetch is distro.Fetch over plain HTTP(S); the caller closes the body.
-func httpFetch(url string) (io.ReadCloser, error) {
+// httpFetch is distro.Fetch over plain HTTP(S), reporting Content-Length as
+// the total (-1 when the server declares none); the caller closes the body.
+func httpFetch(url string) (io.ReadCloser, int64, error) {
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return nil, fmt.Errorf("fetch %s: HTTP %d", url, resp.StatusCode)
+		return nil, 0, fmt.Errorf("fetch %s: HTTP %d", url, resp.StatusCode)
 	}
-	return resp.Body, nil
+	return resp.Body, resp.ContentLength, nil
 }
 
 // EnsureDistro resolves a distro name to a collector binary path: "" means
 // the global default from settings, a user-registered entry is used as-is,
-// and a shipped definition is downloaded (checksum-verified) on first use.
-func (a *App) EnsureDistro(name string) (string, error) {
+// and a shipped definition is downloaded (checksum-verified) on first use,
+// reporting bytes to progress (nil = don't report) as it arrives.
+func (a *App) EnsureDistro(name string, progress distro.Progress) (string, error) {
 	if name == "" {
 		s, err := state.LoadSettings()
 		if err != nil {
@@ -512,18 +709,29 @@ func (a *App) EnsureDistro(name string) (string, error) {
 			if !distro.Available(d) {
 				return "", state.BadRequest(fmt.Errorf("distro %q has no build for this platform", name))
 			}
-			return distro.Ensure(a.Dir, d, httpFetch)
+			return distro.Ensure(a.Dir, d, httpFetch, progress)
 		}
 	}
 	return "", state.BadRequest(fmt.Errorf("no such distro %q", name))
 }
 
-// FetchDistro ensures name's collector binary is present locally,
-// downloading a shipped definition on first use; a no-op for an
-// already-downloaded or user-registered distro.
-func (a *App) FetchDistro(name string) error {
-	_, err := a.EnsureDistro(name)
-	return err
+// StartFetchDistro begins downloading name's collector binary and returns
+// at once: a download takes seconds and the Settings screen follows it with
+// DownloadProgress rather than holding a request open. A fetch already in
+// flight for the same name is left alone. Everything that can go wrong —
+// including an unknown name — surfaces through the progress, since the
+// request that started it is gone by then.
+func (a *App) StartFetchDistro(name string) error {
+	if !a.beginDownload(name) {
+		return nil
+	}
+	go func() {
+		_, err := a.EnsureDistro(name, func(done, total int64) {
+			a.setDownloadProgress(name, done, total)
+		})
+		a.endDownload(name, err)
+	}()
+	return nil
 }
 
 // Distros lists the distro registry: shipped definitions (flagged available
@@ -601,7 +809,7 @@ func validateDistroBinary(path string) (string, error) {
 	return abs, nil
 }
 
-// selectDistroIfNone makes name the global default distro if none is set
+// selectDistroIfNone makes name the global default distro if none is preset
 // yet (first registration).
 func selectDistroIfNone(name string) error {
 	s, err := state.LoadSettings()
@@ -699,9 +907,12 @@ func (a *App) RemoveDistro(name string) (bool, error) {
 }
 
 // UseDistro selects the global default distro, re-applying if a
-// configuration is active.
+// configuration is active. The switch sticks when the collector starts, and
+// when the active configuration is merely rejected by it (nothing moved); it
+// does not stick when the new collector fails to start, because the restore
+// that puts the previous configuration back restores settings.json with it.
 func (a *App) UseDistro(name string) error {
-	if _, err := a.EnsureDistro(name); err != nil {
+	if _, err := a.EnsureDistro(name, nil); err != nil {
 		return err
 	}
 	s, err := state.LoadSettings()
@@ -719,16 +930,25 @@ func (a *App) UseDistro(name string) error {
 	if err == nil {
 		return nil
 	}
-	// The default is switched either way — it is a global preference, not
-	// something one configuration gets to veto. Only say the configuration
-	// is incompatible when that is actually what failed: a plist write or a
-	// launchctl refusal is our fault, and keeps both its own message and its
-	// 500 (the collector log tail the UI shows there is the diagnostic).
-	if !state.IsBadRequest(err) {
-		return err
+	// Whether the switch survived depends on how the apply failed, so say
+	// which happened rather than assume.
+	//
+	// A configuration the collector rejects never reached launchd: nothing
+	// moved, the switch stands, and it is a caller mistake (400).
+	if state.IsBadRequest(err) {
+		// Already marked, so the wrap stays a 400 (IsBadRequest unwraps).
+		return fmt.Errorf("default collector is now %q, but the active configuration does not run with it: %w", name, err)
 	}
-	// Already marked, so the wrap stays a 400 (IsBadRequest unwraps).
-	return fmt.Errorf("default collector is now %q, but the active configuration does not run with it: %w", name, err)
+	// A collector that will not start restores the last-good snapshot,
+	// settings.json included, which puts the previous collector back — so
+	// read the setting rather than claim it stuck.
+	if after, lerr := state.LoadSettings(); lerr == nil && after.Distro != name {
+		return fmt.Errorf("%q did not start; the collector is still %q: %w", name, after.Distro, err)
+	}
+	// Anything else — a plist write, a launchctl refusal — is our fault and
+	// keeps both its own message and its 500 (the collector log tail the UI
+	// shows there is the diagnostic).
+	return err
 }
 
 // Vars returns the OTEL_* environment variables for the current settings.
@@ -764,16 +984,15 @@ func (a *App) settingsMap() (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"grpc_port":        s.GRPCPort,
-		"http_port":        s.HTTPPort,
-		"menu_distro_swap": s.MenuDistroSwap,
+		"grpc_port": s.GRPCPort,
+		"http_port": s.HTTPPort,
 	}, nil
 }
 
 // PutSettings partially updates compy's global settings (nil = unchanged);
 // grpcP/httpP must be in 1-65535. Port changes take effect on the next
 // Apply/Activate, not immediately.
-func (a *App) PutSettings(grpcP, httpP *int, menuSwapP *bool) error {
+func (a *App) PutSettings(grpcP, httpP *int) error {
 	s, err := state.LoadSettings()
 	if err != nil {
 		return err
@@ -790,9 +1009,6 @@ func (a *App) PutSettings(grpcP, httpP *int, menuSwapP *bool) error {
 			return state.BadRequest(fmt.Errorf("http port %d out of range 1-65535", *httpP))
 		}
 		s.HTTPPort = *httpP
-	}
-	if menuSwapP != nil {
-		s.MenuDistroSwap = *menuSwapP
 	}
 	return state.SaveSettings(s)
 }
@@ -833,8 +1049,9 @@ func (a *App) statusMap() (map[string]any, error) {
 		"http_port": st.HTTPPort,
 		"endpoint":  fmt.Sprintf("http://127.0.0.1:%d", st.HTTPPort),
 		"config":    st.Config,
-		"set":       st.Set,
+		"preset":    st.Preset,
 		"os_env":    st.OSEnv,
+		"recent":    st.Recent,
 	}, nil
 }
 
@@ -850,8 +1067,10 @@ func (a *App) WebUIAPI() webui.API {
 		GetSettings: a.settingsMap,
 		PutSettings: a.PutSettings,
 
+		Health:   a.Health,
 		Apply:    a.Apply,
-		Rollback: a.Rollback,
+		Stop:     a.Stop,
+		Start:    a.Start,
 		Validate: a.Validate,
 
 		Configs:        func() (any, error) { return a.Configs() },
@@ -866,12 +1085,14 @@ func (a *App) WebUIAPI() webui.API {
 		ValidateConfig: a.ValidateConfig,
 		Sync:           a.Sync,
 		Resync:         a.Resync,
+		Reset:          a.Reset,
+		RenameConfig:   a.RenameConfig,
 		SyncAll:        a.SyncAll,
 
-		PutSet:    a.ReplaceSet,
-		DeleteSet: a.DeleteSet,
-		UseSet:    a.UseSet,
-		RenameSet: a.RenameSet,
+		PutPreset:    a.ReplacePreset,
+		DeletePreset: a.DeletePreset,
+		UsePreset:    a.UsePreset,
+		RenamePreset: a.RenamePreset,
 
 		Distros: func() (any, error) { return a.Distros() },
 		AddDistro: func(name, path string) (string, error) {
@@ -881,9 +1102,10 @@ func (a *App) WebUIAPI() webui.API {
 			}
 			return warning, nil
 		},
-		SetDistroPath: a.SetDistroPath,
-		RemoveDistro:  a.RemoveDistro,
-		UseDistro:     a.UseDistro,
-		FetchDistro:   a.FetchDistro,
+		SetDistroPath:    a.SetDistroPath,
+		RemoveDistro:     a.RemoveDistro,
+		UseDistro:        a.UseDistro,
+		FetchDistro:      a.StartFetchDistro,
+		DownloadProgress: a.DownloadProgress,
 	}
 }

@@ -1,27 +1,65 @@
 "use strict";
 
-/* compy web UI. Hash router over four views (#/configs default,
-   #/configs/<name> editor, #/collector, #/settings), all data via the P2
-   REST API. House rule: every API-derived string goes through
-   textContent/el(), never innerHTML. */
+/* compy window UI — v3 handoff (docs/design/handoff/README.md for intent,
+   compy.dc.html for behaviour, ACCEPTANCE.md for the checklist).
+
+   Four screens over a hash router (#/configs, #/configs/<name>, #/collector,
+   #/settings), all data from the P2 REST API. House rules that survive any
+   design:
+     - every API-derived string reaches the DOM through textContent/el();
+       there is no innerHTML in this file, not even for icon markup.
+     - dialogs are in-page <dialog>; window.prompt/confirm are dead in the
+       WKWebView the real window runs in.
+     - the background refresh never clobbers a focused input.
+     - unsaved editor work is guarded on navigation and on unload.
+     - the body never scrolls horizontally; panes scroll themselves. */
 
 /* ── tiny DOM helper ──────────────────────────────────────────────── */
-// el(tag, opts, children): opts may set class/text/attrs/on(events). Never
-// accepts raw HTML — API-derived strings always go through text or
-// textContent, keeping this the one place that could introduce XSS and
-// making it trivially auditable.
 function el(tag, opts, children) {
   const e = document.createElement(tag);
   opts = opts || {};
   if (opts.class) e.className = opts.class;
   if (opts.text != null) e.textContent = opts.text;
-  if (opts.attrs) for (const k in opts.attrs) e.setAttribute(k, opts.attrs[k]);
+  if (opts.title) e.title = opts.title;
+  if (opts.attrs) for (const k in opts.attrs) if (opts.attrs[k] != null) e.setAttribute(k, opts.attrs[k]);
   if (opts.on) for (const k in opts.on) e.addEventListener(k, opts.on[k]);
   if (opts.props) for (const k in opts.props) e[k] = opts.props[k];
   for (const c of children || []) if (c) e.appendChild(c);
   return e;
 }
 function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+function span(cls, text) { return el("span", { class: cls, text }); }
+
+// icon builds a Lucide glyph from the vendored path-data map: stroke 1.9,
+// currentColor, round caps, per the handoff's iconography rules. SVG needs
+// createElementNS, so it can't go through el().
+const SVGNS = "http://www.w3.org/2000/svg";
+function icon(name, size, filled) {
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("width", size || 14);
+  svg.setAttribute("height", size || 14);
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", filled ? "currentColor" : "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.9");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  // LUCIDE is a top-level `const` in the vendored script: a global binding
+  // reachable by bare name from another classic script, but never a
+  // property of window — so it must not be looked up as one.
+  const nodes = (typeof LUCIDE !== "undefined" && LUCIDE[name]) || [];
+  for (const [tag, attrs] of nodes) {
+    const node = document.createElementNS(SVGNS, tag);
+    for (const k in attrs) node.setAttribute(k, attrs[k]);
+    svg.appendChild(node);
+  }
+  return svg;
+}
+function iconWrap(cls, name, size, filled, title) {
+  const s = el("span", { class: cls, title }, [icon(name, size, filled)]);
+  return s;
+}
 
 /* ── API client ───────────────────────────────────────────────────── */
 async function api(path, opts) {
@@ -31,39 +69,35 @@ async function api(path, opts) {
   if (!r.ok) {
     const err = new Error((body && body.error) || r.statusText);
     err.status = r.status;
+    if (body && body.still_running) err.stillRunning = body.still_running;
     throw err;
   }
   return body;
 }
 function apiJSON(path, method, obj) {
-  return api(path, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(obj),
-  });
+  return api(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
 }
+const enc = encodeURIComponent;
+const cfgURL = (name) => "/api/configs/" + enc(name);
 
-/* ── in-page dialogs ──────────────────────────────────────────────
-   compy's own window (internal/window) is a WKWebView via webview_go,
-   which registers a WKUIDelegate implementing only the file-open panel —
-   none of the JavaScript panel methods. WebKit's fallback for a delegate
-   that doesn't implement them is to show nothing and return the "dismissed"
-   answer: prompt returns null, confirm returns false. So in the
-   real app every prompt/confirm-gated action (copy, del, rename, + new
-   set, edit a protected config, roll back) silently did nothing, and the
-   unsaved-changes guard trapped you in the editor. <dialog> is supported,
-   so ask() replaces both. Deliberately plain — the redesign owns styling. */
+/* ── in-page dialogs ──────────────────────────────────────────────────
+   compy's own window is a WKWebView whose WKUIDelegate implements no
+   JavaScript panel methods, so the native prompt returns null and the
+   native confirm returns false without showing anything: every action
+   gated on one silently did nothing there. <dialog> works. The design puts
+   destructive confirmations inline instead — ask() is only for the one
+   free-text input the design asks for (a collector's path). */
 function ask(message, initial) {
   return new Promise((resolve) => {
     const input = initial == null ? null : el("input", {
-      class: "field-input", attrs: { "aria-label": message }, props: { value: initial },
+      class: "field", attrs: { "aria-label": message }, props: { value: initial },
     });
     const form = el("form", { attrs: { method: "dialog" } }, [
-      el("p", { class: "ask-msg", text: message }),
+      el("p", { class: "q", text: message }),
       input,
-      el("div", { class: "form-actions" }, [
-        el("button", { class: "solid-btn", attrs: { value: "ok" }, text: "OK" }),
-        el("button", { class: "act", attrs: { value: "cancel" }, text: "Cancel" }),
+      el("div", { class: "row" }, [
+        el("button", { class: "act", attrs: { value: "cancel" }, text: "cancel" }),
+        el("button", { class: "btn", attrs: { value: "ok" }, text: "ok" }),
       ]),
     ]);
     const dlg = el("dialog", { class: "ask" }, [form]);
@@ -78,1189 +112,1496 @@ function ask(message, initial) {
     if (input) input.select();
   });
 }
-// askText prompts for a string (null = cancelled or left empty);
-// askConfirm asks a yes/no question.
 function askText(message, initial) { return ask(message, initial == null ? "" : initial); }
-function askConfirm(message) { return ask(message, null); }
 
-/* ── error / message console ─────────────────────────────────────── */
-const errorStrip = document.getElementById("error-strip");
-const errorMessage = document.getElementById("error-message");
-const errorLog = document.getElementById("error-log");
-document.getElementById("error-dismiss").addEventListener("click", () => {
-  errorStrip.classList.add("hidden");
-});
+/* ── state (the README's state model) ─────────────────────────────── */
+const S = {
+  screen: "configs",
+  editId: null,
 
-// showMessage displays msg in the console strip, verbatim. severity "error"
-// (default) colors the strip's border red; "info" (a surfaced API warning, a
-// distro-remove "reverted" notice — nothing actually went wrong) colors it
-// amber. A log tail is appended only for a server-fault status (>= 500) — a
-// 4xx is the client's own mistake (bad input, a validation failure) and
-// renders with the message alone.
-async function showMessage(msg, severity, status) {
-  const isError = severity !== "info";
-  errorMessage.textContent = msg;
-  errorLog.textContent = "";
-  errorStrip.classList.remove("hidden");
-  errorStrip.classList.toggle("info", !isError);
-  if (isError && typeof status === "number" && status >= 500) {
-    try {
-      const j = await api("/api/log?lines=20");
-      if (j.log) errorLog.textContent = "recent log:\n" + j.log;
-    } catch (e) {
-      // best-effort only
-    }
-  }
-}
-function showError(err) {
-  showMessage(err && err.message ? err.message : String(err), "error", err && err.status);
-}
+  // server snapshot
+  status: null, configs: [], health: null, log: "", distros: [],
+  yaml: "", yamlOf: null,
 
-/* ── shared state ─────────────────────────────────────────────────── */
-const state = {
-  status: null,
-  logFilter: "",
+  // configurations screen
+  find: "",
+  busyId: null,            // config being activated
+  err: null, errName: null, errKept: null,
+  note: null, noteTimer: null,
+  newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
+  confirm: null, confirmVerb: null, confirmId: null, confirmKind: null,
+  presetSel: {},           // { configName: presetName }
+  presetsOpenId: null,
+  inline: null,            // { name, preset, isNew }
+  inlineName: "",
+
+  // editor
+  unlocked: false, unlockAsk: false, yamlOpen: false,
+  preset: null, reveal: {},
+  saving: false, valErr: null, valOk: null,
+  renameNote: null,
+
+  // collector
+  query: "", level: "all", tail: true, restarting: false,
+
+  // settings
+  theme: "system",
+  dl: {},                  // { distroName: {status, pct, error} }
+  addName: "", addPath: "",
 };
 
-/* ── nav + router ─────────────────────────────────────────────────── */
-const navButtons = Array.from(document.querySelectorAll(".nav-btn"));
-for (const btn of navButtons) {
-  btn.addEventListener("click", () => {
-    location.hash = "#/" + btn.dataset.view;
-  });
+/* ── theme ────────────────────────────────────────────────────────────
+   'system' (default) leaves the root attribute off so prefers-color-scheme
+   decides and follows macOS live; an explicit choice stamps data-theme and
+   is remembered. */
+function loadTheme() {
+  try { S.theme = localStorage.getItem("compy.theme") || "system"; } catch (e) { S.theme = "system"; }
+}
+function applyTheme() {
+  if (S.theme === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", S.theme);
+}
+function setTheme(t) {
+  S.theme = t;
+  try { localStorage.setItem("compy.theme", t); } catch (e) { /* private mode */ }
+  applyTheme();
+  render();
+}
+function osTheme() {
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+/* ── derived helpers ──────────────────────────────────────────────── */
+function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+function originOf(info) {
+  if (info.provenance === "remote") return "url";
+  if (info.provenance === "shipped") return "builtin";
+  return "user";
+}
+function hostOf(info) {
+  const u = (info.meta && info.meta.remote_url) || "";
+  try { return new URL(u).host; } catch (e) { return u; }
+}
+function presetsOf(info) {
+  // Info.meta.presets is a JSON object, so it carries no ordering; the
+  // window sorts alphabetically, as the CLI does.
+  return Object.keys((info.meta && info.meta.presets) || {}).sort();
+}
+function selectedPreset(info) {
+  const list = presetsOf(info);
+  const want = S.presetSel[info.name] || (info.meta && info.meta.active_preset);
+  return list.indexOf(want) > -1 ? want : list[0] || "";
+}
+function byName(name) { return S.configs.find((c) => c.name === name) || null; }
+function isRunningCfg(name) {
+  return !!(S.status && S.status.running && S.status.config === name);
+}
+function nothingActive() { return !(S.status && S.status.running); }
+function activeName() {
+  if (nothingActive() || !S.status.config) return "nothing active";
+  return S.status.config;
+}
+function isSecret(key) { return /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH/i.test(key); }
+function fmtCount(n) {
+  if (n == null) return "—";
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, "") + "m";
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+  return String(n);
+}
+
+/* ── transient notes (the design's ~3s one-liners) ────────────────── */
+function noteStrip() {
+  if (!S.note) return null;
+  return el("div", { class: "strip-wrap" }, [el("div", { class: "note", text: S.note })]);
+}
+function note(text, ms) {
+  S.note = text;
+  if (S.noteTimer) clearTimeout(S.noteTimer);
+  S.noteTimer = setTimeout(() => { S.note = null; S.noteTimer = null; render(); }, ms || 3200);
+  render();
+}
+
+/* ── failures with nowhere else to go ─────────────────────────────────
+   The design gives activation and save failures their own panels, which is
+   where the collector's diagnostic belongs. Everything else — a rename that
+   collides, a distro that won't remove — lands here: message only for a 4xx
+   (the caller's own mistake), message plus a log tail for a 5xx. */
+let lastError = null;
+async function showError(err) {
+  const msg = err && err.message ? err.message : String(err);
+  lastError = { msg, tail: "" };
+  render();
+  if (err && typeof err.status === "number" && err.status >= 500) {
+    try {
+      const j = await api("/api/log?lines=20");
+      if (j.log && lastError && lastError.msg === msg) { lastError.tail = j.log; render(); }
+    } catch (e) { /* best effort */ }
+  }
+}
+function clearError() { lastError = null; }
+function errorStrip() {
+  if (!lastError) return null;
+  return el("div", { class: "errbar" }, [
+    el("div", { class: "failbar" }, [
+      el("span", { class: "dot6", attrs: { style: "background: var(--err)" } }),
+      span("msg", lastError.msg),
+      el("span", { class: "grow" }),
+      el("button", { class: "act", text: "dismiss", on: { click: () => { clearError(); render(); } } }),
+    ]),
+    lastError.tail ? el("pre", { text: lastError.tail }) : null,
+  ]);
+}
+
+/* ── data loading ─────────────────────────────────────────────────── */
+async function loadCore() {
+  const [status, configs] = await Promise.all([api("/api/status"), api("/api/configs")]);
+  S.status = status;
+  S.configs = configs || [];
+}
+async function loadCollector() {
+  const [health, log] = await Promise.all([
+    api("/api/collector/health").catch(() => null),
+    api("/api/log?lines=500").catch(() => ({ log: "" })),
+  ]);
+  S.health = health;
+  S.log = (log && log.log) || "";
+}
+async function loadDistros() { S.distros = (await api("/api/distros")) || []; }
+async function loadYAML(name) {
+  const d = await api(cfgURL(name));
+  S.yaml = d.yaml || "";
+  S.yamlOf = name;
+}
+
+/* ── router ───────────────────────────────────────────────────────── */
 function parseHash() {
-  const raw = location.hash.replace(/^#\/?/, "");
-  const parts = raw.split("/").filter(Boolean);
-  if (parts[0] === "configs" && parts[1]) {
-    return { view: "config", name: decodeURIComponent(parts[1]) };
-  }
-  if (parts[0] === "collector") return { view: "collector" };
-  if (parts[0] === "settings") return { view: "settings" };
-  return { view: "configs" };
+  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (parts[0] === "configs" && parts[1]) return { screen: "editor", name: decodeURIComponent(parts[1]) };
+  if (parts[0] === "collector") return { screen: "collector" };
+  if (parts[0] === "settings") return { screen: "settings" };
+  return { screen: "configs" };
 }
+function go(hash) { location.hash = hash; }
 
-function setNavCurrent(view) {
-  const navView = view === "config" ? "configs" : view;
-  for (const btn of navButtons) {
-    if (btn.dataset.view === navView) btn.setAttribute("aria-current", "page");
-    else btn.removeAttribute("aria-current");
-  }
-}
-
-// isInputFocused reports whether the currently focused element lives inside
-// the rendered view and would lose its in-progress edit if we re-rendered
-// (an inline path edit, the new-configuration form, the log filter, ...).
-// The background refresh checks this before touching the DOM — the P1
-// lesson about never clobbering a focused input.
-function isInputFocused() {
-  const a = document.activeElement;
-  if (!a) return false;
-  const tag = a.tagName;
-  if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return false;
-  return document.getElementById("view").contains(a);
-}
-
-const viewRoot = document.getElementById("view");
-
-async function renderRoute() {
+async function enterRoute() {
   const r = parseHash();
-  setNavCurrent(r.view);
+  S.screen = r.screen;
+  clearError();
   try {
-    if (r.view !== "config") resetEditor(null);
-    if (r.view === "configs") await renderConfigsView();
-    else if (r.view === "config") await renderConfigView(r.name);
-    else if (r.view === "collector") await renderCollectorView();
-    else await renderSettingsView();
+    await loadCore();
+    if (r.screen === "editor") {
+      S.editId = r.name;
+      const info = byName(r.name);
+      if (!info) { go("#/configs"); return; }
+      await loadYAML(r.name);
+      const origin = originOf(info);
+      S.unlocked = origin === "user";
+      S.yamlOpen = origin === "user";
+      S.unlockAsk = false;
+      S.valErr = null; S.valOk = null; S.renameNote = null;
+      S.preset = selectedPreset(info);
+      destroyEditor();
+    } else {
+      S.editId = null;
+      destroyEditor();
+    }
+    if (r.screen === "collector") await loadCollector();
+    if (r.screen === "settings") await loadDistros();
+    if (r.screen === "configs") await loadCollector(); // sidebar's warn badge
   } catch (e) {
     showError(e);
   }
+  render();
 }
 
-// Unsaved-changes guard: hashchange fires after the fact, so leaving with
-// unsaved editor work either gets confirmed or the hash is put back (which
-// re-fires hashchange — the first line swallows that one).
+/* Unsaved-changes guard: hashchange fires after the fact, so leaving the
+   editor with unsaved YAML either gets confirmed inline or the hash goes
+   back (which re-fires hashchange — the first line swallows that one). */
 let navHash = location.hash;
 window.addEventListener("hashchange", async () => {
   if (location.hash === navHash) return;
-  if (editorHasUnsaved()) {
-    // The answer arrives asynchronously, so put the hash back first (that
-    // re-fires hashchange, which the line above swallows) and re-navigate
-    // only once the user has said yes.
+  if (editorDirty()) {
     const target = location.hash;
     location.hash = navHash;
-    if (!(await askConfirm("Leave this configuration? Unsaved changes will be lost."))) return;
-    resetEditor(null); // answered yes: the unsaved work is forfeit, so stop guarding it
+    if (!(await ask("leave this configuration? unsaved changes are lost.", null))) return;
+    cm && (cmDirty = false);
     location.hash = target;
     return;
   }
   navHash = location.hash;
-  errorStrip.classList.add("hidden"); // stale message from the old view shouldn't follow to the new one
-  renderRoute();
+  enterRoute();
 });
-
-// Same guard for a browser-level reload/close: unsaved editor work triggers
-// the native "leave site?" prompt. Browsers ignore custom strings and show
-// their own wording, but a returnValue is still required to arm it.
 window.addEventListener("beforeunload", (e) => {
-  if (!editorHasUnsaved()) return;
+  if (!editorDirty()) return;
   e.preventDefault();
-  e.returnValue = "Leave this configuration? Unsaved changes will be lost.";
+  e.returnValue = "leave this configuration? unsaved changes are lost.";
 });
 
-/* ── nav status (LED + text), refreshed independently ────────────── */
-async function refreshNavStatus() {
-  try {
-    const s = await api("/api/status");
-    state.status = s;
-    document.getElementById("nav-led").classList.toggle("on", !!s.running);
-    document.getElementById("nav-status-text").textContent = s.running
-      ? "running" + (s.config ? " · " + s.config + (s.set ? " · " + s.set : "") : "")
-      : "stopped";
-  } catch (e) {
-    // surfaced already by whatever view fetch failed; don't double-report.
+/* ── render ───────────────────────────────────────────────────────── */
+const screenRoot = () => document.getElementById("screen");
+
+// Focus survives a re-render: every live input carries data-fk, and the key
+// plus caret of the focused one is restored afterwards. That is what lets a
+// keystroke re-render the whole screen without eating the next one.
+function captureFocus() {
+  const a = document.activeElement;
+  if (!a || !a.dataset || !a.dataset.fk) return null;
+  return { fk: a.dataset.fk, start: a.selectionStart, end: a.selectionEnd };
+}
+function restoreFocus(f) {
+  if (!f) return;
+  const e = document.querySelector('[data-fk="' + f.fk.replace(/"/g, '\\"') + '"]');
+  if (!e) return;
+  e.focus();
+  if (f.start != null && e.setSelectionRange) {
+    try { e.setSelectionRange(f.start, f.end); } catch (err) { /* non-text input */ }
   }
 }
 
-/* ── Configurations view ──────────────────────────────────────────── */
-async function renderConfigsView() {
-  const [configs, status] = await Promise.all([api("/api/configs"), api("/api/status")]);
-  const active = status.config || "";
-
-  clear(viewRoot);
-  viewRoot.appendChild(el("h1", { text: "Configurations" }));
-  viewRoot.appendChild(el("p", { class: "page-desc", text: "Whole collector-config documents. Exactly one is active at a time." }));
-
-  const hasRemote = configs.some((c) => c.provenance === "remote");
-  const toolbar = el("div", { class: "srow", attrs: { style: "padding:0 0 10px" } });
-  toolbar.appendChild(el("button", {
-    class: "primary-act", text: "+ new",
-    on: { click: () => toggleNewConfigForm() },
-  }));
-  if (hasRemote) {
-    toolbar.appendChild(el("button", {
-      class: "primary-act", text: "sync all",
-      on: {
-        click: async (e) => {
-          e.target.disabled = true;
-          try {
-            await api("/api/configs/sync-all", { method: "POST" });
-          } catch (err) {
-            showError(err);
-          }
-          await renderConfigsView();
-        },
-      },
-    }));
-  }
-  viewRoot.appendChild(toolbar);
-
-  viewRoot.appendChild(buildNewConfigForm());
-
-  const table = el("div", { class: "dtable configs-table" });
-  table.appendChild(el("div", { class: "dtable-head" }, [
-    el("div", {}), el("div", { text: "Name" }), el("div", { text: "Source" }), el("div", { text: "State" }),
-    el("div", { class: "col-actions", text: "Actions" }),
-  ]));
-  if (!configs.length) {
-    table.appendChild(el("div", { class: "card-empty", text: "No configurations yet." }));
-  }
-  for (const c of configs) {
-    table.appendChild(buildConfigRow(c, active));
-  }
-  viewRoot.appendChild(el("div", { class: "group" }, [
-    el("div", { class: "card" }, [el("div", { class: "dtable-scroll" }, [table])]),
-  ]));
-
-  const activeCount = configs.filter((c) => c.name === active).length;
-  viewRoot.appendChild(el("div", {
-    class: "footer-line",
-    text: configs.length + (configs.length === 1 ? " configuration" : " configurations") + " · " + activeCount + " active",
-  }));
+function render() {
+  const f = captureFocus();
+  renderSidebar();
+  const root = screenRoot();
+  clear(root);
+  if (S.screen === "configs") root.appendChild(screenConfigs());
+  else if (S.screen === "editor") root.appendChild(screenEditor());
+  else if (S.screen === "collector") root.appendChild(screenCollector());
+  else root.appendChild(screenSettings());
+  restoreFocus(f);
 }
 
-// pendingActivate is the configuration whose activation is in flight, or
-// null. It lives here rather than on the clicked button because the 5s
-// background refresh re-renders the whole table: a `disabled` flag set on
-// the DOM node is gone within five seconds, so an activation that takes a
-// while (validate + launchctl + a probe that waits up to 5s for the
-// collector to listen) looked like a dot that simply does nothing.
-let pendingActivate = null;
-
-// activateConfig posts to the same endpoint the old "use" action called.
-async function activateConfig(name) {
-  if (pendingActivate) return; // one at a time; a second click must not re-fire
-  pendingActivate = name;
-  await renderConfigsView(); // show the pending marker before we start waiting
-  try {
-    await api("/api/configs/" + encodeURIComponent(name) + "/activate", { method: "POST" });
-  } catch (err) {
-    showError(err);
-  } finally {
-    pendingActivate = null;
-  }
-  await renderConfigsView();
-  await refreshNavStatus();
+/* ── sidebar ──────────────────────────────────────────────────────── */
+function logLines() {
+  return S.log.split("\n").filter((l) => l.trim()).map(parseLogLine);
+}
+function parseLogLine(line) {
+  const f = line.split("\t");
+  const lvl = (f[1] || "").trim().toLowerCase();
+  const known = ["error", "warn", "info", "debug"].indexOf(lvl) > -1;
+  if (!known) return { time: "", level: "", text: line, raw: line };
+  const t = (f[0] || "").match(/T(\d\d:\d\d:\d\d)/);
+  return { time: t ? t[1] : (f[0] || "").slice(0, 8), level: lvl, text: f.slice(3).join(" "), raw: line };
+}
+// D2, per-surface literal: the sidebar badge sums warn and error lines and
+// labels the total "warn" (the menu bar's own count is warn-only; that
+// surface is the tray's).
+function issueCount() {
+  return logLines().filter((l) => l.level === "warn" || l.level === "error").length;
 }
 
-function buildActivationCell(c, isActive) {
-  if (c.name === pendingActivate) {
-    return el("span", {
-      class: "activate-dot pending", text: "◌",
-      attrs: { "aria-label": "Activating " + c.name, title: "Activating…" },
-    });
-  }
-  if (isActive) {
-    return el("span", {
-      class: "activate-dot on", text: "●",
-      attrs: { "aria-label": c.name + " is active", title: "active" },
-    });
-  }
-  return el("button", {
-    class: "activate-dot", text: "○",
-    attrs: { "aria-label": "Activate " + c.name, title: "Activate" },
-    on: { click: () => activateConfig(c.name) },
-  });
-}
-
-function buildConfigRow(c, active) {
-  const isActive = c.name === active;
-
-  const name = el("a", {
-    text: c.name,
-    class: "config-name",
-    attrs: { href: "#/configs/" + encodeURIComponent(c.name) },
-  });
-
-  let sourceText = c.provenance;
-  if (c.modified) sourceText += " · modified";
-  if (c.meta && c.meta.active_set) sourceText += " · set " + c.meta.active_set;
-  const source = el("div", { class: "state-muted", text: sourceText });
-
-  const state = el("div", {
-    class: isActive ? "state-active" : "state-muted",
-    text: isActive ? "active" : "—",
-  });
-
-  const actions = el("div", { class: "col-actions" });
-
-  actions.appendChild(el("a", {
-    class: "act", text: "open",
-    attrs: { href: "#/configs/" + encodeURIComponent(c.name) },
-  }));
-
-  actions.appendChild(el("button", {
-    class: "act", text: "copy",
-    on: {
-      click: async () => {
-        const dst = await askText("New configuration name (copy of " + c.name + "):", "");
-        if (!dst) return;
-        try {
-          await apiJSON("/api/configs/" + encodeURIComponent(c.name) + "/copy", "POST", { dst });
-        } catch (err) {
-          showError(err);
-        }
-        await renderConfigsView();
-      },
-    },
-  }));
-
-  if (c.provenance === "remote" && !c.modified) {
-    actions.appendChild(el("button", {
-      class: "act", text: "sync",
-      on: {
-        click: async () => {
-          try {
-            await api("/api/configs/" + encodeURIComponent(c.name) + "/sync", { method: "POST" });
-          } catch (err) {
-            showError(err);
-          }
-          await renderConfigsView();
-        },
-      },
-    }));
-  }
-
-  if (isActive) {
-    actions.appendChild(el("span", { class: "act", text: "del", attrs: { title: "Can't delete the active configuration" } }));
-  } else {
-    actions.appendChild(el("button", {
-      class: "act danger", text: "del",
-      on: {
-        click: async () => {
-          if (!(await askConfirm('Delete configuration "' + c.name + '"? This cannot be undone.'))) return;
-          try {
-            await api("/api/configs/" + encodeURIComponent(c.name), { method: "DELETE" });
-          } catch (err) {
-            showError(err);
-          }
-          await renderConfigsView();
-        },
-      },
-    }));
-  }
-
-  return el("div", { class: "dtable-row" + (isActive ? " is-active" : "") }, [
-    buildActivationCell(c, isActive),
-    el("div", { class: "col-name" }, [name]), source, state, actions,
-  ]);
-}
-
-function toggleNewConfigForm() {
-  const card = document.getElementById("new-config-card");
-  if (card) card.classList.toggle("hidden");
-  if (card && !card.classList.contains("hidden")) {
-    const nameInput = card.querySelector('input[name="name"]');
-    if (nameInput) nameInput.focus();
-  }
-}
-
-function buildNewConfigForm() {
-  const form = el("form", { class: "form-grid" });
-  const nameLabel = el("label", {}, [
-    el("span", { text: "Name" }),
-    el("input", { class: "field-input", attrs: { name: "name", required: "required", placeholder: "my-config" } }),
-  ]);
-  const urlLabel = el("label", {}, [
-    el("span", { text: "Remote URL (optional)" }),
-    el("input", { class: "field-input", attrs: { name: "url", type: "url", placeholder: "https://raw.githubusercontent.com/.../collector.yaml" } }),
-  ]);
-  const actions = el("div", { class: "form-actions" }, [
-    el("button", { class: "solid-btn", attrs: { type: "submit" }, text: "Create" }),
-    el("button", { class: "act", attrs: { type: "button" }, text: "cancel", on: { click: () => toggleNewConfigForm() } }),
-  ]);
-  form.append(nameLabel, urlLabel, actions);
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = form.name.value.trim();
-    const url = form.url.value.trim();
-    if (!name) return;
-    try {
-      if (url) await apiJSON("/api/configs/from-url", "POST", { name, url });
-      else await apiJSON("/api/configs", "POST", { name, yaml: "" });
-      form.reset();
-      toggleNewConfigForm();
-    } catch (err) {
-      showError(err);
-    }
-    await renderConfigsView();
-  });
-  return el("div", { class: "group" }, [
-    el("div", { class: "card hidden", attrs: { id: "new-config-card" } }, [
-      el("div", { class: "card-extra" }, [form]),
-    ]),
-  ]);
-}
-
-/* ── Configuration editor ─────────────────────────────────────────── */
-// Editor state that must survive a re-render of the view: which config it
-// belongs to, whether the YAML card is unfolded / unlocked, the CodeMirror
-// instance and its dirty flag, per-set unsaved cell values, and the last
-// validate result. Cleared whenever we navigate to a different config.
-const editor = {
-  name: null,
-  revealed: false,
-  editable: false,
-  cm: null,
-  cmDirty: false,
-  drafts: {},        // set name -> {var: value} typed but not saved
-  validate: null,    // {ok:true} | {ok:false, msg:"..."}
-  validateFresh: false, // scroll the result into view once, after a save
-};
-
-function resetEditor(name) {
-  editor.name = name || null;
-  editor.revealed = false;
-  editor.editable = false;
-  editor.cm = null;
-  editor.cmDirty = false;
-  editor.drafts = {};
-  editor.validate = null;
-  editor.validateFresh = false;
-}
-
-// editorHasUnsaved reports unsaved YAML edits or unsaved variable cells.
-function editorHasUnsaved() {
-  return editor.cmDirty || Object.keys(editor.drafts).length > 0;
-}
-// editorBusy: the config view is up with a live CodeMirror or unsaved work.
-// The background tick treats this exactly like a focused input — re-rendering
-// would destroy the editor instance (and the user's typing) under them.
-function editorBusy() {
-  return !!editor.name && parseHash().view === "config" && (!!editor.cm || editorHasUnsaved());
-}
-
-async function renderConfigView(name) {
-  if (editor.name !== name) resetEditor(name);
-  const [detail, distros] = await Promise.all([
-    api("/api/configs/" + encodeURIComponent(name)),
-    api("/api/distros"),
-  ]);
-  const info = detail.info || {};
-  const meta = info.meta || {};
-
-  clear(viewRoot);
-  editor.cm = null; // the old instance goes with the cleared DOM
-  viewRoot.appendChild(el("a", { class: "back-link", text: "← Configurations", attrs: { href: "#/configs" } }));
-  viewRoot.appendChild(el("h1", { text: name }));
-  viewRoot.appendChild(el("p", { class: "page-desc", text: "Properties, variable sets, and the collector YAML itself." }));
-
-  viewRoot.appendChild(buildPropertiesGroup(name, info, meta, distros));
-  viewRoot.appendChild(buildVariablesGroup(name, info, meta));
-  viewRoot.appendChild(buildYamlGroup(name, info, detail.yaml || ""));
-}
-
-function buildPropertiesGroup(name, info, meta, distros) {
-  const prov = info.provenance || "local";
-  const sourceText = prov + (info.modified ? " · modified" : "");
-
-  const urlInput = el("input", {
-    class: "field-input path-input",
-    attrs: { type: "url", "aria-label": "Remote URL", placeholder: "https://… (empty = local configuration)" },
-    props: { value: meta.remote_url || "" },
-  });
-  urlInput.addEventListener("change", async () => {
-    const v = urlInput.value.trim();
-    if (v === (meta.remote_url || "")) return;
-    try {
-      await apiJSON("/api/configs/" + encodeURIComponent(name) + "/meta", "PUT", { remote_url: v });
-    } catch (err) {
-      showError(err);
-    }
-    await renderConfigView(name);
-  });
-
-  const selected = distros.find((d) => d.selected);
-  const distroSelect = el("select", { class: "field-input", attrs: { "aria-label": "Default distribution" } }, [
-    el("option", { text: "Global default" + (selected ? " (" + selected.name + ")" : ""), attrs: { value: "" } }),
-    ...distros.map((d) => el("option", { text: d.name, attrs: { value: d.name } })),
-  ]);
-  distroSelect.value = meta.distro || "";
-  distroSelect.addEventListener("change", async () => {
-    try {
-      await apiJSON("/api/configs/" + encodeURIComponent(name) + "/meta", "PUT", { distro: distroSelect.value });
-    } catch (err) {
-      showError(err);
-      distroSelect.value = meta.distro || "";
-    }
-    await renderConfigView(name);
-    await refreshNavStatus();
-  });
-
-  const syncActions = el("div", { class: "actions" });
-  if (prov === "remote" && !info.modified) {
-    syncActions.appendChild(el("button", {
-      class: "act", text: "sync",
-      on: {
-        click: async (e) => {
-          e.target.disabled = true;
-          try {
-            await api("/api/configs/" + encodeURIComponent(name) + "/sync", { method: "POST" });
-          } catch (err) {
-            showError(err);
-          }
-          await renderConfigView(name);
-        },
-      },
-    }));
-  } else if (prov === "remote" && info.modified) {
-    syncActions.appendChild(el("button", {
-      class: "act danger", text: "discard local edits & re-sync",
-      on: {
-        click: async (e) => {
-          if (!(await askConfirm("Refetch " + name + " from its remote URL? Your local edits to this configuration are discarded."))) return;
-          e.target.disabled = true;
-          try {
-            await api("/api/configs/" + encodeURIComponent(name) + "/resync", { method: "POST" });
-          } catch (err) {
-            showError(err);
-          }
-          resetEditor(name);
-          await renderConfigView(name);
-        },
-      },
-    }));
-  }
-
-  const bar = el("div", { class: "srow props-bar" }, [
-    el("span", { class: "state-muted props-source", text: sourceText }),
-    urlInput,
-    distroSelect,
-    syncActions,
-  ]);
-  return el("div", { class: "group" }, [el("div", { class: "card" }, [bar])]);
-}
-
-/* ── variables card ───────────────────────────────────────────────── */
-function draftFor(set) {
-  if (!editor.drafts[set]) editor.drafts[set] = {};
-  return editor.drafts[set];
-}
-
-function buildVariablesGroup(name, info, meta) {
-  const vars = info.vars || [];
-  const sets = meta.variable_sets || {};
-  const setNames = Object.keys(sets).sort();
-  const active = meta.active_set || "";
-
-  const card = el("div", { class: "card" });
-  if (!vars.length) {
-    card.appendChild(el("div", { class: "card-extra vars-empty" }, [
-      el("div", { class: "title", text: "No variables in this configuration." }),
-      el("div", { class: "desc", text: "Write ${env:NAME} (optionally ${env:NAME:-default}) anywhere in the YAML and it shows up here. A trailing comment on the same line becomes the description:" }),
-      el("pre", { class: "code-panel", text: 'exporters:\n  otlphttp:\n    endpoint: ${env:BACKEND_URL:-https://localhost:4318} # where to ship the data\n    headers:\n      authorization: ${env:API_KEY} # your backend API key' }),
+function renderSidebar() {
+  const nav = document.getElementById("nav");
+  clear(nav);
+  const issues = issueCount();
+  const items = [
+    ["configs", "configurations", "list", String(S.configs.length), "#/configs"],
+    ["collector", "collector", "activity", issues ? issues + " warn" : "", "#/collector"],
+    ["settings", "settings", "sliders", "", "#/settings"],
+  ];
+  for (const [key, label, glyph, badge, hash] of items) {
+    const on = S.screen === key || (key === "configs" && S.screen === "editor");
+    nav.appendChild(el("button", {
+      class: "nav-item" + (on ? " on" : ""), on: { click: () => go(hash) },
+    }, [
+      el("span", { class: "glyph" }, [icon(glyph, 14)]),
+      span("", label),
+      el("span", { class: "grow" }),
+      span("badge", badge),
     ]));
-  } else {
-    card.appendChild(buildVarsTable(name, vars, sets, setNames, active));
   }
 
-  const footer = el("div", { class: "srow" }, [
-    el("div", { class: "grow" }, [el("div", { class: "desc", text: setNames.length ? "One column per set; the active set (amber) is the one the collector runs with." : "Variable sets hold values for these variables — dev, prod, a customer, …" })]),
-    el("div", { class: "actions" }, [
+  const box = document.getElementById("side-status");
+  clear(box);
+  const stopped = nothingActive();
+  const busy = !!S.busyId || S.restarting;
+  const word = stopped && !busy ? "stopped" : busy ? "restarting…" : "running";
+  const dotColor = busy ? "var(--accent)" : stopped ? "var(--dim2)" : "var(--ok)";
+  const ports = S.status ? ":" + S.status.grpc_port + " :" + S.status.http_port : "";
+  box.appendChild(el("div", { class: "line1" }, [
+    el("span", { class: "dot5", attrs: { style: "background: " + dotColor } }),
+    span("", word),
+  ]));
+  box.appendChild(span("name", activeName()));
+  // Stopped, the card already says "nothing active"; naming the preset that
+  // is not running next to it just contradicts the line above.
+  box.appendChild(span("preset", "preset · " + ((!stopped && S.status && S.status.preset) || "—")));
+  box.appendChild(span("ports", ((S.status && S.status.distro) || "no collector") + " · " + (stopped ? "not listening" : ports)));
+}
+
+/* ── screen 1: configurations ─────────────────────────────────────── */
+function screenConfigs() {
+  const wrap = el("div", { class: "screen" });
+
+  wrap.appendChild(el("div", { class: "head" }, [
+    el("div", { class: "head-titles" }, [
+      span("title", "configurations"),
+      el("div", { class: "subtitle sans", text: "activating restarts the collector" }),
+    ]),
+    el("span", { class: "grow" }),
+    el("span", { class: "find" }, [
+      el("span", { class: "glyph" }, [icon("search", 12)]),
+      el("input", {
+        attrs: { placeholder: "find", spellcheck: "false", "data-fk": "find", "aria-label": "find a configuration" },
+        props: { value: S.find },
+        on: { input: (e) => { S.find = e.target.value; render(); } },
+      }),
+    ]),
+    el("div", { attrs: { style: "display:flex; gap:18px; font-size:12px;" } }, [
+      el("button", { class: "act", text: "sync all", on: { click: syncAll } }),
+      el("button", { class: "act primary", text: "new configuration", on: { click: openNew } }),
+    ]),
+  ]));
+
+  const strips = el("div", { class: "strip-wrap" });
+  if (S.newOpen) strips.appendChild(newConfigStrip());
+  if (S.note) strips.appendChild(el("div", { class: "note", text: S.note }));
+  if (nothingActive() && !S.busyId) strips.appendChild(nothingActiveStrip());
+  if (S.err) strips.appendChild(failurePanel());
+  if (lastError) strips.appendChild(errorStrip());
+  wrap.appendChild(strips);
+
+  const scroll = el("div", { class: "table-scroll" });
+  scroll.appendChild(el("div", { class: "cfg-grid cfg-head colhead" }, [
+    el("span"), span("", "name"), span("", "preset"), el("span"),
+  ]));
+
+  const find = S.find.trim().toLowerCase();
+  const rows = S.configs.filter((c) => !find || c.name.toLowerCase().includes(find));
+  for (const info of rows) scroll.appendChild(configRow(info));
+
+  if (find && rows.length === 0) {
+    scroll.appendChild(el("div", { class: "nomatch", text: "no configuration matches “" + S.find.trim() + "”" }));
+  }
+  if (S.confirm) scroll.appendChild(confirmRow());
+  wrap.appendChild(scroll);
+  return wrap;
+}
+
+function nothingActiveStrip() {
+  // D1: the prototype's wording wins over the README's prose.
+  const suggest = (S.status && S.status.config) || (S.configs[0] && S.configs[0].name) || "";
+  return el("div", { class: "empty" }, [
+    el("div", { attrs: { style: "display:flex; flex-direction:column; gap:4px;" } }, [
+      span("h", "nothing active"),
+      el("div", { class: "b sans", text: "no collector is running. activate a config and it starts." }),
+    ]),
+    el("span", { class: "grow" }),
+    suggest ? el("button", {
+      class: "btn accent", text: "activate " + suggest,
+      on: { click: () => activate(suggest, selectedPreset(byName(suggest) || { name: suggest, meta: {} })) },
+    }) : null,
+  ]);
+}
+
+function failurePanel() {
+  const name = S.errName;
+  return el("div", { class: "fail" }, [
+    el("div", { class: "failbar" }, [
+      el("span", { class: "dot6", attrs: { style: "background: var(--err)" } }),
+      span("headline", "couldn't activate " + name),
+      el("span", { class: "grow" }),
+      span("kept", S.errKept || ""),
       el("button", {
-        class: "primary-act", text: "+ new set",
-        on: {
-          click: async () => {
-            const set = await askText("Name for the new variable set:", "");
-            if (!set) return;
-            try {
-              await apiJSON("/api/configs/" + encodeURIComponent(name) + "/sets/" + encodeURIComponent(set), "PUT", { values: {} });
-            } catch (err) {
-              showError(err);
-            }
-            await renderConfigView(name);
-          },
-        },
+        class: "act", text: "dismiss", attrs: { style: "padding-left:10px" },
+        on: { click: () => { S.err = null; render(); } },
       }),
     ]),
-  ]);
-  card.appendChild(footer);
-
-  return el("div", { class: "group" }, [el("div", { class: "group-title", text: "Variables" }), card]);
-}
-
-function buildVarsTable(name, vars, sets, setNames, active) {
-  const table = el("table", { class: "vars-table" });
-  const headRow = el("tr", {}, [el("th", { class: "var-col", text: "Variable" })]);
-  for (const set of setNames) headRow.appendChild(buildSetHeader(name, set, sets[set] || {}, set === active));
-  if (!setNames.length) headRow.appendChild(el("th", { class: "desc", text: "no sets yet" }));
-  table.appendChild(el("thead", {}, [headRow]));
-
-  const body = el("tbody");
-  for (const v of vars) {
-    const row = el("tr", {}, [
-      el("th", { class: "var-col" }, [
-        el("code", { text: v.name }),
-        v.description ? el("div", { class: "desc", text: v.description }) : null,
-      ]),
-    ]);
-    for (const set of setNames) {
-      const stored = (sets[set] || {})[v.name];
-      const draft = editor.drafts[set];
-      const val = draft && Object.prototype.hasOwnProperty.call(draft, v.name) ? draft[v.name] : (stored != null ? stored : "");
-      const input = el("input", {
-        class: "field-input cell-input",
-        attrs: {
-          "aria-label": v.name + " in " + set,
-          placeholder: v.has_default ? String(v.default) : "(no default)",
-        },
-        props: { value: val },
-        on: { input: (e) => { draftFor(set)[v.name] = e.target.value; } },
-      });
-      row.appendChild(el("td", { class: set === active ? "active-col" : "" }, [input]));
-    }
-    if (!setNames.length) row.appendChild(el("td", {}, [el("span", { class: "desc", text: v.has_default ? "default: " + v.default : "unset" })]));
-    body.appendChild(row);
-  }
-  table.appendChild(body);
-  return el("div", { class: "vars-scroll" }, [table]);
-}
-
-function buildSetHeader(name, set, stored, isActive) {
-  const base = "/api/configs/" + encodeURIComponent(name) + "/sets/" + encodeURIComponent(set);
-
-  const radio = el("input", {
-    attrs: { type: "radio", name: "active-set", "aria-label": "Use set " + set },
-    props: { checked: isActive },
-    on: {
-      change: async () => {
-        try {
-          await api(base + "/use", { method: "POST" });
-        } catch (err) {
-          showError(err);
-        }
-        await renderConfigView(name);
-        await refreshNavStatus();
-      },
-    },
-  });
-
-  const saveBtn = el("button", {
-    class: "act", text: "save",
-    on: {
-      click: async (e) => {
-        e.target.disabled = true;
-        // The PUT replaces the whole set: stored values plus everything the
-        // user typed (an empty string is a legal value; a cell never touched
-        // and never stored simply stays absent).
-        const values = Object.assign({}, stored, editor.drafts[set] || {});
-        try {
-          await apiJSON(base, "PUT", { values });
-          delete editor.drafts[set];
-        } catch (err) {
-          showError(err);
-        }
-        await renderConfigView(name);
-      },
-    },
-  });
-
-  const renameBtn = el("button", {
-    class: "act", text: "rename",
-    on: {
-      click: async () => {
-        const to = await askText("Rename variable set:", set);
-        if (!to || to === set) return;
-        try {
-          await apiJSON(base + "/rename", "POST", { to });
-          delete editor.drafts[set];
-        } catch (err) {
-          showError(err);
-        }
-        await renderConfigView(name);
-      },
-    },
-  });
-
-  const delBtn = el("button", { class: "act danger", text: "del" });
-  if (isActive) {
-    delBtn.disabled = true;
-    delBtn.title = "Can't delete the active set";
-  } else {
-    delBtn.addEventListener("click", async () => {
-      if (!(await askConfirm('Delete variable set "' + set + '"?'))) return;
-      try {
-        await api(base, { method: "DELETE" });
-        delete editor.drafts[set];
-      } catch (err) {
-        showError(err);
-      }
-      await renderConfigView(name);
-    });
-  }
-
-  return el("th", { class: "set-col" + (isActive ? " active-col" : "") }, [
-    el("div", { class: "set-head" }, [radio, el("span", { class: "set-name", text: set })]),
-    el("div", { class: "set-actions" }, [saveBtn, renameBtn, delBtn]),
-  ]);
-}
-
-/* ── YAML card ────────────────────────────────────────────────────── */
-// Edit protection: a shipped or remote configuration that hasn't been
-// touched starts collapsed, then read-only, and only becomes editable after
-// an explicit confirm — everything else is editable straight away.
-function buildYamlGroup(name, info, yaml) {
-  const prov = info.provenance || "local";
-  const protectedCfg = (prov === "shipped" || prov === "remote") && !info.modified;
-  if (!protectedCfg) {
-    editor.revealed = true;
-    editor.editable = true;
-  }
-
-  const card = el("div", { class: "card" });
-  const actions = el("div", { class: "actions" });
-  const header = el("div", { class: "srow" }, [
-    el("div", { class: "grow" }, [
-      el("div", { class: "title", text: "collector.yaml" }),
-      el("div", {
-        class: "desc",
-        text: editor.editable
-          ? "Saving validates the configuration with its own distro and active set."
-          : protectedCfg && editor.revealed
-            ? "Read-only: this configuration still matches its " + (prov === "remote" ? "remote source" : "shipped original") + "."
-            : "",
+    el("pre", { text: S.err }),
+    el("div", { class: "foot" }, [
+      el("button", {
+        class: "act open", text: "open in editor",
+        on: { click: () => { const n = (S.errName || "").split(" · ")[0]; S.err = null; go("#/configs/" + enc(n)); } },
       }),
+      el("button", { class: "act", text: "copy diagnostic", on: { click: () => copyText(S.err, "diagnostic copied") } }),
     ]),
-    actions,
   ]);
-  card.appendChild(header);
-
-  if (!editor.revealed) {
-    actions.appendChild(el("button", {
-      class: "act", text: "show yaml",
-      on: {
-        click: () => { editor.revealed = true; renderConfigView(name).catch(showError); },
-      },
-    }));
-    return el("div", { class: "group" }, [el("div", { class: "group-title", text: "Configuration" }), card]);
-  }
-
-  const host = el("div", { class: "cm-host" });
-  card.appendChild(host);
-
-  if (!editor.editable) {
-    actions.appendChild(el("button", {
-      class: "act", text: "edit",
-      on: {
-        click: async () => {
-          const msg = prov === "remote"
-            ? "Editing detaches this configuration from its remote source. Sync will stop; \"Discard local edits & re-sync\" brings it back."
-            : "Editing makes this configuration yours. Your version will be kept on future compy updates. Continue?";
-          if (!(await askConfirm(msg))) return;
-          editor.editable = true;
-          renderConfigView(name).catch(showError);
-        },
-      },
-    }));
-  } else {
-    actions.appendChild(el("button", {
-      class: "solid-btn", text: "Save & validate",
-      on: { click: (e) => saveAndValidate(name, e.target) },
-    }));
-  }
-
-  if (editor.validate) {
-    const result = el("div", { class: "card-extra validate-result" }, [
-      editor.validate.ok
-        ? el("span", { class: "validate-ok", text: "valid" })
-        : el("pre", { class: "code-panel validate-error", text: editor.validate.msg }),
-    ]);
-    card.appendChild(result);
-    if (editor.validateFresh) {
-      // it lives below a half-viewport-tall editor; bring it into view once.
-      editor.validateFresh = false;
-      queueMicrotask(() => result.scrollIntoView({ block: "end" }));
-    }
-  }
-
-  // CodeMirror is created after the card is in the document so it measures
-  // itself correctly.
-  queueMicrotask(() => {
-    if (!host.isConnected) return;
-    editor.cm = CodeMirror(host, {
-      value: yaml,
-      mode: "yaml",
-      lineNumbers: true,
-      readOnly: !editor.editable,
-      lineWrapping: true,
-      viewportMargin: 20,
-    });
-    editor.cmDirty = false;
-    editor.cm.on("change", () => { editor.cmDirty = true; });
-  });
-
-  return el("div", { class: "group" }, [el("div", { class: "group-title", text: "Configuration" }), card]);
 }
 
-async function saveAndValidate(name, btn) {
-  if (!editor.cm) return;
-  btn.disabled = true;
-  btn.textContent = "Saving…";
-  const base = "/api/configs/" + encodeURIComponent(name);
+function confirmRow() {
+  return el("div", { class: "confirm" }, [
+    el("span", { class: "q sans", text: S.confirm }),
+    el("span", { class: "grow" }),
+    el("button", { class: "act", text: "keep it", on: { click: () => { S.confirm = null; render(); } } }),
+    el("button", { class: "btn danger", text: S.confirmVerb, on: { click: runConfirm } }),
+  ]);
+}
+
+function configRow(info) {
+  const name = info.name;
+  const origin = originOf(info);
+  const running = isRunningCfg(name);
+  const isActiveCfg = !!(S.status && S.status.config === name);
+  const busy = S.busyId === name;
+  const list = presetsOf(info);
+  const sel = selectedPreset(info);
+  const many = list.length > 1;
+  const host = hostOf(info);
+
+  const typeIcon = { builtin: "package", user: "user", url: "link" }[origin];
+  const typeTitle = origin === "url" ? "fetched from " + host
+    : origin === "builtin" ? "built in to compy" : "yours";
+
+  const row = el("div", { class: "cfg-grid cfg-row" + (running ? " on" : "") });
+
+  row.appendChild(el("span", { class: "cell-icons" }, [
+    iconWrap("run", running ? "dot" : "circle", 13, false, running ? "running now" : "not running"),
+    iconWrap("type", typeIcon, 13, false, typeTitle),
+  ]));
+
+  row.appendChild(el("button", {
+    class: "cfg-name", on: { click: () => go("#/configs/" + enc(name)) },
+  }, [span("", name)]));
+
+  /* preset cell: selector (chevron only when there is more than one),
+     play, pencil, and the in-flight indicator. */
+  const cell = el("span", { class: "cell-preset" });
+  const selBtn = el("button", {
+    class: "preset-sel" + (many ? " many" : ""),
+    attrs: many ? { "aria-haspopup": "true" } : { tabindex: "-1" },
+    title: list.length ? null : "this config has no presets",
+    on: { click: () => { if (many) { S.presetsOpenId = S.presetsOpenId === name ? null : name; render(); } } },
+  }, [
+    span("nm", sel || "—"),
+    el("span", { class: "grow" }),
+    many ? el("span", { class: "caret" }, [icon("chevron", 12)]) : null,
+  ]);
+  cell.appendChild(selBtn);
+
+  const alreadyRunning = running && sel === (S.status && S.status.preset);
+  cell.appendChild(el("button", {
+    class: "play",
+    title: alreadyRunning ? "already running" : "activate " + name + (sel ? " · " + sel : ""),
+    attrs: alreadyRunning || busy ? { disabled: "" } : null,
+    on: { click: () => activate(name, sel) },
+  }, [icon("play", 11, true)]));
+  cell.appendChild(el("button", {
+    class: "pencil", title: "edit preset values",
+    on: { click: () => openInline(name, sel, false) },
+  }, [icon("pencil", 12)]));
+
+  if (busy) {
+    cell.appendChild(el("span", { class: "busy" }, [
+      span("word", "restarting…"),
+      el("span", { class: "bar" }, [el("i")]),
+    ]));
+  }
+
+  if (S.presetsOpenId === name) cell.appendChild(presetMenu(info, list));
+  row.appendChild(cell);
+
+  /* actions: always all three, greyed with an explaining title when they
+     don't apply — never hidden. */
+  const sync = syncAction(info, origin, host);
+  row.appendChild(el("span", { class: "cell-actions" }, [
+    el("button", {
+      class: "ico", title: "duplicate, including presets",
+      on: { click: () => duplicate(name) },
+    }, [icon("copy", 13)]),
+    el("button", {
+      class: "ico" + (sync.on ? " accent" : ""), title: sync.title,
+      attrs: sync.on ? null : { disabled: "" },
+      on: { click: sync.run },
+    }, [icon(origin === "builtin" ? "undo" : "refresh", 13)]),
+    el("button", {
+      class: "ico del", title: isActiveCfg ? "can't delete the running config" : "delete " + name,
+      attrs: isActiveCfg ? { disabled: "" } : null,
+      on: {
+        click: () => {
+          S.confirm = "delete " + name + " and its presets?";
+          S.confirmVerb = "delete"; S.confirmId = name; S.confirmKind = "delete";
+          render();
+        },
+      },
+    }, [icon("trash", 13)]),
+  ]));
+
+  const wrap = el("div", { class: "cfg-row-wrap" }, [row]);
+  if (S.inline && S.inline.name === name) wrap.appendChild(inlinePresetEditor(info));
+  return wrap;
+}
+
+function syncAction(info, origin, host) {
+  if (origin === "builtin") {
+    if (!info.modified) return { on: false, title: "this is the shipped version, nothing to reset", run: () => {} };
+    return {
+      on: true, title: "reset to the version that ships with compy",
+      run: () => {
+        S.confirm = "reset " + info.name + " to the version that ships with compy? your changes are lost.";
+        S.confirmVerb = "reset"; S.confirmId = info.name; S.confirmKind = "reset";
+        render();
+      },
+    };
+  }
+  if (origin !== "url") return { on: false, title: "yours from the start, nothing to return to", run: () => {} };
+  if (!info.modified) return { on: false, title: "in sync with " + host, run: () => {} };
+  return {
+    on: true, title: "discard my edits and re-sync from " + host,
+    run: () => {
+      S.confirm = "re-syncing " + info.name + " throws away your edits.";
+      S.confirmVerb = "discard & re-sync"; S.confirmId = info.name; S.confirmKind = "resync";
+      render();
+    },
+  };
+}
+
+function presetMenu(info, list) {
+  const menu = el("div", { class: "menu" });
+  for (const p of list) {
+    const on = isRunningCfg(info.name) && p === S.status.preset;
+    menu.appendChild(el("div", { class: "menu-row" }, [
+      el("button", {
+        class: "pick" + (on ? " on" : ""), text: (on ? "● " : "") + p,
+        on: { click: () => { S.presetSel[info.name] = p; S.presetsOpenId = null; render(); } },
+      }),
+      el("button", {
+        class: "mini accent", title: "activate this preset",
+        on: { click: () => { S.presetsOpenId = null; activate(info.name, p); } },
+      }, [icon("play", 11, true)]),
+      el("button", {
+        class: "mini", title: "edit this preset",
+        on: { click: () => openInline(info.name, p, false) },
+      }, [icon("pencil", 12)]),
+    ]));
+  }
+  menu.appendChild(el("button", {
+    class: "menu-add", text: "+ add preset", title: "add a preset",
+    on: { click: () => openInline(info.name, "", true) },
+  }));
+  return menu;
+}
+
+/* ── inline preset editor (the pencil, under its row) ─────────────── */
+function openInline(name, preset, isNew) {
+  S.inline = { name, preset, isNew };
+  S.inlineName = isNew ? "" : preset;
+  S.presetsOpenId = null;
+  render();
+}
+function inlinePresetEditor(info) {
+  const p = S.inline;
+  const values = ((info.meta.presets || {})[p.isNew ? selectedPreset(info) : p.preset]) || {};
+  const draft = S.inlineDraft || (S.inlineDraft = Object.assign({}, values));
+  return el("div", { class: "inline" }, [
+    el("div", { class: "top" }, [
+      span("colhead", p.isNew ? "new preset" : "preset"),
+      el("input", {
+        class: "field sm",
+        attrs: { placeholder: "preset name", spellcheck: "false", "data-fk": "inline-name", style: "width:180px", "aria-label": "preset name" },
+        props: { value: S.inlineName },
+        on: { input: (e) => { S.inlineName = e.target.value; } },
+      }),
+      el("span", { class: "grow" }),
+      el("button", { class: "act", text: "cancel", on: { click: () => { S.inline = null; S.inlineDraft = null; render(); } } }),
+      el("button", { class: "btn", text: "save preset", on: { click: () => saveInline(info) } }),
+    ]),
+    valueCards(info, draft, (k, v) => { draft[k] = v; }, "inline"),
+    el("div", { class: "hint sans", text: p.isNew
+      ? "starts from the current values. saving does not activate it."
+      : "saving does not restart the collector unless this preset is running." }),
+  ]);
+}
+async function saveInline(info) {
+  const p = S.inline;
+  const target = slug(S.inlineName) || p.preset;
+  if (!target) { showError(new Error("a preset needs a name")); return; }
+  if ((p.isNew || target !== p.preset) && presetsOf(info).indexOf(target) > -1) { note("a preset called " + target + " already exists", 3000); return; }
+  const values = S.inlineDraft || {};
   try {
-    await api(base + "/yaml", {
-      method: "PUT",
-      headers: { "Content-Type": "text/plain" },
-      body: editor.cm.getValue(),
+    // Rename before writing values: PUT-to-target-first would create the
+    // target as a duplicate (or clobber an existing preset's values) and
+    // then fail the rename against it.
+    if (!p.isNew && target !== p.preset) await apiJSON(cfgURL(info.name) + "/presets/" + enc(p.preset) + "/rename", "POST", { to: target });
+    await apiJSON(cfgURL(info.name) + "/presets/" + enc(target), "PUT", { values });
+    S.inline = null; S.inlineDraft = null;
+    S.presetSel[info.name] = target;
+    await loadCore();
+    note(target + " saved", 3000);
+  } catch (e) { showError(e); }
+}
+
+/* Value cards, fixed 3 per row: bare key + its description as tooltip,
+   origin hint right, then the value with a reveal/hide toggle for secrets.
+   The origin hint reads "default" when the YAML supplies a fallback and
+   "line N" when it does not — that is what the reference render shows. */
+function valueCards(info, values, onEdit, scope) {
+  const yaml = S.yamlOf === info.name ? S.yaml : "";
+  const grid = el("div", { class: "vals" });
+  for (const v of info.vars || []) {
+    if (/^COMPY_/.test(v.name)) continue; // compy's own ports, not the user's to set
+    const raw = values[v.name] || "";
+    const secret = isSecret(v.name);
+    const hidden = secret && !S.reveal[v.name] && raw;
+    grid.appendChild(el("div", { class: "val" }, [
+      el("div", { class: "k" }, [
+        el("span", { class: "name", text: v.name, title: v.description || v.name }),
+        el("span", { class: "grow" }),
+        span("origin", v.has_default ? "default" : yamlLineOf(yaml, v.name)),
+      ]),
+      el("div", { class: "v" }, [
+        el("input", {
+          class: "field",
+          attrs: {
+            spellcheck: "false", "aria-label": v.name,
+            placeholder: v.has_default ? v.default : "required, no default",
+            "data-fk": scope + ":" + v.name,
+          },
+          props: { value: hidden ? "•".repeat(Math.min(raw.length, 18)) : raw },
+          on: {
+            focus: (e) => { if (hidden) { S.reveal[v.name] = true; render(); } },
+            input: (e) => onEdit(v.name, e.target.value),
+          },
+        }),
+        secret ? el("button", {
+          class: "reveal", text: S.reveal[v.name] ? "hide" : "reveal",
+          on: { click: () => { S.reveal[v.name] = !S.reveal[v.name]; render(); } },
+        }) : null,
+      ]),
+    ]));
+  }
+  return grid;
+}
+function yamlLineOf(yaml, key) {
+  if (!yaml) return "";
+  const lines = yaml.split("\n");
+  for (let i = 0; i < lines.length; i++) if (lines[i].includes("${env:" + key) || lines[i].includes("${" + key)) return "line " + (i + 1);
+  return "";
+}
+
+/* ── configurations: actions ──────────────────────────────────────── */
+async function activate(name, preset) {
+  if (S.busyId) return; // further activations are ignored until this settles
+  S.busyId = name;
+  S.err = null; S.presetsOpenId = null;
+  clearError();
+  render();
+  const info = byName(name);
+  const label = info && presetsOf(info).length > 1 && preset ? name + " · " + preset : name;
+  try {
+    await apiJSON(cfgURL(name) + "/activate", "POST", { preset: preset || "" });
+    S.busyId = null;
+    S.presetSel[name] = preset;
+    await loadCore();
+    await loadCollector();
+  } catch (e) {
+    S.busyId = null;
+    // C1.14: the panel shows the collector's real diagnostic, never a
+    // canned string. still_running names what survived when the backend
+    // knows; it is absent when a restore itself failed.
+    S.err = e.message || String(e);
+    S.errName = label;
+    await loadCore();
+    S.errKept = e.stillRunning ? e.stillRunning + " still running"
+      : nothingActive() ? "collector still stopped"
+        : activeName() + " still running";
+  }
+  render();
+}
+
+async function duplicate(name) {
+  let dst = name + "-copy", i = 2;
+  while (byName(dst)) { dst = name + "-copy-" + i; i++; }
+  try {
+    await apiJSON(cfgURL(name) + "/copy", "POST", { dst });
+    await loadCore();
+    render();
+  } catch (e) { showError(e); }
+}
+
+async function runConfirm() {
+  const name = S.confirmId, kind = S.confirmKind;
+  S.confirm = null; S.confirmId = null; S.confirmKind = null;
+  render();
+  try {
+    if (kind === "delete") {
+      await api(cfgURL(name), { method: "DELETE" });
+      await loadCore();
+    } else if (kind === "resync") {
+      await api(cfgURL(name) + "/resync", { method: "POST" });
+      await loadCore();
+      note(name + " re-synced from " + hostOf(byName(name) || { meta: {} }));
+    } else if (kind === "reset") {
+      await api(cfgURL(name) + "/reset", { method: "POST" });
+      await loadCore();
+      note(name + " reset to the version that ships with compy");
+    }
+  } catch (e) { showError(e); }
+  render();
+}
+
+async function syncAll() {
+  clearError();
+  try {
+    const r = await api("/api/configs/sync-all", { method: "POST" });
+    const n = (r.synced || []).length;
+    await loadCore();
+    note(n ? n + " configuration" + (n === 1 ? "" : "s") + " re-synced" : "nothing to sync");
+  } catch (e) { showError(e); }
+}
+
+/* "empty means a blank config" has to mean the same thing here as it does
+   in `compy config create` (cmd/compy's blankConfig): enough shape to edit,
+   on compy's own ports. An actually-empty file is not a config the
+   collector will ever start. */
+const BLANK_CONFIG = [
+  "receivers:",
+  "  otlp:",
+  "    protocols:",
+  "      grpc:",
+  "        endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}",
+  "      http:",
+  "        endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}",
+  "exporters:",
+  "  debug:",
+  "service:",
+  "  pipelines:",
+  "    traces: {receivers: [otlp], exporters: [debug]}",
+  "    metrics: {receivers: [otlp], exporters: [debug]}",
+  "    logs: {receivers: [otlp], exporters: [debug]}",
+  "",
+].join("\n");
+
+function openNew() {
+  S.newOpen = true; S.newName = ""; S.newUrl = ""; S.newErr = null; S.fetching = false;
+  render();
+}
+function newConfigStrip() {
+  const s = slug(S.newName);
+  const taken = !!(s && byName(s));
+  const slugNote = !S.newName ? "lowercase, digits, dashes" : taken ? s + " already exists" : "saved as " + s;
+  return el("div", { class: "newcfg" }, [
+    el("div", { class: "fieldset name" }, [
+      span("lbl", "name"),
+      el("input", {
+        class: "field",
+        attrs: { placeholder: "my collector", spellcheck: "false", "data-fk": "new-name", "aria-label": "name" },
+        props: { value: S.newName },
+        on: { input: (e) => { S.newName = e.target.value; S.newErr = null; render(); } },
+      }),
+      el("span", { class: "foot" + (taken ? " bad" : ""), text: slugNote }),
+    ]),
+    el("div", { class: "fieldset url" }, [
+      span("lbl", "from url (optional)"),
+      el("input", {
+        class: "field",
+        attrs: { placeholder: "https://otel.acme.dev/configs/standard.yaml", spellcheck: "false", "data-fk": "new-url", "aria-label": "from url" },
+        props: { value: S.newUrl },
+        on: { input: (e) => { S.newUrl = e.target.value; S.newErr = null; render(); } },
+      }),
+      el("span", {
+        class: "foot" + (S.newErr ? " bad" : ""),
+        text: S.fetching ? "fetching…" : S.newErr || "empty means a blank config",
+      }),
+    ]),
+    el("button", { class: "act cancel", text: "cancel", on: { click: () => { S.newOpen = false; render(); } } }),
+    el("button", {
+      class: "btn accent create", text: S.fetching ? "fetching…" : "create",
+      attrs: S.fetching ? { disabled: "" } : null,
+      on: { click: createNew },
+    }),
+  ]);
+}
+async function createNew() {
+  const name = slug(S.newName);
+  if (!name || byName(name)) return;
+  const url = S.newUrl.trim();
+  if (!url) {
+    try {
+      await apiJSON("/api/configs", "POST", { name, yaml: BLANK_CONFIG });
+      S.newOpen = false; S.newName = ""; S.newUrl = "";
+      await loadCore();
+      render();
+    } catch (e) { showError(e); }
+    return;
+  }
+  S.fetching = true; S.newErr = null; render();
+  try {
+    await apiJSON("/api/configs/from-url", "POST", { name, url });
+    S.fetching = false; S.newOpen = false; S.newName = ""; S.newUrl = "";
+    await loadCore();
+    let host = url;
+    try { host = new URL(url).host; } catch (e) { /* keep the raw string */ }
+    note(name + " fetched from " + host);
+  } catch (e) {
+    // The status code is the collector's/server's, not ours to invent; the
+    // sentence around it is the design's.
+    S.fetching = false;
+    const code = (e.message || "").match(/HTTP (\d{3})/);
+    S.newErr = code ? code[1] + " · nothing at that URL. compy kept nothing." : e.message;
+    render();
+  }
+}
+
+async function copyText(text, confirmation) {
+  try {
+    if (navigator.clipboard) await navigator.clipboard.writeText(text);
+    note(confirmation, 2600);
+  } catch (e) { showError(new Error("could not reach the clipboard")); }
+}
+
+/* ── screen 2: configuration editor ───────────────────────────────── */
+let cm = null, cmDirty = false;
+function destroyEditor() { cm = null; cmDirty = false; }
+function editorDirty() { return S.screen === "editor" && !!cm && cmDirty; }
+
+function screenEditor() {
+  const info = byName(S.editId);
+  if (!info) return el("div", { class: "screen" });
+  const origin = originOf(info);
+  const host = hostOf(info);
+  const running = isRunningCfg(info.name);
+  const locked = origin !== "user" && !S.unlocked;
+  const yamlShown = origin === "user" || S.yamlOpen;
+  const list = presetsOf(info);
+  if (list.length && list.indexOf(S.preset) < 0) S.preset = list[0];
+
+  const wrap = el("div", { class: "screen" });
+
+  /* header, one line — the origin lives on the type icon, the URL field and
+     the reset button; there is no second line and no origin strip. */
+  const showReset = origin === "url" || (origin === "builtin" && info.modified);
+  const resetLabel = origin === "builtin" ? "reset to shipped" : info.modified ? "discard edits & re-sync" : "re-sync";
+  wrap.appendChild(el("div", { class: "ed-head" }, [
+    running ? iconWrap("ed-run", "dot", 13, false, "running now") : null,
+    iconWrap("ed-type", { builtin: "package", user: "user", url: "link" }[origin], 14, false,
+      origin === "url" ? "fetched from " + host
+        : origin === "builtin" ? "built in to compy. updates with it until you edit."
+          : "yours"),
+    el("input", {
+      class: "ed-name",
+      attrs: { spellcheck: "false", "data-fk": "ed-name", "aria-label": "configuration name" },
+      props: { value: info.name },
+      on: { change: (e) => renameConfig(info, e.target.value) },
+    }),
+    origin === "url" ? el("input", {
+      class: "ed-url", title: "source URL",
+      attrs: { spellcheck: "false", "data-fk": "ed-url", "aria-label": "source URL" },
+      props: { value: (info.meta && info.meta.remote_url) || "" },
+      on: { change: (e) => setRemoteURL(info, e.target.value) },
+    }) : null,
+    el("span", { class: "grow" }),
+    S.saving ? el("span", { class: "ed-hint busy-word", text: "asking the collector…" })
+      : S.renameNote ? span("ed-hint", S.renameNote) : null,
+    showReset ? el("button", {
+      class: "btn withicon", title: origin === "url" && !info.modified ? "in sync with " + host : "your version",
+      on: { click: () => headerResync(info, origin) },
+    }, [icon(origin === "builtin" ? "undo" : "refresh", 12), span("", resetLabel)]) : null,
+    el("button", {
+      class: "btn", text: S.saving ? "checking…" : "save",
+      attrs: S.saving ? { disabled: "" } : null,
+      on: { click: () => saveConfig(info) },
+    }),
+  ]));
+
+  const noteEl = noteStrip();
+  if (noteEl) wrap.appendChild(noteEl);
+
+  /* presets band */
+  const band = el("div", { class: "band" });
+  const chips = el("div", { class: "chips" }, [span("colhead", "presets")]);
+  for (const p of list) {
+    const on = p === S.preset;
+    const isRunningPreset = running && p === S.status.preset;
+    const last = list.length < 2;
+    const delTitle = last ? "a config always keeps one preset"
+      : isRunningPreset ? "this preset is running. activate another one first."
+        : "delete " + p;
+    chips.appendChild(el("span", { class: "chip" }, [
+      on ? el("span", { class: "dot5", attrs: { style: "background: var(--accent)" } }) : null,
+      on ? el("input", {
+        title: "rename this preset",
+        attrs: { spellcheck: "false", size: Math.max(p.length, 4), "data-fk": "chip:" + p, "aria-label": "rename this preset" },
+        props: { value: p },
+        on: { change: (e) => renamePreset(info, p, e.target.value) },
+      }) : el("button", { class: "pick", text: p, on: { click: () => { S.preset = p; S.presetSel[info.name] = p; render(); } } }),
+      el("button", { class: "mini", title: "duplicate this preset", on: { click: () => dupPreset(info, p) } }, [icon("copy", 12)]),
+      el("button", {
+        class: "mini del", title: delTitle,
+        attrs: last || isRunningPreset ? { disabled: "" } : null,
+        on: { click: () => delPreset(info, p) },
+      }, [icon("trash", 12)]),
+    ]));
+  }
+  chips.appendChild(el("button", { class: "chip-add", title: "add a preset", on: { click: () => addPreset(info) } }, [icon("plus", 13)]));
+  band.appendChild(chips);
+
+  const values = ((info.meta.presets || {})[S.preset]) || {};
+  band.appendChild(valueCards(info, values, (k, v) => queueValue(info, k, v), "ed"));
+
+  /* Row three appears only when something is wrong, and it is a real "is
+     any required value missing" check — the key's own name, not a
+     name-specific special case. */
+  const missing = (info.vars || []).filter((v) => !v.has_default && !/^COMPY_/.test(v.name) && !(values[v.name] || "").trim());
+  if (S.preset && missing.length) {
+    const what = missing.map((v) => v.name).join(", ");
+    band.appendChild(el("div", { class: "warn sans", text: S.preset + " has no " + what + ". activating with it will fail." }));
+  }
+  wrap.appendChild(band);
+
+  /* save results, at screen level — visible whether the YAML is open or not */
+  if (S.valOk) {
+    wrap.appendChild(el("div", { class: "okstrip" }, [el("span", { class: "dot5" }), span("", S.valOk)]));
+  }
+  if (S.valErr) {
+    wrap.appendChild(el("div", { class: "valfail" }, [
+      el("div", { class: "bar2" }, [
+        el("span", { class: "dot5", attrs: { style: "background: var(--err)" } }),
+        span("headline", "the collector rejected this config. nothing was saved."),
+        el("span", { class: "grow" }),
+        el("button", { class: "act", text: "copy", on: { click: () => copyText(S.valErr, "diagnostic copied") } }),
+        el("button", { class: "act", text: "dismiss", on: { click: () => { S.valErr = null; render(); } } }),
+      ]),
+      el("pre", { text: S.valErr }),
+    ]));
+  }
+  if (lastError) wrap.appendChild(el("div", { class: "strip-wrap" }, [errorStrip()]));
+
+  /* YAML: collapsed by default for built-in and linked configs */
+  if (!yamlShown) {
+    wrap.appendChild(el("div", { class: "yaml-collapsed" }, [
+      span("nm", "config.yaml"),
+      el("span", {
+        class: "why sans",
+        text: origin === "url" ? "kept in sync with " + host : "ships with compy. most people never open it.",
+      }),
+      el("span", { class: "grow" }),
+      el("button", { class: "btn quiet", text: "show yaml", on: { click: () => { S.yamlOpen = true; render(); } } }),
+    ]));
+    return wrap;
+  }
+
+  const pane = el("div", { class: "yaml-pane" });
+  pane.appendChild(el("div", { class: "yaml-bar" }, [
+    span("colhead", "config.yaml"),
+    el("span", { class: "grow" }),
+    locked ? el("span", { class: "ro" }, [
+      span("word", "read-only"),
+      el("button", { class: "act unlock", text: "edit anyway", on: { click: () => { S.unlockAsk = true; render(); } } }),
+    ]) : null,
+  ]));
+  if (S.unlockAsk) {
+    pane.appendChild(el("div", { class: "unlock-ask" }, [
+      el("span", {
+        class: "q sans",
+        text: origin === "url"
+          ? "editing disconnects this from " + host + ". it stops re-syncing."
+          : "your version stays through compy updates.",
+      }),
+      el("span", { class: "grow" }),
+      el("button", { class: "act", text: "cancel", on: { click: () => { S.unlockAsk = false; render(); } } }),
+      el("button", { class: "btn accent", text: "make it mine", on: { click: () => { S.unlockAsk = false; S.unlocked = true; render(); } } }),
+    ]));
+  }
+  const host2 = el("div", { class: "cm-host" });
+  pane.appendChild(host2);
+  wrap.appendChild(pane);
+
+  // CodeMirror measures itself, so build it once the host is in the document.
+  const yaml = S.yaml;
+  const editable = !locked;
+  queueMicrotask(() => {
+    if (!host2.isConnected) return;
+    const keep = cm ? cm.getValue() : null;
+    const dirty = cmDirty;
+    cm = CodeMirror(host2, {
+      value: dirty && keep != null ? keep : yaml,
+      mode: "yaml", lineNumbers: true, readOnly: !editable, lineWrapping: false, viewportMargin: 20,
     });
-    editor.cmDirty = false;
-  } catch (err) {
-    showError(err);
-    await renderConfigView(name);
+    cmDirty = dirty;
+    cm.on("change", () => { cmDirty = true; });
+  });
+  return wrap;
+}
+
+/* value edits are instant (everything but activate/restart/save is), and
+   land on the preset they belong to. */
+let valueTimer = null;
+function queueValue(info, key, value) {
+  const preset = S.preset;
+  if (!preset) return;
+  const values = Object.assign({}, (info.meta.presets || {})[preset] || {});
+  values[key] = value;
+  info.meta.presets[preset] = values; // keep the render in step with the field
+  if (valueTimer) clearTimeout(valueTimer);
+  valueTimer = setTimeout(async () => {
+    try {
+      await apiJSON(cfgURL(info.name) + "/presets/" + enc(preset), "PUT", { values });
+      await loadCore();
+    } catch (e) { showError(e); }
+  }, 500);
+}
+
+async function renameConfig(info, raw) {
+  const next = slug(raw);
+  if (!next || next === info.name) { render(); return; }
+  if (byName(next)) { S.renameNote = next + " already exists. name not changed."; render(); return; }
+  S.renameNote = null;
+  try {
+    await apiJSON(cfgURL(info.name) + "/rename", "POST", { to: next });
+    await loadCore();
+    go("#/configs/" + enc(next)); // enterRoute reloads the editor under the new name
+  } catch (e) { showError(e); }
+  render();
+}
+async function setRemoteURL(info, url) {
+  try {
+    await apiJSON(cfgURL(info.name) + "/meta", "PUT", { remote_url: url });
+    await loadCore();
+    note("source url updated", 3000);
+  } catch (e) { showError(e); }
+}
+async function headerResync(info, origin) {
+  if (origin === "builtin") {
+    S.confirm = "reset " + info.name + " to the version that ships with compy? your changes are lost.";
+    S.confirmVerb = "reset"; S.confirmId = info.name; S.confirmKind = "reset";
+    go("#/configs");
     return;
   }
   try {
-    await api(base + "/validate", { method: "POST" });
-    editor.validate = { ok: true };
-  } catch (err) {
-    editor.validate = { ok: false, msg: err && err.message ? err.message : String(err) };
-  }
-  editor.validateFresh = true;
-  await renderConfigView(name); // the modified flag just changed
+    await api(cfgURL(info.name) + (info.modified ? "/resync" : "/sync"), { method: "POST" });
+    await loadCore();
+    await loadYAML(info.name);
+    S.unlocked = false; destroyEditor();
+    note(info.name + " re-synced from " + hostOf(info));
+  } catch (e) { showError(e); }
 }
 
-/* ── Collector view ───────────────────────────────────────────────── */
-let lastLogText = "";
-
-// logLines is how much of the collector log the view loads — and, since the
-// search box filters exactly that text client-side, how far the search
-// reaches. It used to be 500, so searching for anything older than the last
-// 500 lines answered "(no matching lines)" about a line that is right there
-// in the log. 2000 is the API's own cap (webui.maxLogLines); the note beside
-// the search box says how much was actually loaded, so a miss is legible
-// instead of a lie.
-const logLines = 2000;
-
-function applyLogFilter() {
-  const pre = document.getElementById("log-view");
-  if (!pre) return;
-  const note = document.getElementById("log-note");
-  // Trim the trailing newline before splitting, or the count is one too
-  // high and the panel shows a blank final line.
-  const text = lastLogText.replace(/\n$/, "");
-  const all = text ? text.split("\n") : [];
-  const q = state.logFilter.toLowerCase();
-  const lines = q ? all.filter((l) => l.toLowerCase().includes(q)) : all;
-  pre.textContent = lines.length ? lines.join("\n") : (q ? "(no matching lines)" : "(empty)");
-  if (note) {
-    note.textContent = q
-      ? lines.length + " of the " + all.length + " loaded lines match"
-      : all.length + " lines loaded";
-  }
-}
-
-async function renderCollectorView() {
-  const status = await api("/api/status");
-
-  const prevLog = document.getElementById("log-view");
-  const prevScroll = prevLog
-    ? { top: prevLog.scrollTop, atBottom: prevLog.scrollHeight - prevLog.scrollTop - prevLog.clientHeight < 4 }
-    : null;
-  clear(viewRoot);
-  viewRoot.appendChild(el("h1", { text: "Collector" }));
-  viewRoot.appendChild(el("p", { class: "page-desc", text: "The OpenTelemetry Collector compy runs for you as a background service." }));
-
-  const statusCard = el("div", { class: "card" });
-  const table = el("table", { class: "def-table" }, [
-    el("tr", {}, [el("th", { text: "state" }), el("td" , {}, [
-      el("span", { class: "led" + (status.running ? " on" : ""), attrs: { style: "margin-right:7px" } }),
-      el("span", { text: status.running ? "running" : "stopped" }),
-    ])]),
-    el("tr", {}, [el("th", { text: "config" }), el("td", {
-      // Always name the set, "(none)" included: which variables the running
-      // collector actually got is not something to leave the reader guessing.
-      text: status.config
-        ? status.config + " · set " + (status.set || "(none)")
-        : "no configuration active",
-    })]),
-    el("tr", {}, [el("th", { text: "distro" }), el("td", { text: status.distro || "(none)" })]),
-    el("tr", {}, [el("th", { text: "ports" }), el("td", { text: "grpc " + status.grpc_port + " · http " + status.http_port })]),
-  ]);
-  const actions = el("div", { class: "srow" }, [
-    el("div", { class: "grow" }),
-    el("div", { class: "col-actions" }, [
-      el("button", {
-        class: "act", text: "restart",
-        on: {
-          click: async (e) => {
-            e.target.disabled = true;
-            try {
-              await api("/api/service/apply", { method: "POST" });
-            } catch (err) {
-              showError(err);
-            }
-            await renderCollectorView();
-            await refreshNavStatus();
-          },
-        },
-      }),
-      el("button", {
-        class: "act", text: "roll back",
-        on: {
-          click: async (e) => {
-            e.target.disabled = true;
-            if (!(await askConfirm("Roll back to the last known-good configuration and settings?"))) {
-              e.target.disabled = false;
-              return;
-            }
-            try {
-              await api("/api/service/rollback", { method: "POST" });
-            } catch (err) {
-              showError(err);
-            }
-            await renderCollectorView();
-            await refreshNavStatus();
-          },
-        },
-      }),
-    ]),
-  ]);
-  statusCard.append(table, actions);
-  viewRoot.appendChild(el("div", { class: "group" }, [
-    el("div", { class: "group-title", text: "Status" }),
-    statusCard,
-  ]));
-
-  const logGroup = el("div", { class: "group" });
-  logGroup.appendChild(el("div", { class: "group-title", text: "Collector log" }));
-  const logCard = el("div", { class: "card" });
-  const toolbar = el("div", { class: "log-toolbar", attrs: { style: "padding:10px 16px 0" } });
-  const filterInput = el("input", {
-    class: "field-input", attrs: { type: "search", placeholder: "Search the log", "aria-label": "Search the log" },
-    props: { value: state.logFilter },
-    on: {
-      input: (e) => {
-        state.logFilter = e.target.value;
-        applyLogFilter();
-      },
-    },
-  });
-  toolbar.appendChild(filterInput);
-  toolbar.appendChild(el("span", { class: "desc", attrs: { id: "log-note" } }));
-  const pre = el("pre", { class: "code-panel", attrs: { id: "log-view" } });
-  logCard.append(toolbar, el("div", { class: "card-extra" }, [pre]));
-  logGroup.appendChild(logCard);
-  viewRoot.appendChild(logGroup);
-
+async function addPreset(info) {
+  const list = presetsOf(info);
+  let n = "preset", i = 2;
+  while (list.indexOf(n) > -1) { n = "preset-" + i; i++; }
   try {
-    const j = await api("/api/log?lines=" + logLines);
-    lastLogText = j.log || "";
-  } catch (err) {
-    lastLogText = "";
-    showError(err);
+    await apiJSON(cfgURL(info.name) + "/presets/" + enc(n), "PUT", { values: {} });
+    await loadCore();
+    S.preset = n; S.presetSel[info.name] = n;
+    render();
+  } catch (e) { showError(e); }
+}
+async function dupPreset(info, p) {
+  const list = presetsOf(info);
+  let n = p + "-copy", i = 2;
+  while (list.indexOf(n) > -1) { n = p + "-copy-" + i; i++; }
+  try {
+    await apiJSON(cfgURL(info.name) + "/presets/" + enc(n), "PUT", { values: (info.meta.presets || {})[p] || {} });
+    await loadCore();
+    S.preset = n; S.presetSel[info.name] = n;
+    render();
+  } catch (e) { showError(e); }
+}
+async function delPreset(info, p) {
+  const list = presetsOf(info);
+  const i = list.indexOf(p);
+  try {
+    await api(cfgURL(info.name) + "/presets/" + enc(p), { method: "DELETE" });
+    await loadCore();
+    const left = presetsOf(byName(info.name) || info);
+    if (S.preset === p) S.preset = left[Math.max(i - 1, 0)] || null;
+    render();
+  } catch (e) { showError(e); }
+}
+async function renamePreset(info, from, raw) {
+  const to = slug(raw) || from;
+  if (to === from) { render(); return; }
+  if (presetsOf(info).indexOf(to) > -1) { note("a preset called " + to + " already exists", 3000); return; }
+  try {
+    await apiJSON(cfgURL(info.name) + "/presets/" + enc(from) + "/rename", "POST", { to });
+    await loadCore();
+    S.preset = to; S.presetSel[info.name] = to;
+    render();
+  } catch (e) { showError(e); render(); }
+}
+
+/* Save: the collector's verdict, then the result panel.
+
+   BACKEND NOTE: there is no dry-run — nothing validates YAML text that is
+   not on disk yet. So the draft is written, validated, and the previous
+   text put back when the collector rejects it, which is what makes the
+   panel's "nothing was saved" true. */
+async function saveConfig(info) {
+  if (S.saving || !cm) return;
+  const next = cm.getValue();
+  const prev = S.yaml;
+  S.saving = true; S.valErr = null; S.valOk = null; clearError();
+  render();
+  const t0 = Date.now();
+  const wasRunning = isRunningCfg(info.name);
+  try {
+    await api(cfgURL(info.name) + "/yaml", { method: "PUT", headers: { "Content-Type": "text/plain" }, body: next });
+    if (!wasRunning) await api(cfgURL(info.name) + "/validate", { method: "POST" });
+    S.yaml = next; cmDirty = false;
+    const secs = ((Date.now() - t0) / 1000).toFixed(1);
+    S.valOk = wasRunning
+      ? "saved and re-applied to the running collector in " + secs + "s"
+      : "saved in " + secs + "s. " + info.name + " is not running, so nothing restarted.";
+    await loadCore();
+  } catch (e) {
+    S.valErr = e.message || String(e);
+    try { await api(cfgURL(info.name) + "/yaml", { method: "PUT", headers: { "Content-Type": "text/plain" }, body: prev }); } catch (e2) { /* nothing better to do */ }
   }
-  applyLogFilter();
-  // The background refresh rebuilds this whole view every 5s, which used to
-  // snap the log back to the top mid-read; carry the reading position over.
-  if (prevScroll) pre.scrollTop = prevScroll.atBottom ? pre.scrollHeight : prevScroll.top;
+  S.saving = false;
+  render();
 }
 
-/* ── Settings view ────────────────────────────────────────────────── */
-async function renderSettingsView() {
-  const [distros, settings, status] = await Promise.all([
-    api("/api/distros"),
-    api("/api/settings"),
-    api("/api/status"),
-  ]);
+/* ── screen 3: collector ──────────────────────────────────────────── */
+function screenCollector() {
+  const stopped = nothingActive();
+  const busy = S.restarting;
+  const wrap = el("div", { class: "screen" });
 
-  clear(viewRoot);
-  viewRoot.appendChild(el("h1", { text: "Settings" }));
-  viewRoot.appendChild(el("p", { class: "page-desc", text: "Collector distributions and menu bar / environment behavior." }));
-
-  viewRoot.appendChild(buildDistrosGroup(distros));
-  viewRoot.appendChild(buildTogglesGroup(settings, status));
-}
-
-function buildDistrosGroup(distros) {
-  const table = el("div", { class: "dtable distros-table" });
-  table.appendChild(el("div", { class: "dtable-head" }, [
-    el("div", { text: "Name" }), el("div", { text: "Path" }), el("div", { text: "State" }),
-    el("div", { class: "col-actions", text: "Actions" }),
+  const dot = busy ? "var(--accent)" : stopped ? "var(--dim2)" : "var(--ok)";
+  const stateWord = busy ? "restarting…" : stopped ? "stopped" : "running";
+  wrap.appendChild(el("div", { class: "col-head" }, [
+    el("div", { class: "col-line" }, [
+      el("span", { class: "dot8", attrs: { style: "background: " + dot } }),
+      el("span", { class: "col-state" + (busy ? " " : ""), text: stateWord }),
+      // pid and uptime are not in /api/status; "no process" is, and is the
+      // half that carries meaning.
+      span("col-meta", stopped ? "no process" : ""),
+      el("span", { class: "grow" }),
+      el("button", {
+        class: "btn", text: busy ? "restarting…" : stopped ? "start" : "restart",
+        attrs: busy ? { disabled: "" } : null,
+        on: { click: restartCollector },
+      }),
+      !stopped && !busy ? el("button", {
+        class: "btn quiet", text: "stop",
+        title: "stop the collector. nothing will be received until you activate a config again.",
+        on: { click: stopCollector },
+      }) : null,
+    ]),
+    tiles(stopped),
   ]));
-  if (!distros.length) {
-    table.appendChild(el("div", { class: "card-empty", text: "No distributions registered yet." }));
-  }
-  for (const d of distros) {
-    table.appendChild(buildDistroRow(d));
-  }
-  const toolbar = el("div", { class: "srow", attrs: { style: "padding:0 0 10px" } });
-  toolbar.appendChild(el("button", {
-    class: "primary-act", text: "+ add distribution",
-    on: { click: () => toggleAddDistroForm() },
-  }));
-  return el("div", { class: "group" }, [
-    el("div", { class: "group-title", text: "Distributions" }),
-    toolbar,
-    buildAddDistroForm(),
-    el("div", { class: "card" }, [el("div", { class: "dtable-scroll" }, [table])]),
+
+  const cn = noteStrip();
+  if (cn) wrap.appendChild(cn);
+  wrap.appendChild(healthStrip(stopped));
+  wrap.appendChild(logPane(stopped));
+  if (lastError) wrap.appendChild(el("div", { class: "strip-wrap" }, [errorStrip()]));
+  return wrap;
+}
+
+function tiles(stopped) {
+  const st = S.status || {};
+  const tile = (label, node) => el("div", { class: "tile" }, [span("colhead", label), node]);
+  return el("div", { class: "tiles" }, [
+    tile("configuration", el("span", { class: "v accent", text: activeName() })),
+    tile("preset", el("span", { class: "v" + (stopped ? " off" : ""), text: stopped ? "—" : (st.preset || "—") })),
+    tile("collector", el("button", {
+      class: "link", text: st.distro || "none selected",
+      title: "every config runs on this one. change it in settings.",
+      on: { click: () => go("#/settings") },
+    })),
+    tile("listening", el("span", {
+      class: "v" + (stopped ? " off" : ""),
+      text: stopped ? "not listening" : ":" + st.grpc_port + " grpc · :" + st.http_port + " http",
+    })),
   ]);
 }
 
-function toggleAddDistroForm() {
-  const card = document.getElementById("add-distro-card");
-  if (card) card.classList.toggle("hidden");
-  if (card && !card.classList.contains("hidden")) {
-    const nameInput = card.querySelector('input[name="name"]');
-    if (nameInput) nameInput.focus();
-  }
-}
-
-function buildAddDistroForm() {
-  const form = el("form", { class: "form-grid" });
-  const nameLabel = el("label", {}, [
-    el("span", { text: "Name" }),
-    el("input", { class: "field-input", attrs: { name: "name", required: "required", placeholder: "my-distro" } }),
+function healthStrip(stopped) {
+  const h = S.health || {};
+  const has = !!h.available;
+  const m = (label, value, warn) => el("span", { class: "m" }, [
+    span("l", label),
+    el("span", { class: "v" + (has ? (warn ? " warn" : "") : " off"), text: has ? value : "—" }),
   ]);
-  const pathLabel = el("label", {}, [
-    el("span", { text: "Path" }),
-    el("input", { class: "field-input path-input", attrs: { name: "path", required: "required", placeholder: "/path/to/otelcol" } }),
-  ]);
-  const actions = el("div", { class: "form-actions" }, [
-    el("button", { class: "solid-btn", attrs: { type: "submit" }, text: "Add" }),
-    el("button", { class: "act", attrs: { type: "button" }, text: "cancel", on: { click: () => toggleAddDistroForm() } }),
-  ]);
-  form.append(nameLabel, pathLabel, actions);
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = form.name.value.trim();
-    const path = form.path.value.trim();
-    if (!name || !path) return;
-    try {
-      const res = await apiJSON("/api/distros", "POST", { name, path });
-      if (res && res.warning) showMessage(res.warning, "info");
-      form.reset();
-      toggleAddDistroForm();
-    } catch (err) {
-      showError(err);
-    }
-    await renderSettingsView();
-  });
-  return el("div", { class: "card hidden", attrs: { id: "add-distro-card" } }, [
-    el("div", { class: "card-extra" }, [form]),
-  ]);
-}
-
-function buildDistroRow(d) {
-  let nameText = d.name;
-  if (d.definition) nameText += " · definition";
-
-  const pathInput = el("input", {
-    class: "field-input path-input",
-    attrs: { "aria-label": "Path for " + d.name, placeholder: "not downloaded — set a path, or fetch" },
-    props: { value: d.path || "" },
-  });
-  pathInput.addEventListener("change", async () => {
-    const newPath = pathInput.value.trim();
-    if (newPath === (d.path || "")) return;
-    try {
-      const res = await apiJSON("/api/distros/" + encodeURIComponent(d.name), "PUT", { path: newPath });
-      if (res && res.warning) showMessage(res.warning, "info");
-    } catch (err) {
-      showError(err);
-      pathInput.value = d.path || "";
-    }
-    await renderSettingsView();
-  });
-
-  // "downloaded" only means anything for a shipped definition compy fetches
-  // itself; a binary the user pointed at is simply there.
-  let stateText = d.definition ? (d.downloaded ? "downloaded" : "not downloaded") : "ready";
-  let stateClass = "state-muted";
-  if (d.definition && !d.available) { stateText = "unavailable"; stateClass = "state-warn"; }
-  if (d.selected) { stateText = "selected"; stateClass = "state-active"; }
-  const state = el("div", { class: stateClass, text: stateText });
-
-  const actions = el("div", { class: "col-actions" });
-  if (d.definition && !d.downloaded && d.available) {
-    actions.appendChild(el("button", {
-      class: "act", text: "fetch",
-      on: {
-        click: async (e) => {
-          e.target.disabled = true;
-          e.target.textContent = "fetching…";
-          try {
-            await api("/api/distros/" + encodeURIComponent(d.name) + "/fetch", { method: "POST" });
-          } catch (err) {
-            showError(err);
-          }
-          await renderSettingsView();
-        },
-      },
-    }));
-  }
-  // "available" is false only for a shipped definition with no build for
-  // this platform — offering "use" there could only ever fail.
-  if (!d.selected && d.available) {
-    actions.appendChild(el("button", {
-      class: "act", text: "use",
-      on: {
-        click: async (e) => {
-          e.target.disabled = true;
-          try {
-            await api("/api/distros/" + encodeURIComponent(d.name) + "/use", { method: "POST" });
-          } catch (err) {
-            showError(err);
-          }
-          await renderSettingsView();
-          await refreshNavStatus();
-        },
-      },
-    }));
-  }
-  // Remove only makes sense for an actual distros.json entry (a custom
-  // distro, or a shipped definition whose path was overridden) —
-  // user_entry is false for a shipped definition merely downloaded to its
-  // default path, which has no registry entry to remove (the API 400s).
-  if (d.user_entry) {
-    actions.appendChild(buildRemoveButton(d));
-  }
-
-  return el("div", { class: "dtable-row" + (d.selected ? " is-active" : "") }, [
-    el("div", { class: "col-name", text: nameText }),
-    el("div", { class: "col-path" }, [pathInput]),
-    state,
-    actions,
-  ]);
-}
-
-function buildRemoveButton(d) {
-  const removeBtn = el("button", { class: "act danger", text: "remove" });
-  if (d.selected) {
-    removeBtn.disabled = true;
-    removeBtn.title = "Can't remove the selected distro";
-  } else {
-    removeBtn.addEventListener("click", async () => {
-      if (!(await askConfirm('Remove distro "' + d.name + '"?'))) return;
-      try {
-        const res = await api("/api/distros/" + encodeURIComponent(d.name), { method: "DELETE" });
-        if (res && res.reverted) showMessage('"' + d.name + '" reverted to its shipped definition.', "info");
-      } catch (err) {
-        showError(err);
-      }
-      await renderSettingsView();
-    });
-  }
-  return removeBtn;
-}
-
-function buildTogglesGroup(settings, status) {
-  const menuRow = el("div", { class: "srow" }, [
-    el("div", { class: "grow" }, [
-      el("div", { class: "title", text: "Show distro switcher in menu bar" }),
-      el("div", { class: "desc", text: "Off by default — most people never need to swap collector binaries from the tray." }),
-    ]),
-    el("input", {
-      class: "sq-check",
-      attrs: { type: "checkbox", "aria-label": "Show distro switcher in menu bar" },
-      props: { checked: !!settings.menu_distro_swap },
-      on: {
-        change: async (e) => {
-          try {
-            await apiJSON("/api/settings", "PUT", { menu_distro_swap: e.target.checked });
-          } catch (err) {
-            showError(err);
-          }
-        },
-      },
+  return el("div", { class: "health" }, [
+    m("received", fmtCount(h.received)),
+    m("exported", fmtCount(h.exported)),
+    m("queue", fmtCount(h.queue)),
+    m("dropped", fmtCount(h.dropped), h.dropped > 0),
+    el("span", { class: "grow" }),
+    el("span", {
+      class: "src", title: "the collector's own prometheus endpoint",
+      text: stopped ? "no metrics while stopped" : has ? "localhost:8888/metrics" : "localhost:8888/metrics · no answer",
     }),
   ]);
-  const osEnvRow = el("div", { class: "srow" }, [
-    el("div", { class: "grow" }, [
-      el("div", { class: "title", text: "Set variables system-wide" }),
-      el("div", { class: "desc", text: "Injects OTEL_* into the login session (launchctl setenv) so newly started apps pick them up with no shell setup. Already-running apps are unaffected." }),
-    ]),
-    el("input", {
-      class: "sq-check",
-      attrs: { type: "checkbox", "aria-label": "Set variables system-wide" },
-      props: { checked: !!status.os_env },
-      on: {
-        change: async (e) => {
-          try {
-            await apiJSON("/api/os-env", "POST", { on: e.target.checked });
-          } catch (err) {
-            showError(err);
-          }
-          await refreshNavStatus();
-        },
-      },
-    }),
-  ]);
-  return el("div", { class: "group" }, [
-    el("div", { class: "group-title", text: "Menu bar & environment" }),
-    el("div", { class: "card" }, [menuRow, osEnvRow]),
-  ]);
 }
 
-/* ── background refresh ───────────────────────────────────────────── */
-async function tick() {
-  await refreshNavStatus();
-  // never clobber a focused input mid-edit, nor a live editor
-  if (isInputFocused() || editorBusy()) return;
-  await renderRoute();
+function logPane(stopped) {
+  const all = logLines();
+  const q = S.query.trim().toLowerCase();
+  const shown = all.filter((l) => (S.level === "all" || l.level === S.level) && (!q || l.text.toLowerCase().includes(q)));
+
+  const bar = el("div", { class: "logbar" }, [
+    el("input", {
+      class: "field filter",
+      attrs: { placeholder: "filter log…", spellcheck: "false", "data-fk": "logq", "aria-label": "filter log" },
+      props: { value: S.query },
+      on: { input: (e) => { S.query = e.target.value; render(); } },
+    }),
+  ]);
+  for (const k of ["all", "error", "warn", "info", "debug"]) {
+    bar.appendChild(el("button", { class: "lvl", on: { click: () => { S.level = k; render(); } } }, [
+      S.level === k ? el("span", { class: "dot5" }) : null,
+      span("", k),
+    ]));
+  }
+  bar.appendChild(el("span", { class: "grow" }));
+  bar.appendChild(span("logcount", shown.length + " of " + all.length + " lines"));
+  bar.appendChild(el("button", {
+    class: "ico", title: "copy these " + shown.length + " lines",
+    on: { click: () => copyText(shown.map((l) => l.raw).join("\n"), shown.length + " log lines copied") },
+  }, [icon("copy", 13)]));
+  bar.appendChild(el("button", {
+    class: "tail", attrs: stopped ? { disabled: "" } : null,
+    on: { click: () => { if (!stopped) { S.tail = !S.tail; render(); } } },
+  }, [
+    el("span", { class: "dot5", attrs: { style: "background: " + (stopped || !S.tail ? "var(--dim2)" : "var(--ok)") } }),
+    span("", stopped ? "no output" : S.tail ? "live tail" : "paused"),
+  ]));
+
+  const logs = el("div", { class: "logs" });
+  for (const l of shown) {
+    logs.appendChild(el("div", { class: "logline" }, [
+      span("t", l.time),
+      span(l.level ? "lv-" + l.level : "", l.level),
+      span("m", l.text),
+    ]));
+  }
+  if (!shown.length) logs.appendChild(el("div", { class: "nologs", text: all.length ? "no lines match this filter." : "no output yet." }));
+
+  return el("div", { attrs: { style: "flex:1; min-height:0; display:flex; flex-direction:column;" } }, [bar, logs]);
+}
+
+async function restartCollector() {
+  if (S.restarting) return;
+  S.restarting = true; clearError(); render();
+  try {
+    await api("/api/service/start", { method: "POST" });
+  } catch (e) { showError(e); }
+  S.restarting = false;
+  await loadCore(); await loadCollector();
+  render();
+}
+async function stopCollector() {
+  clearError();
+  try { await api("/api/service/stop", { method: "POST" }); } catch (e) { showError(e); }
+  await loadCore(); await loadCollector();
+  render();
+}
+
+/* ── screen 4: settings ───────────────────────────────────────────── */
+function screenSettings() {
+  const wrap = el("div", { class: "settings" });
+  const sn = noteStrip();
+  if (sn) wrap.appendChild(sn);
+
+  wrap.appendChild(el("div", { class: "sec" }, [
+    span("title", "app"),
+    el("div", { class: "subtitle sans" }, [
+      document.createTextNode("ports and shell wiring live in the CLI: "),
+      el("span", { attrs: { style: "color: var(--text3)" }, text: "compy env" }),
+    ]),
+  ]));
+
+  const themeNote = S.theme === "system" ? "following macOS — currently " + osTheme() : "always " + S.theme;
+  const seg = el("div", { class: "seg" });
+  for (const k of ["system", "dark", "light"]) {
+    seg.appendChild(el("button", { class: S.theme === k ? "on" : "", text: k, on: { click: () => setTheme(k) } }));
+  }
+  const osEnvOn = !!(S.status && S.status.os_env);
+  wrap.appendChild(el("div", { class: "card" }, [
+    el("div", { class: "srow" }, [
+      el("span", { class: "lbl" }, [span("t", "appearance"), el("span", { class: "n sans", text: themeNote })]),
+      el("span", { class: "grow" }), seg,
+    ]),
+    el("div", {
+      class: "srow clickable", on: { click: () => setOSEnv(!osEnvOn) },
+      attrs: { role: "switch", "aria-checked": osEnvOn ? "true" : "false", tabindex: "0" },
+    }, [
+      el("span", { class: "lbl" }, [
+        span("t", "set OTEL_* variables system-wide"),
+        el("span", { class: "n sans", text: "new shells and apps point at compy automatically" }),
+      ]),
+      el("span", { class: "grow" }),
+      el("span", { class: "switch" + (osEnvOn ? " on" : "") }, [el("i")]),
+    ]),
+  ]));
+
+  wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
+    span("title", "collector"),
+    el("div", { class: "subtitle sans", text: "one collector runs every configuration. compy ships with contrib; add others if you need them." }),
+  ]));
+
+  const table = el("div", { class: "card" }, [
+    el("div", { class: "bin-grid bin-head colhead" }, [el("span"), span("", "collector"), span("", "state"), el("span")]),
+  ]);
+  for (const b of S.distros) table.appendChild(distroRow(b));
+  table.appendChild(el("div", { class: "bin-grid bin-add" }, [
+    el("span", { attrs: { style: "display:flex; color: var(--faint)" } }, [icon("plus", 13)]),
+    el("input", {
+      class: "field",
+      attrs: { placeholder: "name", spellcheck: "false", "data-fk": "add-name", "aria-label": "collector name" },
+      props: { value: S.addName },
+      on: { input: (e) => { S.addName = e.target.value; } },
+    }),
+    el("input", {
+      class: "field",
+      attrs: { placeholder: "/usr/local/bin/otelcol-mine", spellcheck: "false", "data-fk": "add-path", "aria-label": "collector path" },
+      props: { value: S.addPath },
+      on: { input: (e) => { S.addPath = e.target.value; } },
+    }),
+    el("span", { attrs: { style: "display:flex; justify-content:flex-end" } }, [
+      el("button", { class: "act", text: "add", on: { click: addDistro } }),
+    ]),
+  ]));
+  wrap.appendChild(table);
+  if (lastError) wrap.appendChild(errorStrip());
+  return wrap;
+}
+
+function distroRow(b) {
+  const d = S.dl[b.name] || {};
+  const busy = d.status === "downloading";
+  const failed = d.status === "failed";
+  const inUse = !!b.selected;
+  const here = !!b.downloaded;
+  const blocked = b.definition && !b.available;
+  const mine = b.user_entry && !b.definition;
+
+  // A real fetch failure is a Go error with a URL in it — too long for a
+  // 1fr cell. The row shows one short line; the whole thing is the tooltip.
+  const reason = (d.error || "").split("\n")[0].replace(/^distro [^:]+: /, "");
+  const short = reason.length > 46 ? reason.slice(0, 45) + "…" : reason;
+  const state = busy ? "downloading… " + (d.pct == null ? "" : d.pct + "%")
+    : failed ? (short ? "download failed · " + short : "download failed")
+      : inUse ? "in use"
+        : blocked ? "not available on macOS"
+          : here ? (mine ? "added by you" : "installed")
+            : "available to download";
+  const stateCls = busy || inUse ? " accent" : failed ? " bad" : blocked ? " off" : mine ? " mine" : "";
+  const glyph = inUse ? "dot" : blocked ? "ban" : here ? "circle" : "download";
+
+  const row = el("div", { class: "bin-grid bin-row" + (inUse ? " on" : "") }, [
+    el("span", { class: "ic" + (blocked ? " off" : ""), title: state }, [icon(glyph, 13)]),
+    el("span", { class: "nm", text: b.name, title: b.path || (blocked ? "not available on macOS" : "not downloaded yet") }),
+    el("span", { class: "bin-state" }, [
+      el("span", { class: "s" + stateCls, text: state, title: failed ? d.error : null }),
+      busy && d.pct != null ? el("span", { class: "pbar" }, [el("i", { attrs: { style: "width:" + d.pct + "%" } })]) : null,
+    ]),
+    el("span", { class: "bin-actions" }, [
+      el("button", {
+        class: "ico" + (!inUse && here ? " accent" : ""),
+        title: inUse ? "already in use" : here ? "run every config on " + b.name : "download it first",
+        attrs: inUse || !here ? { disabled: "" } : null,
+        on: { click: () => useDistro(b.name) },
+      }, [icon("play", 11, true)]),
+      el("button", {
+        class: "ico" + (!here && !blocked ? " accent" : ""),
+        title: busy ? "downloading…" : failed ? "try again" : blocked ? "not available on macOS" : here ? "already installed" : "download and verify " + b.name,
+        attrs: here || blocked || busy ? { disabled: "" } : null,
+        on: { click: () => fetchDistro(b.name) },
+      }, [icon("download", 13)]),
+      el("button", {
+        class: "ico", title: here || mine ? "change path" : "nothing installed yet",
+        attrs: here || mine ? null : { disabled: "" },
+        on: { click: () => changePath(b) },
+      }, [icon("folder", 13)]),
+      el("button", {
+        class: "ico del", title: mine ? "remove " + b.name : "only collectors you added can be removed",
+        attrs: mine ? null : { disabled: "" },
+        on: { click: () => removeDistro(b.name) },
+      }, [icon("trash", 13)]),
+    ]),
+  ]);
+  return row;
+}
+
+async function setOSEnv(on) {
+  clearError();
+  try {
+    await apiJSON("/api/os-env", "POST", { on });
+    await loadCore();
+    note(on ? "OTEL_* variables set system-wide" : "OTEL_* variables cleared", 3000);
+  } catch (e) { showError(e); }
+}
+async function useDistro(name) {
+  clearError();
+  try {
+    await api("/api/distros/" + enc(name) + "/use", { method: "POST" });
+    await loadDistros(); await loadCore();
+    note("every config now runs on " + name, 3000);
+  } catch (e) { showError(e); }
+  render();
+}
+async function changePath(b) {
+  const p = await askText("path to " + b.name, b.path || "");
+  if (!p) return;
+  try {
+    const r = await apiJSON("/api/distros/" + enc(b.name), "PUT", { path: p });
+    await loadDistros();
+    if (r && r.warning) note(r.warning, 4000); else render();
+  } catch (e) { showError(e); render(); }
+}
+async function removeDistro(name) {
+  clearError();
+  try {
+    const r = await api("/api/distros/" + enc(name), { method: "DELETE" });
+    await loadDistros();
+    if (r && r.reverted) note(name + " reverted to the version that ships with compy", 3200); else render();
+  } catch (e) { showError(e); render(); }
+}
+async function addDistro() {
+  const name = slug(S.addName), path = S.addPath.trim();
+  if (!name || !path) return;
+  clearError();
+  try {
+    const r = await apiJSON("/api/distros", "POST", { name, path });
+    S.addName = ""; S.addPath = "";
+    await loadDistros();
+    if (r && r.warning) note(r.warning, 4000); else render();
+  } catch (e) { showError(e); render(); }
+}
+// The fetch starts a download and returns; progress lives behind its own
+// route because the request that started it is long gone.
+async function fetchDistro(name) {
+  clearError();
+  S.dl[name] = { status: "downloading", pct: 0 };
+  render();
+  try { await api("/api/distros/" + enc(name) + "/fetch", { method: "POST" }); } catch (e) { S.dl[name] = null; showError(e); render(); return; }
+  const poll = async () => {
+    let p;
+    try { p = await api("/api/distros/" + enc(name) + "/progress"); } catch (e) { S.dl[name] = null; showError(e); render(); return; }
+    S.dl[name] = p;
+    render();
+    if (p.status === "downloading" || p.status === "idle") { setTimeout(poll, 300); return; }
+    if (p.status === "done") { S.dl[name] = null; await loadDistros(); render(); }
+  };
+  setTimeout(poll, 300);
+}
+
+/* ── background refresh ───────────────────────────────────────────────
+   Never touches the DOM while an input in the screen has focus, and never
+   while a slow action or an open menu/inline editor would be yanked away. */
+function refreshBlocked() {
+  const a = document.activeElement;
+  const inField = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
+  return inField || S.busyId || S.saving || S.restarting || S.presetsOpenId || S.inline
+    || S.confirm || S.newOpen || S.unlockAsk || document.querySelector("dialog[open]")
+    || (S.screen === "editor" && cmDirty);
+}
+async function refresh() {
+  if (refreshBlocked()) return;
+  try {
+    await loadCore();
+    if (S.screen === "collector") { if (S.tail) await loadCollector(); }
+    else if (S.screen === "configs") await loadCollector();
+    else if (S.screen === "settings") await loadDistros();
+  } catch (e) { return; } // a transient failure should not blank the window
+  if (refreshBlocked()) return;
+  render();
 }
 
 /* ── boot ─────────────────────────────────────────────────────────── */
-renderRoute();
-refreshNavStatus();
-setInterval(tick, 5000);
+loadTheme();
+applyTheme();
+if (window.matchMedia) {
+  // 'system' follows macOS live: the tokens swap via the media query, and
+  // the note beside the control needs a re-render to name the new value.
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (S.theme === "system") render(); });
+}
+document.addEventListener("click", (e) => {
+  if (S.presetsOpenId && !e.target.closest(".cell-preset")) { S.presetsOpenId = null; render(); }
+}, true);
+enterRoute();
+setInterval(refresh, 3000);

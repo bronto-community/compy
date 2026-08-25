@@ -1,6 +1,6 @@
 // Package cfgstore manages compy's Configurations: on-disk directories
 // under configs/<name>/ holding a collector config.yaml + meta.json
-// (provenance, variable sets). See
+// (provenance, presets). See
 // docs/superpowers/specs/2026-08-25-compy-v2-configs-design.md.
 package cfgstore
 
@@ -23,13 +23,15 @@ import (
 	"github.com/bronto-io/compy/internal/vars"
 )
 
-// Meta is the persisted metadata for a configuration (meta.json).
+// Meta is the persisted metadata for a configuration (meta.json). There is
+// deliberately no per-config collector binary: one collector, chosen once in
+// settings, runs every configuration (docs/design/handoff/README.md,
+// "Departures"). A "distro" key left in an older meta.json is ignored.
 type Meta struct {
 	RemoteURL      string                       `json:"remote_url,omitempty"`
-	Distro         string                       `json:"distro,omitempty"` // "" = global default
 	PristineSHA256 string                       `json:"pristine_sha256,omitempty"`
-	VariableSets   map[string]map[string]string `json:"variable_sets"`
-	ActiveSet      string                       `json:"active_set"`
+	Presets        map[string]map[string]string `json:"presets"`
+	ActivePreset   string                       `json:"active_preset"`
 }
 
 // Info describes a configuration for listing/inspection.
@@ -123,20 +125,34 @@ func readYAML(root, name string) (string, error) {
 	return string(data), nil
 }
 
+// readMeta reads meta.json, accepting v2's key names for presets
+// ("variable_sets"/"active_set") so an existing state directory keeps its
+// presets across the rename. The next write emits the new names.
 func readMeta(root, name string) (Meta, error) {
-	var m Meta
 	data, err := os.ReadFile(metaPath(root, name))
 	if errors.Is(err, os.ErrNotExist) {
-		return Meta{VariableSets: map[string]map[string]string{}}, nil
+		return Meta{Presets: map[string]map[string]string{}}, nil
 	}
 	if err != nil {
-		return m, err
+		return Meta{}, err
 	}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return m, err
+	var raw struct {
+		Meta
+		LegacyPresets map[string]map[string]string `json:"variable_sets"`
+		LegacyActive  string                       `json:"active_set"`
 	}
-	if m.VariableSets == nil {
-		m.VariableSets = map[string]map[string]string{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return Meta{}, err
+	}
+	m := raw.Meta
+	if m.Presets == nil {
+		m.Presets = raw.LegacyPresets
+	}
+	if m.ActivePreset == "" {
+		m.ActivePreset = raw.LegacyActive
+	}
+	if m.Presets == nil {
+		m.Presets = map[string]map[string]string{}
 	}
 	return m, nil
 }
@@ -154,7 +170,7 @@ func writeYAMLFile(root, name, yaml string) error {
 }
 
 // userErrf builds a state.BadRequest-marked error: a caller mistake (a bad
-// name, a missing or duplicate configuration, a set that isn't there) the
+// name, a missing or duplicate configuration, a preset that isn't there) the
 // REST layer answers 400 for, rather than a failure of the store itself
 // (500). The web UI dumps a collector log tail onto a 5xx and nothing else,
 // so mis-classifying a user mistake buries its own message.
@@ -169,12 +185,12 @@ func validateName(name string) error {
 	return nil
 }
 
-// validateSetName applies the configuration-name rule to variable set names
+// validatePresetName applies the configuration-name rule to preset names
 // too: they show up in URLs and in the menu bar exactly like config names,
 // and the same rule deserves the same wording wherever it can surface.
-func validateSetName(set string) error {
-	if !state.ValidBackendName(set) {
-		return userErrf("invalid variable set name %q: use lowercase letters, digits, dashes", set)
+func validatePresetName(preset string) error {
+	if !state.ValidBackendName(preset) {
+		return userErrf("invalid preset name %q: use lowercase letters, digits, dashes", preset)
 	}
 	return nil
 }
@@ -259,7 +275,7 @@ func Create(root, name, yaml string) error {
 	if err := writeYAMLFile(root, name, yaml); err != nil {
 		return err
 	}
-	return writeMeta(root, name, Meta{VariableSets: map[string]map[string]string{}})
+	return writeMeta(root, name, Meta{Presets: map[string]map[string]string{}})
 }
 
 // CreateFromURL fetches yaml from url and creates a new remote configuration,
@@ -287,11 +303,11 @@ func CreateFromURL(root, name, url string, fetch Fetch) error {
 	return writeMeta(root, name, Meta{
 		RemoteURL:      url,
 		PristineSHA256: hashOf(yaml),
-		VariableSets:   map[string]map[string]string{},
+		Presets:        map[string]map[string]string{},
 	})
 }
 
-// Copy duplicates src's YAML and variable sets into a new local
+// Copy duplicates src's YAML and presets into a new local
 // configuration dst; provenance (remote URL / pristine hash) is dropped.
 func Copy(root, src, dst string) error {
 	if err := validateName(src); err != nil {
@@ -314,14 +330,13 @@ func Copy(root, src, dst string) error {
 	if err := writeYAMLFile(root, dst, yaml); err != nil {
 		return err
 	}
-	sets := make(map[string]map[string]string, len(srcMeta.VariableSets))
-	for setName, kv := range srcMeta.VariableSets {
-		sets[setName] = maps.Clone(kv)
+	presets := make(map[string]map[string]string, len(srcMeta.Presets))
+	for name, kv := range srcMeta.Presets {
+		presets[name] = maps.Clone(kv)
 	}
 	return writeMeta(root, dst, Meta{
-		Distro:       srcMeta.Distro,
-		VariableSets: sets,
-		ActiveSet:    srcMeta.ActiveSet,
+		Presets:      presets,
+		ActivePreset: srcMeta.ActivePreset,
 	})
 }
 
@@ -404,13 +419,77 @@ func Resync(root, name string, fetch Fetch) error {
 	return refetch(root, name, fetch)
 }
 
-// SetVar sets a key/value pair in a variable set, creating the set on first
+// Reset restores a modified shipped configuration's config.yaml to the
+// embedded default and recomputes the pristine hash; presets and the rest
+// of meta are kept. It is the builtin twin of Resync: it refuses
+// non-builtins and unmodified builtins (nothing to reset).
+func Reset(root, name string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	info, _, err := buildInfo(root, name)
+	if err != nil {
+		return err
+	}
+	if info.Provenance != "shipped" {
+		return userErrf("config %q is not a built-in config; only built-ins can be reset", name)
+	}
+	if !info.Modified {
+		return userErrf("config %q already matches the shipped version; nothing to reset", name)
+	}
+	content, err := embeddedDefaults.ReadFile("defaults/" + name + ".yaml")
+	if err != nil {
+		return userErrf("config %q has no shipped default to reset to", name)
+	}
+	yaml := string(content)
+	if err := writeYAMLFile(root, name, yaml); err != nil {
+		return err
+	}
+	m := info.Meta
+	m.PristineSHA256 = hashOf(yaml)
+	return writeMeta(root, name, m)
+}
+
+// Rename moves a configuration from -> to, keeping its YAML and presets.
+// It refuses a missing source and an existing target. A shipped config
+// becomes local under its new name (like Copy): shipped identity is bound
+// to the name — Reset and the upgrade path read defaults/<name>.yaml — so
+// carrying the pristine hash to another name would reset or upgrade it
+// against the wrong shipped YAML.
+func Rename(root, from, to string) error {
+	if err := validateName(from); err != nil {
+		return err
+	}
+	if err := validateName(to); err != nil {
+		return err
+	}
+	if !exists(root, from) {
+		return userErrf("config %q not found", from)
+	}
+	if exists(root, to) {
+		return userErrf("config %q already exists", to)
+	}
+	m, err := readMeta(root, from)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(configDir(root, from), configDir(root, to)); err != nil {
+		return err
+	}
+	if provenanceFor(m) == "shipped" {
+		m.PristineSHA256 = ""
+		return writeMeta(root, to, m)
+	}
+	return nil
+}
+
+// SetVar sets a key/value pair in a preset, creating the preset on first
 // write.
-func SetVar(root, name, set, key, value string) error {
+func SetVar(root, name, preset, key, value string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
-	if err := validateSetName(set); err != nil {
+	if err := validatePresetName(preset); err != nil {
 		return err
 	}
 	m, err := readMeta(root, name)
@@ -420,23 +499,23 @@ func SetVar(root, name, set, key, value string) error {
 	if !exists(root, name) {
 		return userErrf("config %q not found", name)
 	}
-	if m.VariableSets == nil {
-		m.VariableSets = map[string]map[string]string{}
+	if m.Presets == nil {
+		m.Presets = map[string]map[string]string{}
 	}
-	if m.VariableSets[set] == nil {
-		m.VariableSets[set] = map[string]string{}
+	if m.Presets[preset] == nil {
+		m.Presets[preset] = map[string]string{}
 	}
-	m.VariableSets[set][key] = value
+	m.Presets[preset][key] = value
 	return writeMeta(root, name, m)
 }
 
-// WriteSet creates or replaces a variable set's entire contents (the set
+// WritePreset creates or replaces a preset's entire contents (the preset
 // need not already exist).
-func WriteSet(root, name, set string, values map[string]string) error {
+func WritePreset(root, name, preset string, values map[string]string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
-	if err := validateSetName(set); err != nil {
+	if err := validatePresetName(preset); err != nil {
 		return err
 	}
 	m, err := readMeta(root, name)
@@ -446,16 +525,16 @@ func WriteSet(root, name, set string, values map[string]string) error {
 	if !exists(root, name) {
 		return userErrf("config %q not found", name)
 	}
-	if m.VariableSets == nil {
-		m.VariableSets = map[string]map[string]string{}
+	if m.Presets == nil {
+		m.Presets = map[string]map[string]string{}
 	}
-	m.VariableSets[set] = maps.Clone(values)
+	m.Presets[preset] = maps.Clone(values)
 	return writeMeta(root, name, m)
 }
 
-// DeleteSet removes a variable set. It errors if the set is the active set
+// DeletePreset removes a preset. It errors if the preset is the active preset
 // or does not exist.
-func DeleteSet(root, name, set string) error {
+func DeletePreset(root, name, preset string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
@@ -466,19 +545,19 @@ func DeleteSet(root, name, set string) error {
 	if !exists(root, name) {
 		return userErrf("config %q not found", name)
 	}
-	if _, ok := m.VariableSets[set]; !ok {
-		return userErrf("config %q has no variable set %q", name, set)
+	if _, ok := m.Presets[preset]; !ok {
+		return userErrf("config %q has no preset %q", name, preset)
 	}
-	if set == m.ActiveSet {
-		return userErrf("cannot delete active variable set %q", set)
+	if preset == m.ActivePreset {
+		return userErrf("cannot delete active preset %q", preset)
 	}
-	delete(m.VariableSets, set)
+	delete(m.Presets, preset)
 	return writeMeta(root, name, m)
 }
 
-// UseSet makes set the active variable set. It errors if the set does not
+// UsePreset makes preset the active preset. It errors if the preset does not
 // exist.
-func UseSet(root, name, set string) error {
+func UsePreset(root, name, preset string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
@@ -489,21 +568,21 @@ func UseSet(root, name, set string) error {
 	if !exists(root, name) {
 		return userErrf("config %q not found", name)
 	}
-	if _, ok := m.VariableSets[set]; !ok {
-		return userErrf("config %q has no variable set %q", name, set)
+	if _, ok := m.Presets[preset]; !ok {
+		return userErrf("config %q has no preset %q", name, preset)
 	}
-	m.ActiveSet = set
+	m.ActivePreset = preset
 	return writeMeta(root, name, m)
 }
 
-// RenameSet renames a variable set from -> to. It errors if to is empty,
-// from does not exist, or to already exists. Renaming the active set
-// updates active_set to follow it.
-func RenameSet(root, name, from, to string) error {
+// RenamePreset renames a preset from -> to. It errors if to is empty,
+// from does not exist, or to already exists. Renaming the active preset
+// updates active_preset to follow it.
+func RenamePreset(root, name, from, to string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
-	if err := validateSetName(to); err != nil {
+	if err := validatePresetName(to); err != nil {
 		return err
 	}
 	m, err := readMeta(root, name)
@@ -513,23 +592,24 @@ func RenameSet(root, name, from, to string) error {
 	if !exists(root, name) {
 		return userErrf("config %q not found", name)
 	}
-	if _, ok := m.VariableSets[from]; !ok {
-		return userErrf("config %q has no variable set %q", name, from)
+	if _, ok := m.Presets[from]; !ok {
+		return userErrf("config %q has no preset %q", name, from)
 	}
-	if _, ok := m.VariableSets[to]; ok {
-		return userErrf("config %q already has a variable set %q", name, to)
+	if _, ok := m.Presets[to]; ok {
+		return userErrf("config %q already has a preset %q", name, to)
 	}
-	m.VariableSets[to] = m.VariableSets[from]
-	delete(m.VariableSets, from)
-	if m.ActiveSet == from {
-		m.ActiveSet = to
+	m.Presets[to] = m.Presets[from]
+	delete(m.Presets, from)
+	if m.ActivePreset == from {
+		m.ActivePreset = to
 	}
 	return writeMeta(root, name, m)
 }
 
 // SnapshotActive copies configs/<name>/ and settings.json into last-good/,
 // replacing any prior snapshot. Callers take it only once a configuration is
-// proven to start, so it is the rollback target.
+// proven to have started, so the snapshot is always a setup that ran: it is
+// what RestoreActive puts back when the next one fails to start.
 func SnapshotActive(root, name string) error {
 	if err := validateName(name); err != nil {
 		return err
@@ -544,13 +624,19 @@ func SnapshotActive(root, name string) error {
 	return copyFile(filepath.Join(root, "settings.json"), filepath.Join(dst, "settings.json"), 0o600)
 }
 
+// HasSnapshot reports whether a last-good snapshot exists to restore.
+// state.Dir() pre-creates last-good/ empty, so its mere existence proves
+// nothing; settings.json only lands there via SnapshotActive.
+func HasSnapshot(root string) bool {
+	_, err := os.Stat(filepath.Join(root, "last-good", "settings.json"))
+	return err == nil
+}
+
 // RestoreActive copies the last-good snapshot back over settings.json and
 // the configuration it was taken from (the active_config recorded in the
 // snapshot's settings.json). It errors if no snapshot exists.
 func RestoreActive(root string) error {
 	src := filepath.Join(root, "last-good")
-	// state.Dir() pre-creates last-good/ empty, so its mere existence proves
-	// nothing; settings.json only lands there via SnapshotActive.
 	data, err := os.ReadFile(filepath.Join(src, "settings.json"))
 	if err != nil {
 		return errors.New("no last-good snapshot to restore")
@@ -638,7 +724,7 @@ func MaterializeDefaults(root string) error {
 			}
 			if err := writeMeta(root, name, Meta{
 				PristineSHA256: hashOf(embedYAML),
-				VariableSets:   map[string]map[string]string{},
+				Presets:        map[string]map[string]string{},
 			}); err != nil {
 				return err
 			}
@@ -648,6 +734,9 @@ func MaterializeDefaults(root string) error {
 		info, currentYAML, err := buildInfo(root, name)
 		if err != nil {
 			return err
+		}
+		if info.Provenance != "shipped" {
+			continue // a local or remote config on this name is the user's, never upgraded
 		}
 		if info.Modified {
 			continue // leave untouched

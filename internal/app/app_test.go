@@ -12,9 +12,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bronto-io/compy/internal/app"
 	"github.com/bronto-io/compy/internal/cfgstore"
+	"github.com/bronto-io/compy/internal/collector"
 	"github.com/bronto-io/compy/internal/distro"
 	"github.com/bronto-io/compy/internal/launchd"
 	"github.com/bronto-io/compy/internal/state"
@@ -64,7 +66,8 @@ func fakeDistro(t *testing.T, script string) {
 
 // listenPort stands a listener up on a free port so Activate's probe
 // succeeds (the collector itself never runs — launchd is stubbed) and
-// records it as compy's gRPC port.
+// records it as compy's gRPC port. closeListener stops it again, which is
+// how a test makes the next activation fail its probe.
 func listenPort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -73,6 +76,7 @@ func listenPort(t *testing.T) int {
 	}
 	t.Cleanup(func() { ln.Close() })
 	port := ln.Addr().(*net.TCPAddr).Port
+	listeners[port] = ln
 
 	s, err := state.LoadSettings()
 	if err != nil {
@@ -83,6 +87,20 @@ func listenPort(t *testing.T) int {
 		t.Fatal(err)
 	}
 	return port
+}
+
+// listeners maps a port handed out by listenPort to its listener, so
+// closeListener can stop it. Tests run in one process and never share a
+// port, so a plain map is enough.
+var listeners = map[int]net.Listener{}
+
+func closeListener(t *testing.T, port int) {
+	t.Helper()
+	ln, ok := listeners[port]
+	if !ok {
+		t.Fatalf("no listener recorded for port %d", port)
+	}
+	ln.Close()
 }
 
 func called(calls [][]string, sub string) bool {
@@ -156,8 +174,10 @@ func TestActivateHappyPath(t *testing.T) {
 		t.Errorf("plist carries a feature gate; v2 uses none:\n%s", plist)
 	}
 
+	// A configuration proven to have started is the setup a later failure
+	// comes back to, so success is exactly when the snapshot is taken.
 	if _, err := os.Stat(filepath.Join(a.Dir, "last-good", "settings.json")); err != nil {
-		t.Errorf("no last-good snapshot: %v", err)
+		t.Errorf("no last-good snapshot after a successful activation: %v", err)
 	}
 
 	name, set, err := a.ActiveConfig()
@@ -168,7 +188,7 @@ func TestActivateHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !st.Running || st.Config != "mine" || st.Set != "prod" || st.Distro != "fake" || st.GRPCPort != port {
+	if !st.Running || st.Config != "mine" || st.Preset != "prod" || st.Distro != "fake" || st.GRPCPort != port {
 		t.Errorf("Status() = %+v", st)
 	}
 }
@@ -196,7 +216,7 @@ func TestActivateValidateFailureNoLaunchctl(t *testing.T) {
 	}
 }
 
-func TestActivateUnknownSetErrors(t *testing.T) {
+func TestActivateUnknownPresetErrors(t *testing.T) {
 	calls := setup(t, "")
 	fakeDistro(t, "exit 0")
 
@@ -297,7 +317,7 @@ func TestDeleteActiveConfigErrors(t *testing.T) {
 }
 
 func TestWriteYAMLReactivatesWhenActive(t *testing.T) {
-	calls := setup(t, "")
+	calls := setup(t, "state = running")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
 
@@ -335,8 +355,130 @@ func TestWriteYAMLReactivatesWhenActive(t *testing.T) {
 	}
 }
 
-func TestReplaceSetReactivatesWhenActiveSet(t *testing.T) {
-	calls := setup(t, "")
+func TestResetReactivatesWhenActive(t *testing.T) {
+	calls := setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, shipped, err := cfgstore.Get(a.Dir, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A modified builtin that is NOT active resets without touching launchd.
+	if err := a.WriteConfigYAML("otlp", "receivers: {}\n# edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	*calls = nil
+	if err := a.Reset("otlp"); err != nil {
+		t.Fatalf("Reset inactive builtin: %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("resetting an inactive config re-applied: %v", *calls)
+	}
+
+	// The active one resets AND re-activates, like Resync does.
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.WriteConfigYAML("debug", "receivers: {}\n# edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	*calls = nil
+	if err := a.Reset("debug"); err != nil {
+		t.Fatalf("Reset active builtin: %v", err)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("resetting the active config did not re-activate: %v", *calls)
+	}
+	info, yaml, err := cfgstore.Get(a.Dir, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if yaml != shipped || info.Modified {
+		t.Errorf("after Reset: modified=%v yaml=%q, want the shipped default back", info.Modified, yaml)
+	}
+}
+
+func TestRenameConfigUpdatesSettingsAndRecent(t *testing.T) {
+	calls := setup(t, "") // launchd reports not running: no re-apply expected
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("mine", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	if err := a.RenameConfig("mine", "renamed"); err != nil {
+		t.Fatalf("RenameConfig: %v", err)
+	}
+	// Running() itself calls `launchctl print`; what must NOT happen is a
+	// re-apply (bootstrap/kickstart) while the collector is stopped.
+	if called(*calls, "bootstrap") || called(*calls, "kickstart") {
+		t.Errorf("renaming while the collector is stopped re-applied: %v", *calls)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ActiveConfig != "renamed" {
+		t.Errorf("ActiveConfig = %q, want renamed", s.ActiveConfig)
+	}
+	if slices.Contains(s.Recent, "mine") || !slices.Contains(s.Recent, "renamed") {
+		t.Errorf("Recent = %v, want the rename followed", s.Recent)
+	}
+	if _, _, err := cfgstore.Get(a.Dir, "renamed"); err != nil {
+		t.Errorf("renamed config missing: %v", err)
+	}
+	if _, _, err := cfgstore.Get(a.Dir, "mine"); err == nil {
+		t.Error("old name still resolves after rename")
+	}
+}
+
+func TestRenameRunningConfigReapplies(t *testing.T) {
+	calls := setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("mine", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	if err := a.RenameConfig("mine", "renamed"); err != nil {
+		t.Fatalf("RenameConfig: %v", err)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("renaming the running config did not re-apply: %v", *calls)
+	}
+	plist := readPlist(t)
+	want := filepath.Join(a.Dir, "configs", "renamed", "config.yaml")
+	if !strings.Contains(plist, "<string>"+want+"</string>") {
+		t.Errorf("plist still points at the old path:\n%s", plist)
+	}
+}
+
+func TestReplacePresetReactivatesWhenActivePreset(t *testing.T) {
+	calls := setup(t, "state = running")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
 
@@ -355,16 +497,16 @@ func TestReplaceSetReactivatesWhenActiveSet(t *testing.T) {
 	}
 
 	*calls = nil
-	// Replacing a set on an inactive config must not re-apply.
-	if err := a.ReplaceSet("other", "prod", map[string]string{"K": "v2"}); err != nil {
+	// Replacing a preset on an inactive config must not re-apply.
+	if err := a.ReplacePreset("other", "prod", map[string]string{"K": "v2"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(*calls) != 0 {
-		t.Errorf("replacing a set on an inactive config re-applied: %v", *calls)
+		t.Errorf("replacing a preset on an inactive config re-applied: %v", *calls)
 	}
 
-	// Give "debug" a set and activate it so it becomes the active config AND
-	// active set together.
+	// Give "debug" a preset and activate it so it becomes the active config
+	// AND active preset together.
 	if err := a.SetVar("debug", "prod", "K", "v1"); err != nil {
 		t.Fatal(err)
 	}
@@ -373,32 +515,32 @@ func TestReplaceSetReactivatesWhenActiveSet(t *testing.T) {
 	}
 
 	*calls = nil
-	if err := a.ReplaceSet("debug", "prod", map[string]string{"K": "v2"}); err != nil {
-		t.Fatalf("ReplaceSet: %v", err)
+	if err := a.ReplacePreset("debug", "prod", map[string]string{"K": "v2"}); err != nil {
+		t.Fatalf("ReplacePreset: %v", err)
 	}
 	if !called(*calls, "bootstrap") {
-		t.Errorf("replacing the active set did not re-activate: %v", *calls)
+		t.Errorf("replacing the active preset did not re-activate: %v", *calls)
 	}
 	info, _, err := cfgstore.Get(a.Dir, "debug")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Meta.VariableSets["prod"]["K"] != "v2" {
-		t.Errorf("VariableSets = %+v, want K=v2", info.Meta.VariableSets)
+	if info.Meta.Presets["prod"]["K"] != "v2" {
+		t.Errorf("Presets = %+v, want K=v2", info.Meta.Presets)
 	}
 
 	*calls = nil
-	// Replacing a *different, non-active* set on the active config must not
-	// re-apply.
-	if err := a.ReplaceSet("debug", "staging", map[string]string{"K": "v1"}); err != nil {
+	// Replacing a *different, non-active* preset on the active config must
+	// not re-apply.
+	if err := a.ReplacePreset("debug", "staging", map[string]string{"K": "v1"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(*calls) != 0 {
-		t.Errorf("replacing a non-active set on the active config re-applied: %v", *calls)
+		t.Errorf("replacing a non-active preset on the active config re-applied: %v", *calls)
 	}
 }
 
-func TestUpdateConfigMetaPartialAndDistroValidation(t *testing.T) {
+func TestUpdateConfigMetaRemoteURL(t *testing.T) {
 	setup(t, "")
 	a, err := app.New()
 	if err != nil {
@@ -409,8 +551,8 @@ func TestUpdateConfigMetaPartialAndDistroValidation(t *testing.T) {
 	}
 
 	url := "https://example.com/c.yaml"
-	if err := a.UpdateConfigMeta("mine", nil, &url); err != nil {
-		t.Fatalf("UpdateConfigMeta (remote only): %v", err)
+	if err := a.UpdateConfigMeta("mine", &url); err != nil {
+		t.Fatalf("UpdateConfigMeta: %v", err)
 	}
 	info, _, err := cfgstore.Get(a.Dir, "mine")
 	if err != nil {
@@ -419,54 +561,27 @@ func TestUpdateConfigMetaPartialAndDistroValidation(t *testing.T) {
 	if info.Meta.RemoteURL != url {
 		t.Errorf("RemoteURL = %q, want %q", info.Meta.RemoteURL, url)
 	}
-	if info.Meta.Distro != "" {
-		t.Errorf("Distro = %q, want unchanged (nil param)", info.Meta.Distro)
-	}
 
-	// distro must exist in the registry (shipped def "core" always does).
-	distroName := "core"
-	if err := a.UpdateConfigMeta("mine", &distroName, nil); err != nil {
-		t.Fatalf("UpdateConfigMeta (known distro): %v", err)
+	// nil leaves it alone; "" clears it.
+	if err := a.UpdateConfigMeta("mine", nil); err != nil {
+		t.Fatalf("UpdateConfigMeta(nil): %v", err)
 	}
-	info, _, err = cfgstore.Get(a.Dir, "mine")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Meta.Distro != "core" {
-		t.Errorf("Distro = %q, want core", info.Meta.Distro)
-	}
+	info, _, _ = cfgstore.Get(a.Dir, "mine")
 	if info.Meta.RemoteURL != url {
-		t.Errorf("RemoteURL = %q, want unchanged", info.Meta.RemoteURL)
+		t.Errorf("RemoteURL = %q after a nil update, want unchanged", info.Meta.RemoteURL)
 	}
-
-	bogus := "no-such-distro"
-	if err := a.UpdateConfigMeta("mine", &bogus, nil); err == nil || !state.IsBadRequest(err) {
-		t.Fatalf("UpdateConfigMeta with unknown distro: err=%v, want a state.BadRequest-marked error", err)
-	}
-	info, _, err = cfgstore.Get(a.Dir, "mine")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Meta.Distro != "core" {
-		t.Errorf("Distro = %q after rejected update, want unchanged core", info.Meta.Distro)
-	}
-
-	// "" clears back to the global default.
 	empty := ""
-	if err := a.UpdateConfigMeta("mine", &empty, nil); err != nil {
-		t.Fatalf("UpdateConfigMeta (clear distro): %v", err)
+	if err := a.UpdateConfigMeta("mine", &empty); err != nil {
+		t.Fatalf("UpdateConfigMeta(clear): %v", err)
 	}
-	info, _, err = cfgstore.Get(a.Dir, "mine")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Meta.Distro != "" {
-		t.Errorf("Distro = %q, want cleared", info.Meta.Distro)
+	info, _, _ = cfgstore.Get(a.Dir, "mine")
+	if info.Meta.RemoteURL != "" {
+		t.Errorf("RemoteURL = %q, want cleared", info.Meta.RemoteURL)
 	}
 }
 
 func TestUpdateConfigMetaReactivatesWhenActive(t *testing.T) {
-	calls := setup(t, "")
+	calls := setup(t, "state = running")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
 
@@ -480,7 +595,7 @@ func TestUpdateConfigMetaReactivatesWhenActive(t *testing.T) {
 
 	*calls = nil
 	url := "https://example.com/c.yaml"
-	if err := a.UpdateConfigMeta("debug", nil, &url); err != nil {
+	if err := a.UpdateConfigMeta("debug", &url); err != nil {
 		t.Fatalf("UpdateConfigMeta: %v", err)
 	}
 	if !called(*calls, "bootstrap") {
@@ -504,20 +619,19 @@ func TestGetPutSettings(t *testing.T) {
 	}
 
 	grpc := 5000
-	swap := true
-	if err := a.PutSettings(&grpc, nil, &swap); err != nil {
+	if err := a.PutSettings(&grpc, nil); err != nil {
 		t.Fatalf("PutSettings: %v", err)
 	}
 	s, err = a.GetSettings()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.GRPCPort != 5000 || s.HTTPPort != 14318 || !s.MenuDistroSwap {
+	if s.GRPCPort != 5000 || s.HTTPPort != 14318 {
 		t.Errorf("GetSettings() after partial PutSettings = %+v", s)
 	}
 
 	bad := 70000
-	if err := a.PutSettings(&bad, nil, nil); err == nil {
+	if err := a.PutSettings(&bad, nil); err == nil {
 		t.Fatal("PutSettings with out-of-range port: want error, got nil")
 	}
 	s, err = a.GetSettings()
@@ -529,7 +643,7 @@ func TestGetPutSettings(t *testing.T) {
 	}
 
 	zero := 0
-	if err := a.PutSettings(nil, &zero, nil); err == nil {
+	if err := a.PutSettings(nil, &zero); err == nil {
 		t.Fatal("PutSettings with port 0: want error, got nil")
 	}
 }
@@ -552,18 +666,18 @@ func TestEnvInfo(t *testing.T) {
 	}
 }
 
-func TestFetchDistro(t *testing.T) {
+func TestEnsureDistro(t *testing.T) {
 	setup(t, "")
 	fakeDistro(t, "exit 0")
 	a, err := app.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.FetchDistro("fake"); err != nil {
-		t.Fatalf("FetchDistro(fake): %v", err)
+	if _, err := a.EnsureDistro("fake", nil); err != nil {
+		t.Fatalf("EnsureDistro(fake): %v", err)
 	}
-	if err := a.FetchDistro("no-such-distro"); err == nil {
-		t.Fatal("FetchDistro(no-such-distro): want error, got nil")
+	if _, err := a.EnsureDistro("no-such-distro", nil); err == nil {
+		t.Fatal("EnsureDistro(no-such-distro): want error, got nil")
 	}
 }
 
@@ -765,7 +879,7 @@ func TestRemoveDistro(t *testing.T) {
 	}
 }
 
-func TestRenameSetApp(t *testing.T) {
+func TestRenamePresetApp(t *testing.T) {
 	setup(t, "")
 	a, err := app.New()
 	if err != nil {
@@ -777,21 +891,21 @@ func TestRenameSetApp(t *testing.T) {
 	if err := a.SetVar("cfg", "prod", "HOST", "example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.UseSet("cfg", "prod"); err != nil {
+	if err := a.UsePreset("cfg", "prod"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.RenameSet("cfg", "prod", "production"); err != nil {
-		t.Fatalf("RenameSet: %v", err)
+	if err := a.RenamePreset("cfg", "prod", "production"); err != nil {
+		t.Fatalf("RenamePreset: %v", err)
 	}
 	info, _, err := a.Config("cfg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Meta.ActiveSet != "production" || info.Meta.VariableSets["production"]["HOST"] != "example.com" {
+	if info.Meta.ActivePreset != "production" || info.Meta.Presets["production"]["HOST"] != "example.com" {
 		t.Fatalf("info.Meta = %+v, want the active set renamed with its values intact", info.Meta)
 	}
 
-	if err := a.RenameSet("cfg", "no-such-set", "x"); err == nil {
+	if err := a.RenamePreset("cfg", "no-such-preset", "x"); err == nil {
 		t.Fatal("RenameSet from a nonexistent set: want error, got nil")
 	}
 }
@@ -857,41 +971,7 @@ func TestLogStats(t *testing.T) {
 	}
 }
 
-func TestRollbackRestoresAndApplies(t *testing.T) {
-	calls := setup(t, "")
-	fakeDistro(t, "exit 0")
-	listenPort(t)
-
-	a, err := app.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Activate("debug", ""); err != nil {
-		t.Fatal(err)
-	}
-	// Break the config behind compy's back (a write through the app would
-	// re-activate and snapshot the broken config as the new last-good).
-	if err := cfgstore.WriteYAML(a.Dir, "debug", "broken: true\n"); err != nil {
-		t.Fatal(err)
-	}
-
-	*calls = nil
-	if err := a.Rollback(); err != nil {
-		t.Fatalf("Rollback() = %v, want nil", err)
-	}
-	_, yaml, err := cfgstore.Get(a.Dir, "debug")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(yaml, "broken") {
-		t.Errorf("config not restored: %q", yaml)
-	}
-	if !called(*calls, "bootstrap") {
-		t.Errorf("rollback did not re-apply: %v", *calls)
-	}
-}
-
-func TestApplyProbeFailureHintsRollback(t *testing.T) {
+func TestActivateStartupFailureReportsTheLog(t *testing.T) {
 	// Bind then release a port: nothing listens there, so the probe fails
 	// (and we are not at the mercy of whatever holds the default port).
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -923,9 +1003,6 @@ func TestApplyProbeFailureHintsRollback(t *testing.T) {
 	err = a.Activate("debug", "")
 	if err == nil {
 		t.Fatal("Activate() = nil, want probe failure")
-	}
-	if !strings.Contains(err.Error(), "compy rollback") {
-		t.Errorf("error = %q, want a rollback hint", err)
 	}
 	if !strings.Contains(err.Error(), "bind: address already in use") {
 		t.Errorf("error = %q, want the log tail", err)
@@ -1175,9 +1252,6 @@ func TestActivateProbeFallsBackToLaunchdRunning(t *testing.T) {
 	if err := a.Activate("debug", ""); err != nil {
 		t.Fatalf("Activate() = %v, want nil (launchd reports the job running)", err)
 	}
-	if _, err := os.Stat(filepath.Join(a.Dir, "last-good", "settings.json")); err != nil {
-		t.Errorf("no last-good snapshot after a launchd-confirmed start: %v", err)
-	}
 }
 
 // A stale v1 process (the old tray) can recreate config/ AFTER a completed
@@ -1307,26 +1381,30 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 		{"DeleteConfig unknown", func() error { return a.DeleteConfig(nosuch) }},
 		{"DeleteConfig active", func() error { return a.DeleteConfig("mine") }},
 		{"WriteConfigYAML unknown", func() error { return a.WriteConfigYAML(nosuch, "") }},
-		{"UpdateConfigMeta unknown config", func() error { return a.UpdateConfigMeta(nosuch, nil, nil) }},
-		{"UpdateConfigMeta unknown distro", func() error { return a.UpdateConfigMeta("mine", &nosuch, nil) }},
+		{"UpdateConfigMeta unknown config", func() error { return a.UpdateConfigMeta(nosuch, nil) }},
 		{"Activate unknown config", func() error { return a.Activate(nosuch, "") }},
-		{"Activate unknown set", func() error { return a.Activate("mine", nosuch) }},
+		{"Activate unknown preset", func() error { return a.Activate("mine", nosuch) }},
 		{"ValidateConfig unknown config", func() error { return a.ValidateConfig(nosuch) }},
 		{"Sync non-remote", func() error { return a.Sync("mine") }},
 		{"Resync non-remote", func() error { return a.Resync("mine") }},
-		{"ReplaceSet unknown config", func() error { return a.ReplaceSet(nosuch, "dev", nil) }},
-		{"ReplaceSet invalid set name", func() error { return a.ReplaceSet("mine", "Bad Set", nil) }},
-		{"UseSet unknown set", func() error { return a.UseSet("other", nosuch) }},
-		{"DeleteSet unknown set", func() error { return a.DeleteSet("mine", nosuch) }},
-		{"DeleteSet active set", func() error { return a.DeleteSet("mine", "dev") }},
-		{"RenameSet unknown set", func() error { return a.RenameSet("mine", nosuch, "fresh") }},
-		{"RenameSet invalid target", func() error { return a.RenameSet("mine", "dev", "Bad Set") }},
-		{"SetVar invalid set name", func() error { return a.SetVar("mine", "Bad Set", "K", "v") }},
+		{"Reset non-builtin", func() error { return a.Reset("mine") }},
+		{"Reset unmodified builtin", func() error { return a.Reset("debug") }},
+		{"RenameConfig unknown", func() error { return a.RenameConfig(nosuch, "fresh") }},
+		{"RenameConfig existing target", func() error { return a.RenameConfig("mine", "other") }},
+		{"RenameConfig invalid target", func() error { return a.RenameConfig("mine", "Bad Name") }},
+		{"ReplaceSet unknown config", func() error { return a.ReplacePreset(nosuch, "dev", nil) }},
+		{"ReplaceSet invalid set name", func() error { return a.ReplacePreset("mine", "Bad Preset", nil) }},
+		{"UseSet unknown set", func() error { return a.UsePreset("other", nosuch) }},
+		{"DeleteSet unknown set", func() error { return a.DeletePreset("mine", nosuch) }},
+		{"DeletePreset active preset", func() error { return a.DeletePreset("mine", "dev") }},
+		{"RenamePreset unknown preset", func() error { return a.RenamePreset("mine", nosuch, "fresh") }},
+		{"RenamePreset invalid target", func() error { return a.RenamePreset("mine", "dev", "Bad Preset") }},
+		{"SetVar invalid preset name", func() error { return a.SetVar("mine", "Bad Preset", "K", "v") }},
 		{"AddDistro duplicate", func() error { return a.AddDistro("fake", missing) }},
 		{"AddDistro missing binary", func() error { return a.AddDistro("fresh", missing) }},
 		{"UseDistro unknown", func() error { return a.UseDistro(nosuch) }},
-		{"FetchDistro unknown", func() error { return a.FetchDistro(nosuch) }},
-		{"PutSettings port out of range", func() error { p := 99999; return a.PutSettings(&p, nil, nil) }},
+		{"EnsureDistro unknown", func() error { _, err := a.EnsureDistro(nosuch, nil); return err }},
+		{"PutSettings port out of range", func() error { p := 99999; return a.PutSettings(&p, nil) }},
 	}
 	for _, tc := range cases {
 		err := tc.fn()
@@ -1341,7 +1419,14 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 
 	// A configuration the collector itself rejects is the user's YAML being
 	// wrong, not our fault: the collector's diagnostics are the whole answer.
-	if err := a.UpdateConfigMeta("other", strPtr("broken"), nil); err != nil {
+	// (The reject is faked by pointing the one collector at the failing
+	// binary registered above.)
+	sel, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel.Distro = "broken"
+	if err := state.SaveSettings(sel); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.ValidateConfig("other"); err == nil || !state.IsBadRequest(err) {
@@ -1351,8 +1436,6 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 		t.Errorf("Activate with a config the collector rejects: err = %v, want state.BadRequest-marked", err)
 	}
 }
-
-func strPtr(s string) *string { return &s }
 
 // TestBadRequestSurvivesWrapping guards the marker against the commonest way
 // to lose it: a caller adding context with fmt.Errorf("%w").
@@ -1495,4 +1578,550 @@ func TestGenuineFaultsStay500(t *testing.T) {
 			t.Errorf("UseDistro err = %q: that sentence claims the config is incompatible, which is not what happened", err)
 		}
 	})
+}
+
+// TestActivateStartupFailureRestoresPrevious is the design's failure
+// guarantee (docs/design/handoff/README.md, "On failure"): a configuration
+// the collector accepts but cannot start puts the previous configuration —
+// and its preset — back, and the error names what is still running so the UI
+// can say so.
+func TestActivateStartupFailureRestoresPrevious(t *testing.T) {
+	calls := setup(t, "")
+	fakeDistro(t, "exit 0")
+	port := listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetVar("debug", "prod", "K", "v"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", "prod"); err != nil {
+		t.Fatalf("Activate(debug, prod): %v", err)
+	}
+	if err := a.CreateConfig("other", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.LogPath(), []byte("boom: cannot start\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing listens on the probe port from here on, so "other" validates
+	// but never comes up.
+	closeListener(t, port)
+	*calls = nil
+
+	err = a.Activate("other", "")
+	if err == nil {
+		t.Fatal("Activate(other) = nil, want a startup failure")
+	}
+	if state.IsBadRequest(err) {
+		t.Errorf("startup failure marked BadRequest (400); a collector that won't start is a 500: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cannot start") {
+		t.Errorf("error = %q, want the collector's own log tail", err)
+	}
+	// launchd reports nothing running throughout this test, so the error
+	// must not claim otherwise; TestStillRunningOnlyWhenItActuallyIs covers
+	// the branch where the restore does come back up.
+	var sr interface{ StillRunning() string }
+	if errors.As(err, &sr) {
+		t.Errorf("error claims %q still running while launchd reports nothing", sr.StillRunning())
+	}
+
+	// The previous configuration and preset are the active ones again...
+	name, preset, err := a.ActiveConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "debug" || preset != "prod" {
+		t.Errorf("active = %q/%q after the failure, want debug/prod", name, preset)
+	}
+	// ...and it is what the LaunchAgent was left pointing at.
+	if plist := readPlist(t); !strings.Contains(plist, filepath.Join("configs", "debug", "config.yaml")) {
+		t.Errorf("plist still points at the failed config:\n%s", plist)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("the previous configuration was not put back: %v", *calls)
+	}
+}
+
+// TestActivateValidateFailureChangesNothing: a config the collector rejects
+// never reaches launchd, so there is nothing to restore.
+func TestActivateValidateFailureChangesNothing(t *testing.T) {
+	calls := setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("other", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Point the one collector at a binary that rejects everything.
+	rejecting := filepath.Join(t.TempDir(), "otelcol")
+	if err := os.WriteFile(rejecting, []byte("#!/bin/sh\necho 'unknown type' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SetDistroPath("fake", rejecting); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	err = a.Activate("other", "")
+	if err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("Activate with a rejected config: err = %v, want a BadRequest-marked error", err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("a rejected config touched launchd: %v", *calls)
+	}
+	if name, _, _ := a.ActiveConfig(); name != "debug" {
+		t.Errorf("active config = %q after a rejected activation, want unchanged debug", name)
+	}
+}
+
+func TestStopAndStart(t *testing.T) {
+	calls := setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	if err := a.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if !called(*calls, "bootout") {
+		t.Errorf("Stop did not boot the job out: %v", *calls)
+	}
+	// Stopping records nothing: the active configuration is still named, so
+	// the UI can dim it rather than forget it.
+	st, err := a.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Config != "debug" {
+		t.Errorf("Status().Config = %q after Stop, want debug", st.Config)
+	}
+	// Stopping an already-stopped collector is not an error.
+	if err := a.Stop(); err != nil {
+		t.Fatalf("Stop (already stopped): %v", err)
+	}
+
+	*calls = nil
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("Start did not bring the job back: %v", *calls)
+	}
+}
+
+// TestDownloadProgressTracksAFetch: the Settings screen POSTs a fetch and
+// then polls, so the fetch must return immediately and the progress route
+// must go idle → downloading → done (or failed) on its own.
+func TestDownloadProgressTracksAFetch(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := progressStatus(t, a, "core"); got != "idle" {
+		t.Errorf("status before any fetch = %q, want idle", got)
+	}
+
+	// A distro nobody has heard of: the failure has to surface through the
+	// progress route, since the POST that started it is long gone.
+	if err := a.StartFetchDistro("no-such-distro"); err != nil {
+		t.Fatalf("StartFetchDistro returned an error instead of starting: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var status string
+	for time.Now().Before(deadline) {
+		if status = progressStatus(t, a, "no-such-distro"); status == "failed" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if status != "failed" {
+		t.Fatalf("status = %q, want failed", status)
+	}
+	p := progressOf(t, a, "no-such-distro")
+	if msg, _ := p["error"].(string); !strings.Contains(msg, "no-such-distro") {
+		t.Errorf("progress = %v, want an error naming the distro", p)
+	}
+
+	// A user-registered binary is already there: fetching it is instantly done.
+	fakeDistro(t, "exit 0")
+	if err := a.StartFetchDistro("fake"); err != nil {
+		t.Fatal(err)
+	}
+	for time.Now().Before(deadline) {
+		if status = progressStatus(t, a, "fake"); status == "done" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if status != "done" {
+		t.Fatalf("status for an already-present binary = %q, want done", status)
+	}
+	if pct := progressOf(t, a, "fake")["pct"]; pct != 100 {
+		t.Errorf("pct = %v when done, want 100", pct)
+	}
+}
+
+func progressOf(t *testing.T, a *app.App, name string) map[string]any {
+	t.Helper()
+	p, err := a.DownloadProgress(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := p.(map[string]any)
+	if !ok {
+		t.Fatalf("DownloadProgress(%q) = %T, want a map", name, p)
+	}
+	return m
+}
+
+func progressStatus(t *testing.T, a *app.App, name string) string {
+	t.Helper()
+	s, _ := progressOf(t, a, name)["status"].(string)
+	return s
+}
+
+// TestRecencyFollowsActivations: the menu bar orders configurations by when
+// they last ran, most recent first, and only successful activations count.
+func TestRecencyFollowsActivations(t *testing.T) {
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"debug", "otlp", "bronto", "debug"} {
+		if err := a.Activate(name, ""); err != nil {
+			t.Fatalf("Activate(%s): %v", name, err)
+		}
+	}
+
+	st, err := a.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"debug", "bronto", "otlp"}
+	if !slices.Equal(st.Recent, want) {
+		t.Errorf("Recent = %v, want %v (most recent first, each config once)", st.Recent, want)
+	}
+
+	// A failed activation does not enter the list.
+	if err := a.Activate("no-such-config", ""); err == nil {
+		t.Fatal("Activate(no-such-config) = nil, want an error")
+	}
+	st, _ = a.Status()
+	if !slices.Equal(st.Recent, want) {
+		t.Errorf("Recent = %v after a failed activation, want it unchanged %v", st.Recent, want)
+	}
+}
+
+func TestRecencyIsCapped(t *testing.T) {
+	setup(t, "")
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 25; i++ {
+		s.Recent = state.Remember(s.Recent, fmt.Sprintf("cfg-%d", i))
+	}
+	if len(s.Recent) != 20 {
+		t.Fatalf("len(Recent) = %d, want it capped at 20", len(s.Recent))
+	}
+	if s.Recent[0] != "cfg-24" || s.Recent[19] != "cfg-5" {
+		t.Errorf("Recent = %v, want cfg-24 first and cfg-5 last", s.Recent)
+	}
+}
+
+// TestEditingTheRunningConfigIntoAFailureRestoresIt is the review's
+// counter-example. Every reactivate path — WriteConfigYAML, Sync, UseDistro,
+// preset writes — persists the user's intent BEFORE re-activating, so a
+// snapshot taken inside Activate would capture the already-broken state and
+// "restore" it. The snapshot must therefore be of the last setup that
+// actually started, taken on success.
+func TestEditingTheRunningConfigIntoAFailureRestoresIt(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0") // validates anything; nothing ever listens
+
+	// Staged launchd: print #1 is reactivateIf's guard (the collector IS
+	// running, so the edit re-applies), #2 is the failing activation's
+	// probe fallback (not running: the start failed), everything after is
+	// the restore coming up.
+	prints := 0
+	origExec := launchd.Exec
+	launchd.Exec = func(args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "print" {
+			prints++
+			if prints != 2 {
+				return []byte("state = running"), nil
+			}
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { launchd.Exec = origExec })
+	port := listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetVar("debug", "prod", "K", "v"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", "prod"); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	_, good, err := a.Config("debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// From here the collector never comes up.
+	closeListener(t, port)
+	if err := os.WriteFile(a.LogPath(), []byte("boom: cannot start\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	broken := good + "\n# valid yaml the collector accepts but cannot run\n"
+	werr := a.WriteConfigYAML("debug", broken)
+	if werr == nil {
+		t.Fatal("WriteConfigYAML with a start-failing config = nil, want an error")
+	}
+	if state.IsBadRequest(werr) {
+		t.Errorf("startup failure marked BadRequest (400), want a 500: %v", werr)
+	}
+
+	_, onDisk, err := a.Config("debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if onDisk != good {
+		t.Errorf("the broken edit survived the restore:\n%q\nwant the pre-edit YAML:\n%q", onDisk, good)
+	}
+
+	// The restore put debug · prod back and launchd reports it running, so
+	// the error must say so (the not-running side of the honesty gate is
+	// TestStillRunningOnlyWhenItActuallyIs).
+	var sr interface{ StillRunning() string }
+	if !errors.As(werr, &sr) || sr.StillRunning() != "debug · prod" {
+		t.Errorf("err = %v, want a still-running claim of %q", werr, "debug · prod")
+	}
+}
+
+// TestEditingTheStoppedActiveConfigStaysStopped pins reactivateIf's guard:
+// editing the active config while the collector is stopped writes the edit
+// and leaves the collector stopped — no bootstrap, no error.
+func TestEditingTheStoppedActiveConfigStaysStopped(t *testing.T) {
+	calls := setup(t, "")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	if err := a.WriteConfigYAML("debug", "receivers: {}\n# edited while stopped\n"); err != nil {
+		t.Fatalf("WriteConfigYAML while stopped: %v", err)
+	}
+	if called(*calls, "bootstrap") || called(*calls, "kickstart") {
+		t.Errorf("editing the stopped active config started the collector: %v", *calls)
+	}
+	_, yaml, err := cfgstore.Get(a.Dir, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(yaml, "# edited while stopped") {
+		t.Errorf("yaml not written: %q", yaml)
+	}
+}
+
+// TestUseDistroStartupFailureRestoresTheBinary: switching the one collector
+// to a binary that won't start puts the working one back, settings included.
+func TestUseDistroStartupFailureRestoresTheBinary(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+	port := listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	other := filepath.Join(t.TempDir(), "otelcol")
+	if err := os.WriteFile(other, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AddDistro("other", other); err != nil {
+		t.Fatal(err)
+	}
+
+	closeListener(t, port)
+	err = a.UseDistro("other")
+	if err == nil {
+		t.Fatal("UseDistro onto a collector that won't start = nil, want an error")
+	}
+
+	s, lerr := state.LoadSettings()
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if s.Distro != "fake" {
+		t.Errorf("settings.Distro = %q after a failed switch, want the working %q back", s.Distro, "fake")
+	}
+	// The message has to match what actually happened: the switch did NOT
+	// stick, so it must not claim the default "is now other", and the
+	// collector's own diagnostic stays wrapped.
+	if strings.Contains(err.Error(), "default collector is now") {
+		t.Errorf("error = %q, but the switch was reverted", err)
+	}
+	if !strings.Contains(err.Error(), "other") || !strings.Contains(err.Error(), "fake") {
+		t.Errorf("error = %q, want it to name both the collector that failed and the one still in use", err)
+	}
+	if !strings.Contains(err.Error(), "did not come up") {
+		t.Errorf("error = %q, want the collector diagnostic kept", err)
+	}
+}
+
+// TestStillRunningOnlyWhenItActuallyIs: the reassurance is a claim about the
+// world, so it is made only when launchd confirms the restored job is up.
+func TestStillRunningOnlyWhenItActuallyIs(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+	port := listenPort(t)
+
+	// launchd reports "not running" for the failing activation's check, then
+	// "running" once the previous configuration has been put back.
+	prints := 0
+	orig := launchd.Exec
+	launchd.Exec = func(args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "print" {
+			prints++
+			if prints > 1 {
+				return []byte("state = running"), nil
+			}
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { launchd.Exec = orig })
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetVar("debug", "prod", "K", "v"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", "prod"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("other", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	closeListener(t, port)
+	prints = 0
+
+	err = a.Activate("other", "")
+	if err == nil {
+		t.Fatal("Activate(other) = nil, want a startup failure")
+	}
+	var sr interface{ StillRunning() string }
+	if !errors.As(err, &sr) || sr.StillRunning() != "debug · prod" {
+		t.Errorf("still_running = %v, want %q once launchd confirms the restore is up", err, "debug · prod")
+	}
+	if name, preset, _ := a.ActiveConfig(); name != "debug" || preset != "prod" {
+		t.Errorf("active = %q/%q, want debug/prod", name, preset)
+	}
+}
+
+func TestStopUninstallsTheJob(t *testing.T) {
+	calls := setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+	path, err := launchd.PlistPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("no plist after activate: %v", err)
+	}
+
+	*calls = nil
+	if err := a.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if !called(*calls, "bootout") {
+		t.Errorf("Stop did not boot the job out: %v", *calls)
+	}
+	// The plist has RunAtLoad: leaving it behind would resurrect the
+	// collector at the next login, which is not what "stopped" means.
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("plist still present after Stop (stat err = %v)", err)
+	}
+}
+
+// TestHealthOnlyReportsOurCollector: something else on :8888 — another
+// collector on the same machine — must not be reported as ours.
+func TestHealthOnlyReportsOurCollector(t *testing.T) {
+	setup(t, "") // launchd: our job is not running
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := a.Health()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if avail := h.(collector.Health).Available; avail {
+		t.Errorf("Health().available = true while our collector is stopped")
+	}
+
+	// With the job running the scrape is attempted; nothing serves :8888 in
+	// a test, so it comes back unavailable — but by the other route.
+	setup(t, "state = running")
+	a2, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a2.Health(); err != nil {
+		t.Errorf("Health() with the job running: %v", err)
+	}
 }

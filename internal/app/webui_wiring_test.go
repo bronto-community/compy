@@ -68,9 +68,9 @@ func TestWebUIWiring(t *testing.T) {
 		t.Fatalf("configs = %v, missing shipped debug config", configs)
 	}
 
-	// PUT /api/configs/debug/sets/test, then GET it back and check the
+	// PUT /api/configs/debug/presets/test, then GET it back and check the
 	// round-trip.
-	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/configs/debug/sets/test",
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/configs/debug/presets/test",
 		strings.NewReader(`{"values":{"FOO":"bar"}}`))
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestWebUIWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT sets/test = %d, want 200", resp.StatusCode)
+		t.Fatalf("PUT presets/test = %d, want 200", resp.StatusCode)
 	}
 	resp.Body.Close()
 
@@ -98,10 +98,10 @@ func TestWebUIWiring(t *testing.T) {
 	resp.Body.Close()
 	info, _ := detail["info"].(map[string]any)
 	meta, _ := info["meta"].(map[string]any)
-	sets, _ := meta["variable_sets"].(map[string]any)
-	testSet, _ := sets["test"].(map[string]any)
-	if testSet["FOO"] != "bar" {
-		t.Fatalf("config detail = %v, want variable set \"test\" with FOO=bar", detail)
+	presets, _ := meta["presets"].(map[string]any)
+	testPreset, _ := presets["test"].(map[string]any)
+	if testPreset["FOO"] != "bar" {
+		t.Fatalf("config detail = %v, want preset \"test\" with FOO=bar", detail)
 	}
 
 	// POST /api/configs/{name}/validate against the real fake-distro binary.
@@ -121,9 +121,9 @@ func TestWebUIWiring(t *testing.T) {
 		t.Fatalf("validate result = %v, want ok:true", vresult)
 	}
 
-	// PUT a set, POST its rename, then GET config and assert the renamed set
-	// is present with its values intact (and the old name is gone).
-	req, err = http.NewRequest(http.MethodPut, srv.URL+"/api/configs/debug/sets/stage",
+	// PUT a preset, POST its rename, then GET config and assert the renamed
+	// preset is present with its values intact (and the old name is gone).
+	req, err = http.NewRequest(http.MethodPut, srv.URL+"/api/configs/debug/presets/stage",
 		strings.NewReader(`{"values":{"HOST":"stage.example.com"}}`))
 	if err != nil {
 		t.Fatal(err)
@@ -133,17 +133,17 @@ func TestWebUIWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT sets/stage = %d, want 200", resp.StatusCode)
+		t.Fatalf("PUT presets/stage = %d, want 200", resp.StatusCode)
 	}
 	resp.Body.Close()
 
-	resp, err = http.Post(srv.URL+"/api/configs/debug/sets/stage/rename", "application/json",
+	resp, err = http.Post(srv.URL+"/api/configs/debug/presets/stage/rename", "application/json",
 		strings.NewReader(`{"to":"staging"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST sets/stage/rename = %d, want 200", resp.StatusCode)
+		t.Fatalf("POST presets/stage/rename = %d, want 200", resp.StatusCode)
 	}
 	resp.Body.Close()
 
@@ -160,12 +160,12 @@ func TestWebUIWiring(t *testing.T) {
 	resp.Body.Close()
 	info, _ = detail["info"].(map[string]any)
 	meta, _ = info["meta"].(map[string]any)
-	sets, _ = meta["variable_sets"].(map[string]any)
-	if _, stillThere := sets["stage"]; stillThere {
+	presets, _ = meta["presets"].(map[string]any)
+	if _, stillThere := presets["stage"]; stillThere {
 		t.Fatalf("config detail = %v, \"stage\" should be gone after rename", detail)
 	}
-	staging, _ := sets["staging"].(map[string]any)
+	staging, _ := presets["staging"].(map[string]any)
 	if staging["HOST"] != "stage.example.com" {
-		t.Fatalf("config detail = %v, want variable set \"staging\" with HOST intact after rename", detail)
+		t.Fatalf("config detail = %v, want preset \"staging\" with HOST intact after rename", detail)
 	}
 }

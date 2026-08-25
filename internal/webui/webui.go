@@ -31,10 +31,12 @@ type API struct {
 	SetOSEnv func(on bool) error
 
 	GetSettings func() (map[string]any, error)
-	PutSettings func(grpcPort, httpPort *int, menuDistroSwap *bool) error // partial: nil = unchanged
+	PutSettings func(grpcPort, httpPort *int) error // partial: nil = unchanged
 
+	Health   func() (any, error) // collector's own metrics; {"available": false} when stopped
 	Apply    func() error
-	Rollback func() error
+	Stop     func() error // stop the collector; the active configuration stays named
+	Start    func() error // run the active configuration again
 	Validate func() error
 
 	Configs        func() (any, error) // configurations, JSON-marshalable
@@ -42,26 +44,29 @@ type API struct {
 	CreateFromURL  func(name, url string) error
 	GetConfig      func(name string) (any, error) // {"info":..., "yaml":...}
 	PutConfigYAML  func(name, yaml string) error
-	PutConfigMeta  func(name string, distro, remoteURL *string) error // partial: nil = unchanged
+	PutConfigMeta  func(name string, remoteURL *string) error // nil = unchanged
 	DeleteConfig   func(name string) error
 	CopyConfig     func(src, dst string) error
-	Activate       func(name, set string) error // make a configuration the running one; "" set keeps the current one
-	ValidateConfig func(name string) error      // validate this config (any config, not just the active one) against its own distro
+	Activate       func(name, preset string) error // make a configuration the running one; "" preset keeps the current one
+	ValidateConfig func(name string) error         // validate this config (any config, not just the active one) against its own distro
 	Sync           func(name string) error
 	Resync         func(name string) error
+	Reset          func(name string) error // restore a modified built-in config to its shipped version
+	RenameConfig   func(from, to string) error
 	SyncAll        func() ([]string, error)
 
-	PutSet    func(name, set string, values map[string]string) error // create/replace whole set
-	DeleteSet func(name, set string) error
-	UseSet    func(name, set string) error
-	RenameSet func(name, from, to string) error
+	PutPreset    func(name, preset string, values map[string]string) error // create/replace a whole preset
+	DeletePreset func(name, preset string) error
+	UsePreset    func(name, preset string) error
+	RenamePreset func(name, from, to string) error
 
-	Distros       func() (any, error)
-	AddDistro     func(name, path string) (string, error) // returns the override warning, "" if none
-	SetDistroPath func(name, path string) (string, error) // returns the override warning, "" if none
-	RemoveDistro  func(name string) (bool, error)         // returns whether removing it reverted to a shipped definition
-	UseDistro     func(name string) error
-	FetchDistro   func(name string) error
+	Distros          func() (any, error)
+	AddDistro        func(name, path string) (string, error) // returns the override warning, "" if none
+	SetDistroPath    func(name, path string) (string, error) // returns the override warning, "" if none
+	RemoveDistro     func(name string) (bool, error)         // returns whether removing it reverted to a shipped definition
+	UseDistro        func(name string) error
+	FetchDistro      func(name string) error // starts the download and returns; poll DownloadProgress
+	DownloadProgress func(name string) (any, error)
 }
 
 // badRequester is how a closure error asks to be reported as 400 Bad
@@ -70,6 +75,12 @@ type API struct {
 // already imports); webui matches the behaviour rather than the type, which
 // keeps this package free of internal dependencies in both directions.
 type badRequester interface{ BadRequest() bool }
+
+// stillRunner is how a closure error says what kept running when it failed:
+// the error body gains a "still_running" field naming it. state.StillRunning
+// marks them; webui matches the behaviour rather than the type, as with
+// badRequester.
+type stillRunner interface{ StillRunning() string }
 
 // isBadRequest reports whether err, or anything it wraps, is marked. It
 // unwraps rather than type-asserting: callers routinely add context with
@@ -101,8 +112,11 @@ func routes() []route {
 		{"GET", "/api/settings", handleGetSettings},
 		{"PUT", "/api/settings", handlePutSettings},
 
+		{"GET", "/api/collector/health", handleHealth},
+
 		{"POST", "/api/service/apply", handleApply},
-		{"POST", "/api/service/rollback", handleRollback},
+		{"POST", "/api/service/stop", handleStop},
+		{"POST", "/api/service/start", handleStart},
 		{"POST", "/api/service/validate", handleValidate},
 
 		{"GET", "/api/configs", handleConfigs},
@@ -117,11 +131,13 @@ func routes() []route {
 		{"POST", "/api/configs/{name}/validate", handleValidateConfig},
 		{"POST", "/api/configs/{name}/sync", handleSync},
 		{"POST", "/api/configs/{name}/resync", handleResync},
+		{"POST", "/api/configs/{name}/reset", handleReset},
+		{"POST", "/api/configs/{name}/rename", handleRenameConfig},
 		{"POST", "/api/configs/sync-all", handleSyncAll},
-		{"PUT", "/api/configs/{name}/sets/{set}", handlePutSet},
-		{"DELETE", "/api/configs/{name}/sets/{set}", handleDeleteSet},
-		{"POST", "/api/configs/{name}/sets/{set}/use", handleUseSet},
-		{"POST", "/api/configs/{name}/sets/{set}/rename", handleRenameSet},
+		{"PUT", "/api/configs/{name}/presets/{preset}", handlePutPreset},
+		{"DELETE", "/api/configs/{name}/presets/{preset}", handleDeletePreset},
+		{"POST", "/api/configs/{name}/presets/{preset}/use", handleUsePreset},
+		{"POST", "/api/configs/{name}/presets/{preset}/rename", handleRenamePreset},
 
 		{"GET", "/api/distros", handleDistros},
 		{"POST", "/api/distros", handleAddDistro},
@@ -129,6 +145,7 @@ func routes() []route {
 		{"DELETE", "/api/distros/{name}", handleRemoveDistro},
 		{"POST", "/api/distros/{name}/use", handleUseDistro},
 		{"POST", "/api/distros/{name}/fetch", handleFetchDistro},
+		{"GET", "/api/distros/{name}/progress", handleDownloadProgress},
 	}
 }
 
@@ -212,8 +229,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// writeErr renders an error body. A state.StillRunning-marked error (an
+// activation that failed and left the previous configuration running) also
+// carries "still_running", so the failure panel can name what survived
+// without parsing the message.
 func writeErr(w http.ResponseWriter, status int, err error) {
-	writeJSON(w, status, map[string]string{"error": err.Error()})
+	body := map[string]string{"error": err.Error()}
+	var sr stillRunner
+	if errors.As(err, &sr) && sr.StillRunning() != "" {
+		body["still_running"] = sr.StillRunning()
+	}
+	writeJSON(w, status, body)
 }
 
 // writeClosureErr reports an error returned by an App closure: a
@@ -264,19 +290,19 @@ func handleConfigs(api API) http.HandlerFunc {
 	}
 }
 
-// handleActivate reads an OPTIONAL JSON body {"set"}: the stopgap index.html
-// posts with no body at all, which must keep working, so an empty body is
+// handleActivate reads an OPTIONAL JSON body {"preset"}: a POST with no body
+// at all activates the configuration's current preset, so an empty body is
 // not an error — only a malformed (non-empty, invalid) one is.
 func handleActivate(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Set string `json:"set"`
+			Preset string `json:"preset"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeBodyErr(w, err)
 			return
 		}
-		if err := api.Activate(r.PathValue("name"), body.Set); err != nil {
+		if err := api.Activate(r.PathValue("name"), body.Preset); err != nil {
 			writeClosureErr(w, err)
 			return
 		}
@@ -368,15 +394,14 @@ func handleGetSettings(api API) http.HandlerFunc {
 func handlePutSettings(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			GRPCPort       *int  `json:"grpc_port"`
-			HTTPPort       *int  `json:"http_port"`
-			MenuDistroSwap *bool `json:"menu_distro_swap"`
+			GRPCPort *int `json:"grpc_port"`
+			HTTPPort *int `json:"http_port"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeBodyErr(w, err)
 			return
 		}
-		if err := api.PutSettings(body.GRPCPort, body.HTTPPort, body.MenuDistroSwap); err != nil {
+		if err := api.PutSettings(body.GRPCPort, body.HTTPPort); err != nil {
 			writeClosureErr(w, err)
 			return
 		}
@@ -399,9 +424,30 @@ func handleApply(api API) http.HandlerFunc {
 	}
 }
 
-func handleRollback(api API) http.HandlerFunc {
+func handleHealth(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := api.Rollback(); err != nil {
+		health, err := api.Health()
+		if err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, health)
+	}
+}
+
+func handleStop(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Stop(); err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleStart(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Start(); err != nil {
 			writeClosureErr(w, err)
 			return
 		}
@@ -490,14 +536,13 @@ func handlePutConfigYAML(api API) http.HandlerFunc {
 func handlePutConfigMeta(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Distro    *string `json:"distro"`
 			RemoteURL *string `json:"remote_url"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeBodyErr(w, err)
 			return
 		}
-		if err := api.PutConfigMeta(r.PathValue("name"), body.Distro, body.RemoteURL); err != nil {
+		if err := api.PutConfigMeta(r.PathValue("name"), body.RemoteURL); err != nil {
 			writeClosureErr(w, err)
 			return
 		}
@@ -552,6 +597,38 @@ func handleResync(api API) http.HandlerFunc {
 	}
 }
 
+// handleReset restores a modified built-in configuration to its shipped
+// version (the builtin twin of resync).
+func handleReset(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Reset(r.PathValue("name")); err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// handleRenameConfig's body is {"to"}; the active configuration follows the
+// rename, and a running one is re-applied (the closure's job, not this
+// handler's).
+func handleRenameConfig(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			To string `json:"to"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeBodyErr(w, err)
+			return
+		}
+		if err := api.RenameConfig(r.PathValue("name"), body.To); err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
 func handleSyncAll(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		synced, err := api.SyncAll()
@@ -563,13 +640,13 @@ func handleSyncAll(api API) http.HandlerFunc {
 	}
 }
 
-// handlePutSet treats an absent or null "values" as {}: the closure never
+// handlePutPreset treats an absent or null "values" as {}: the closure never
 // sees a nil map.
-func handlePutSet(api API) http.HandlerFunc {
+func handlePutPreset(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		set := r.PathValue("set")
-		if set == "" {
-			writeErr(w, http.StatusBadRequest, errors.New("set name required"))
+		preset := r.PathValue("preset")
+		if preset == "" {
+			writeErr(w, http.StatusBadRequest, errors.New("preset name required"))
 			return
 		}
 		var body struct {
@@ -582,7 +659,7 @@ func handlePutSet(api API) http.HandlerFunc {
 		if body.Values == nil {
 			body.Values = map[string]string{}
 		}
-		if err := api.PutSet(r.PathValue("name"), set, body.Values); err != nil {
+		if err := api.PutPreset(r.PathValue("name"), preset, body.Values); err != nil {
 			writeClosureErr(w, err)
 			return
 		}
@@ -590,14 +667,14 @@ func handlePutSet(api API) http.HandlerFunc {
 	}
 }
 
-func handleDeleteSet(api API) http.HandlerFunc {
+func handleDeletePreset(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		set := r.PathValue("set")
-		if set == "" {
-			writeErr(w, http.StatusBadRequest, errors.New("set name required"))
+		preset := r.PathValue("preset")
+		if preset == "" {
+			writeErr(w, http.StatusBadRequest, errors.New("preset name required"))
 			return
 		}
-		if err := api.DeleteSet(r.PathValue("name"), set); err != nil {
+		if err := api.DeletePreset(r.PathValue("name"), preset); err != nil {
 			writeClosureErr(w, err)
 			return
 		}
@@ -605,14 +682,14 @@ func handleDeleteSet(api API) http.HandlerFunc {
 	}
 }
 
-func handleUseSet(api API) http.HandlerFunc {
+func handleUsePreset(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		set := r.PathValue("set")
-		if set == "" {
-			writeErr(w, http.StatusBadRequest, errors.New("set name required"))
+		preset := r.PathValue("preset")
+		if preset == "" {
+			writeErr(w, http.StatusBadRequest, errors.New("preset name required"))
 			return
 		}
-		if err := api.UseSet(r.PathValue("name"), set); err != nil {
+		if err := api.UsePreset(r.PathValue("name"), preset); err != nil {
 			writeClosureErr(w, err)
 			return
 		}
@@ -620,13 +697,13 @@ func handleUseSet(api API) http.HandlerFunc {
 	}
 }
 
-// handleRenameSet's body is {"to"}; renaming the active set follows it (the
-// closure's job, not this handler's).
-func handleRenameSet(api API) http.HandlerFunc {
+// handleRenamePreset's body is {"to"}; renaming the active preset follows it
+// (the closure's job, not this handler's).
+func handleRenamePreset(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		set := r.PathValue("set")
-		if set == "" {
-			writeErr(w, http.StatusBadRequest, errors.New("set name required"))
+		preset := r.PathValue("preset")
+		if preset == "" {
+			writeErr(w, http.StatusBadRequest, errors.New("preset name required"))
 			return
 		}
 		var body struct {
@@ -636,7 +713,7 @@ func handleRenameSet(api API) http.HandlerFunc {
 			writeBodyErr(w, err)
 			return
 		}
-		if err := api.RenameSet(r.PathValue("name"), set, body.To); err != nil {
+		if err := api.RenamePreset(r.PathValue("name"), preset, body.To); err != nil {
 			writeClosureErr(w, err)
 			return
 		}
@@ -724,6 +801,18 @@ func handleFetchDistro(api API) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// handleDownloadProgress answers the poll that follows POST .../fetch.
+func handleDownloadProgress(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		progress, err := api.DownloadProgress(r.PathValue("name"))
+		if err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, progress)
 	}
 }
 

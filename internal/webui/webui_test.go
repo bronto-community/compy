@@ -13,42 +13,47 @@ func fakeAPI() API {
 	return API{
 		Status:   func() (map[string]any, error) { return map[string]any{"running": true}, nil },
 		Configs:  func() (any, error) { return []map[string]any{}, nil },
-		Activate: func(name, set string) error { return nil },
+		Activate: func(name, preset string) error { return nil },
 		Log:      func(lines int) (string, error) { return "", nil },
 
 		Env:      func() (map[string]string, string, error) { return map[string]string{}, "", nil },
 		SetOSEnv: func(on bool) error { return nil },
 
 		GetSettings: func() (map[string]any, error) { return map[string]any{}, nil },
-		PutSettings: func(grpcPort, httpPort *int, menuDistroSwap *bool) error { return nil },
+		PutSettings: func(grpcPort, httpPort *int) error { return nil },
 
+		Health:   func() (any, error) { return map[string]any{"available": false}, nil },
 		Apply:    func() error { return nil },
-		Rollback: func() error { return nil },
+		Stop:     func() error { return nil },
+		Start:    func() error { return nil },
 		Validate: func() error { return nil },
 
 		CreateConfig:   func(name, yaml string) error { return nil },
 		CreateFromURL:  func(name, url string) error { return nil },
 		GetConfig:      func(name string) (any, error) { return map[string]any{}, nil },
 		PutConfigYAML:  func(name, yaml string) error { return nil },
-		PutConfigMeta:  func(name string, distro, remoteURL *string) error { return nil },
+		PutConfigMeta:  func(name string, remoteURL *string) error { return nil },
 		DeleteConfig:   func(name string) error { return nil },
 		CopyConfig:     func(src, dst string) error { return nil },
 		ValidateConfig: func(name string) error { return nil },
 		Sync:           func(name string) error { return nil },
 		Resync:         func(name string) error { return nil },
+		Reset:          func(name string) error { return nil },
+		RenameConfig:   func(from, to string) error { return nil },
 		SyncAll:        func() ([]string, error) { return nil, nil },
 
-		PutSet:    func(name, set string, values map[string]string) error { return nil },
-		DeleteSet: func(name, set string) error { return nil },
-		UseSet:    func(name, set string) error { return nil },
-		RenameSet: func(name, from, to string) error { return nil },
+		PutPreset:    func(name, preset string, values map[string]string) error { return nil },
+		DeletePreset: func(name, preset string) error { return nil },
+		UsePreset:    func(name, preset string) error { return nil },
+		RenamePreset: func(name, from, to string) error { return nil },
 
-		Distros:       func() (any, error) { return []map[string]any{}, nil },
-		AddDistro:     func(name, path string) (string, error) { return "", nil },
-		SetDistroPath: func(name, path string) (string, error) { return "", nil },
-		RemoveDistro:  func(name string) (bool, error) { return false, nil },
-		UseDistro:     func(name string) error { return nil },
-		FetchDistro:   func(name string) error { return nil },
+		Distros:          func() (any, error) { return []map[string]any{}, nil },
+		AddDistro:        func(name, path string) (string, error) { return "", nil },
+		SetDistroPath:    func(name, path string) (string, error) { return "", nil },
+		RemoveDistro:     func(name string) (bool, error) { return false, nil },
+		UseDistro:        func(name string) error { return nil },
+		FetchDistro:      func(name string) error { return nil },
+		DownloadProgress: func(name string) (any, error) { return map[string]any{"status": "idle", "pct": 0}, nil },
 	}
 }
 
@@ -58,7 +63,7 @@ func TestConfigsRoutes(t *testing.T) {
 		return []map[string]any{{"name": "debug", "provenance": "shipped"}}, nil
 	}
 	var activated string
-	api.Activate = func(name, set string) error { activated = name; return nil }
+	api.Activate = func(name, preset string) error { activated = name; return nil }
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
@@ -279,21 +284,20 @@ func call(h http.HandlerFunc, method, body string, pathValues map[string]string)
 func TestPutSettingsRoute(t *testing.T) {
 	api := fakeAPI()
 	var gotGRPC, gotHTTP *int
-	var gotSwap *bool
-	api.PutSettings = func(grpcPort, httpPort *int, menuDistroSwap *bool) error {
-		gotGRPC, gotHTTP, gotSwap = grpcPort, httpPort, menuDistroSwap
+	api.PutSettings = func(grpcPort, httpPort *int) error {
+		gotGRPC, gotHTTP = grpcPort, httpPort
 		return nil
 	}
 	api.GetSettings = func() (map[string]any, error) {
-		return map[string]any{"grpc_port": 5000, "http_port": 14318, "menu_distro_swap": true}, nil
+		return map[string]any{"grpc_port": 5000, "http_port": 14318}, nil
 	}
 
 	rec := call(handlePutSettings(api), http.MethodPut, `{"grpc_port":5000}`, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if gotGRPC == nil || *gotGRPC != 5000 || gotHTTP != nil || gotSwap != nil {
-		t.Fatalf("PutSettings got grpc=%v http=%v swap=%v, want grpc=5000 http=nil swap=nil", gotGRPC, gotHTTP, gotSwap)
+	if gotGRPC == nil || *gotGRPC != 5000 || gotHTTP != nil {
+		t.Fatalf("PutSettings got grpc=%v http=%v, want grpc=5000 http=nil", gotGRPC, gotHTTP)
 	}
 	var body map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
@@ -308,7 +312,7 @@ func TestPutSettingsRoute(t *testing.T) {
 		t.Fatalf("malformed body status = %d, want 400", rec.Code)
 	}
 
-	api.PutSettings = func(grpcPort, httpPort *int, menuDistroSwap *bool) error {
+	api.PutSettings = func(grpcPort, httpPort *int) error {
 		return errWithMessage("port out of range")
 	}
 	rec = call(handlePutSettings(api), http.MethodPut, `{"grpc_port":0}`, nil)
@@ -436,93 +440,93 @@ func TestValidateConfigRoute(t *testing.T) {
 	}
 }
 
-func TestPutSetRoute(t *testing.T) {
+func TestPutPresetRoute(t *testing.T) {
 	api := fakeAPI()
-	var gotName, gotSet string
+	var gotName, gotPreset string
 	var gotValues map[string]string
-	api.PutSet = func(name, set string, values map[string]string) error {
-		gotName, gotSet, gotValues = name, set, values
+	api.PutPreset = func(name, preset string, values map[string]string) error {
+		gotName, gotPreset, gotValues = name, preset, values
 		return nil
 	}
-	pv := map[string]string{"name": "debug", "set": "prod"}
+	pv := map[string]string{"name": "debug", "preset": "prod"}
 
-	rec := call(handlePutSet(api), http.MethodPut, `{"values":{"k":"v"}}`, pv)
+	rec := call(handlePutPreset(api), http.MethodPut, `{"values":{"k":"v"}}`, pv)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if gotName != "debug" || gotSet != "prod" || gotValues["k"] != "v" {
-		t.Fatalf("PutSet got name=%q set=%q values=%v", gotName, gotSet, gotValues)
+	if gotName != "debug" || gotPreset != "prod" || gotValues["k"] != "v" {
+		t.Fatalf("PutPreset got name=%q preset=%q values=%v", gotName, gotPreset, gotValues)
 	}
 
 	// absent "values": {} not nil.
 	gotValues = nil
-	rec = call(handlePutSet(api), http.MethodPut, `{}`, pv)
+	rec = call(handlePutPreset(api), http.MethodPut, `{}`, pv)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	if gotValues == nil || len(gotValues) != 0 {
-		t.Fatalf("PutSet got values=%v, want empty non-nil map", gotValues)
+		t.Fatalf("PutPreset got values=%v, want empty non-nil map", gotValues)
 	}
 
 	// null "values": {} not nil.
 	gotValues = nil
-	rec = call(handlePutSet(api), http.MethodPut, `{"values":null}`, pv)
+	rec = call(handlePutPreset(api), http.MethodPut, `{"values":null}`, pv)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	if gotValues == nil || len(gotValues) != 0 {
-		t.Fatalf("PutSet got values=%v, want empty non-nil map", gotValues)
+		t.Fatalf("PutPreset got values=%v, want empty non-nil map", gotValues)
 	}
 
-	// empty set name: 400.
-	rec = call(handlePutSet(api), http.MethodPut, `{"values":{}}`, map[string]string{"name": "debug", "set": ""})
+	// empty preset name: 400.
+	rec = call(handlePutPreset(api), http.MethodPut, `{"values":{}}`, map[string]string{"name": "debug", "preset": ""})
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("empty set name status = %d, want 400", rec.Code)
+		t.Fatalf("empty preset name status = %d, want 400", rec.Code)
 	}
 
-	rec = call(handlePutSet(api), http.MethodPut, `not json`, pv)
+	rec = call(handlePutPreset(api), http.MethodPut, `not json`, pv)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed body status = %d, want 400", rec.Code)
 	}
 
-	api.PutSet = func(name, set string, values map[string]string) error { return errWithMessage("no such config") }
-	rec = call(handlePutSet(api), http.MethodPut, `{"values":{}}`, pv)
+	api.PutPreset = func(name, preset string, values map[string]string) error { return errWithMessage("no such config") }
+	rec = call(handlePutPreset(api), http.MethodPut, `{"values":{}}`, pv)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("closure error status = %d, want 500", rec.Code)
 	}
 }
 
-func TestDeleteSetAndUseSetRejectEmptySetName(t *testing.T) {
+func TestDeletePresetAndUsePresetRejectEmptyPresetName(t *testing.T) {
 	api := fakeAPI()
-	pv := map[string]string{"name": "debug", "set": ""}
+	pv := map[string]string{"name": "debug", "preset": ""}
 
-	rec := call(handleDeleteSet(api), http.MethodDelete, "", pv)
+	rec := call(handleDeletePreset(api), http.MethodDelete, "", pv)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("DeleteSet empty set status = %d, want 400", rec.Code)
+		t.Fatalf("DeletePreset empty preset status = %d, want 400", rec.Code)
 	}
 
-	rec = call(handleUseSet(api), http.MethodPost, "", pv)
+	rec = call(handleUsePreset(api), http.MethodPost, "", pv)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("UseSet empty set status = %d, want 400", rec.Code)
+		t.Fatalf("UsePreset empty preset status = %d, want 400", rec.Code)
 	}
 }
 
 func TestUpdateMetaRoute(t *testing.T) {
 	api := fakeAPI()
 	var gotName string
-	var gotDistro, gotRemoteURL *string
-	api.PutConfigMeta = func(name string, distro, remoteURL *string) error {
-		gotName, gotDistro, gotRemoteURL = name, distro, remoteURL
+	var gotRemoteURL *string
+	api.PutConfigMeta = func(name string, remoteURL *string) error {
+		gotName, gotRemoteURL = name, remoteURL
 		return nil
 	}
 	pv := map[string]string{"name": "debug"}
 
-	rec := call(handlePutConfigMeta(api), http.MethodPut, `{"distro":"core"}`, pv)
+	rec := call(handlePutConfigMeta(api), http.MethodPut, `{"remote_url":"https://x/y.yaml"}`, pv)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if gotName != "debug" || gotDistro == nil || *gotDistro != "core" || gotRemoteURL != nil {
-		t.Fatalf("PutConfigMeta got name=%q distro=%v remoteURL=%v", gotName, gotDistro, gotRemoteURL)
+	if gotName != "debug" || gotRemoteURL == nil || *gotRemoteURL != "https://x/y.yaml" {
+		t.Fatalf("PutConfigMeta got name=%q remoteURL=%v", gotName, gotRemoteURL)
 	}
 
 	rec = call(handlePutConfigMeta(api), http.MethodPut, `not json`, pv)
@@ -530,20 +534,19 @@ func TestUpdateMetaRoute(t *testing.T) {
 		t.Fatalf("malformed body status = %d, want 400", rec.Code)
 	}
 
-	api.PutConfigMeta = func(name string, distro, remoteURL *string) error { return errWithMessage("no such distro") }
-	rec = call(handlePutConfigMeta(api), http.MethodPut, `{"distro":"bogus"}`, pv)
+	api.PutConfigMeta = func(name string, remoteURL *string) error { return errWithMessage("write failed") }
+	rec = call(handlePutConfigMeta(api), http.MethodPut, `{"remote_url":"x"}`, pv)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("closure error status = %d, want 500", rec.Code)
 	}
 
-	// A BadRequest-marked unknown-distro error (app.UpdateConfigMeta's real
-	// behavior) reports 400, not the default 500.
-	api.PutConfigMeta = func(name string, distro, remoteURL *string) error {
-		return markBadRequest(errWithMessage(`no such distro "bogus"`))
+	// A BadRequest-marked error (an unknown config) reports 400, not 500.
+	api.PutConfigMeta = func(name string, remoteURL *string) error {
+		return markBadRequest(errWithMessage(`config "bogus" not found`))
 	}
-	rec = call(handlePutConfigMeta(api), http.MethodPut, `{"distro":"bogus"}`, pv)
+	rec = call(handlePutConfigMeta(api), http.MethodPut, `{"remote_url":"x"}`, pv)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("unknown distro (BadRequest-marked) status = %d, want 400", rec.Code)
+		t.Fatalf("unknown config (BadRequest-marked) status = %d, want 400", rec.Code)
 	}
 }
 
@@ -596,35 +599,104 @@ func TestAddDistroRoute(t *testing.T) {
 	}
 }
 
-func TestRenameSetRoute(t *testing.T) {
+func TestRenamePresetRoute(t *testing.T) {
 	api := fakeAPI()
 	var gotName, gotFrom, gotTo string
-	api.RenameSet = func(name, from, to string) error {
+	api.RenamePreset = func(name, from, to string) error {
 		gotName, gotFrom, gotTo = name, from, to
 		return nil
 	}
-	pv := map[string]string{"name": "debug", "set": "prod"}
+	pv := map[string]string{"name": "debug", "preset": "prod"}
 
-	rec := call(handleRenameSet(api), http.MethodPost, `{"to":"production"}`, pv)
+	rec := call(handleRenamePreset(api), http.MethodPost, `{"to":"production"}`, pv)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	if gotName != "debug" || gotFrom != "prod" || gotTo != "production" {
-		t.Fatalf("RenameSet got name=%q from=%q to=%q", gotName, gotFrom, gotTo)
+		t.Fatalf("RenamePreset got name=%q from=%q to=%q", gotName, gotFrom, gotTo)
 	}
 
-	rec = call(handleRenameSet(api), http.MethodPost, `not json`, pv)
+	rec = call(handleRenamePreset(api), http.MethodPost, `not json`, pv)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed body status = %d, want 400", rec.Code)
 	}
 
-	rec = call(handleRenameSet(api), http.MethodPost, `{"to":"x"}`, map[string]string{"name": "debug", "set": ""})
+	rec = call(handleRenamePreset(api), http.MethodPost, `{"to":"x"}`, map[string]string{"name": "debug", "preset": ""})
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("empty set name status = %d, want 400", rec.Code)
+		t.Fatalf("empty preset name status = %d, want 400", rec.Code)
 	}
 
-	api.RenameSet = func(name, from, to string) error { return errWithMessage("already exists") }
-	rec = call(handleRenameSet(api), http.MethodPost, `{"to":"production"}`, pv)
+	api.RenamePreset = func(name, from, to string) error { return errWithMessage("already exists") }
+	rec = call(handleRenamePreset(api), http.MethodPost, `{"to":"production"}`, pv)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("closure error status = %d, want 500", rec.Code)
+	}
+}
+
+func TestResetRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotName string
+	api.Reset = func(name string) error { gotName = name; return nil }
+	pv := map[string]string{"name": "debug"}
+
+	rec := call(handleReset(api), http.MethodPost, "", pv)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotName != "debug" {
+		t.Fatalf("Reset got name=%q, want debug", gotName)
+	}
+
+	// A user mistake (unmodified builtin, non-builtin) is BadRequest-marked
+	// by the closure and must arrive as 400.
+	api.Reset = func(name string) error {
+		return markBadRequest(errWithMessage(`config "debug" already matches the shipped version; nothing to reset`))
+	}
+	rec = call(handleReset(api), http.MethodPost, "", pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("BadRequest-marked closure error status = %d, want 400", rec.Code)
+	}
+
+	api.Reset = func(name string) error { return errWithMessage("disk on fire") }
+	rec = call(handleReset(api), http.MethodPost, "", pv)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("closure error status = %d, want 500", rec.Code)
+	}
+}
+
+func TestRenameConfigRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotFrom, gotTo string
+	api.RenameConfig = func(from, to string) error {
+		gotFrom, gotTo = from, to
+		return nil
+	}
+	pv := map[string]string{"name": "old"}
+
+	rec := call(handleRenameConfig(api), http.MethodPost, `{"to":"new"}`, pv)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotFrom != "old" || gotTo != "new" {
+		t.Fatalf("RenameConfig got from=%q to=%q", gotFrom, gotTo)
+	}
+
+	rec = call(handleRenameConfig(api), http.MethodPost, `not json`, pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed body status = %d, want 400", rec.Code)
+	}
+
+	// A collision is the caller's mistake: BadRequest-marked, 400.
+	api.RenameConfig = func(from, to string) error {
+		return markBadRequest(errWithMessage(`config "new" already exists`))
+	}
+	rec = call(handleRenameConfig(api), http.MethodPost, `{"to":"new"}`, pv)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("collision (BadRequest-marked) status = %d, want 400", rec.Code)
+	}
+
+	api.RenameConfig = func(from, to string) error { return errWithMessage("rename failed") }
+	rec = call(handleRenameConfig(api), http.MethodPost, `{"to":"new"}`, pv)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("closure error status = %d, want 500", rec.Code)
 	}
@@ -714,17 +786,17 @@ func TestRemoveDistroRoute(t *testing.T) {
 	}
 }
 
-func TestActivateWithSet(t *testing.T) {
+func TestActivateWithPreset(t *testing.T) {
 	api := fakeAPI()
-	var gotName, gotSet string
-	api.Activate = func(name, set string) error {
-		gotName, gotSet = name, set
+	var gotName, gotPreset string
+	api.Activate = func(name, preset string) error {
+		gotName, gotPreset = name, preset
 		return nil
 	}
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/api/configs/debug/activate", "application/json", strings.NewReader(`{"set":"prod"}`))
+	resp, err := http.Post(srv.URL+"/api/configs/debug/activate", "application/json", strings.NewReader(`{"preset":"prod"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -732,24 +804,24 @@ func TestActivateWithSet(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if gotName != "debug" || gotSet != "prod" {
-		t.Fatalf("Activate got name=%q set=%q", gotName, gotSet)
+	if gotName != "debug" || gotPreset != "prod" {
+		t.Fatalf("Activate got name=%q preset=%q", gotName, gotPreset)
 	}
 }
 
 func TestActivateWithoutBodyKeepsWorking(t *testing.T) {
 	api := fakeAPI()
-	var gotName, gotSet string
+	var gotName, gotPreset string
 	calledWithoutBody := false
-	api.Activate = func(name, set string) error {
-		gotName, gotSet = name, set
+	api.Activate = func(name, preset string) error {
+		gotName, gotPreset = name, preset
 		calledWithoutBody = true
 		return nil
 	}
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
-	// exactly what the stopgap index.html does: fetch(path, {method:"POST"}) — no body at all.
+	// a POST with no body at all: activate the config's current preset.
 	resp, err := http.Post(srv.URL+"/api/configs/debug/activate", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -758,14 +830,14 @@ func TestActivateWithoutBodyKeepsWorking(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if !calledWithoutBody || gotName != "debug" || gotSet != "" {
-		t.Fatalf("Activate got name=%q set=%q, want debug/\"\"", gotName, gotSet)
+	if !calledWithoutBody || gotName != "debug" || gotPreset != "" {
+		t.Fatalf("Activate got name=%q preset=%q, want debug/\"\"", gotName, gotPreset)
 	}
 }
 
 func TestErrorPassthrough(t *testing.T) {
 	api := fakeAPI()
-	api.Activate = func(name, set string) error { return errWithMessage("collector said no") }
+	api.Activate = func(name, preset string) error { return errWithMessage("collector said no") }
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
@@ -796,12 +868,17 @@ func errWithMessage(msg string) error { return simpleErr(msg) }
 
 // TestServesVendoredCodeMirror confirms the go:embed directive on "static"
 // picks up the static/vendor subdirectory too, and Handler serves its
-// contents as plain static files (embed wiring for Task 2's vendored JS).
-// Also covers the vendored OFL fonts (direction-B restyle) under the same
-// go:embed directive.
+// contents as plain static files (embed wiring for the editor's JS).
+// Also covers the vendored Lucide icon map and the OFL fonts of the v3
+// handoff type ramp, under the same go:embed directive.
 func TestServesVendoredCodeMirror(t *testing.T) {
 	api := fakeAPI()
-	for _, path := range []string{"/vendor/codemirror.min.js", "/vendor/fonts/space-grotesk-latin-600.woff2"} {
+	for _, path := range []string{
+		"/vendor/codemirror.min.js",
+		"/vendor/lucide-icons.js",
+		"/vendor/fonts/jetbrains-mono-latin-400.woff2",
+		"/vendor/fonts/ibm-plex-sans-latin-400.woff2",
+	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Host = "localhost"
 		rec := httptest.NewRecorder()
@@ -875,6 +952,31 @@ func TestNoNativeDialogsInAppJS(t *testing.T) {
 	}
 }
 
+// TestNoInnerHTMLInAppJS guards the house rule that every API-derived string
+// reaches the DOM through textContent: el() and createElementNS are the only
+// two ways this app builds nodes, which keeps the XSS surface auditable in
+// one place. The v3 window builds Lucide glyphs from vendored path data, so
+// the tempting shortcut — assigning author-controlled SVG markup — is right
+// there; this test is what makes taking it a build failure.
+func TestNoInnerHTMLInAppJS(t *testing.T) {
+	src, err := staticFiles.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{".innerHTML", ".outerHTML", "insertAdjacentHTML", "document.write("} {
+		for _, line := range strings.Split(string(src), "\n") {
+			trimmed := strings.TrimSpace(line)
+			// The header comment names innerHTML to say it is not used.
+			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "/*") {
+				continue
+			}
+			if strings.Contains(line, banned) {
+				t.Errorf("app.js uses %s — build nodes with el()/createElementNS instead:\n%s", banned, trimmed)
+			}
+		}
+	}
+}
+
 // markBadRequest stands in for internal/state.BadRequest: webui recognises a
 // marked error structurally (a BadRequest() bool method), so these tests
 // don't need — and this package must not have — the import.
@@ -883,3 +985,146 @@ type badRequestFake struct{ error }
 func (badRequestFake) BadRequest() bool { return true }
 
 func markBadRequest(err error) error { return badRequestFake{err} }
+
+// stillRunningFake stands in for internal/state.StillRunning, matched
+// structurally the same way badRequestFake is.
+type stillRunningFake struct {
+	error
+	desc string
+}
+
+func (e stillRunningFake) StillRunning() string { return e.desc }
+
+// TestActivationFailureCarriesStillRunning: the failure panel names what
+// survived the failed activation, and reads it from a field rather than
+// parsing the diagnostic.
+func TestActivationFailureCarriesStillRunning(t *testing.T) {
+	api := fakeAPI()
+	api.Activate = func(name, preset string) error {
+		return stillRunningFake{
+			error: errWithMessage("collector did not come up: probe failed\npanic: bad exporter"),
+			desc:  "otlp-to-bronto · staging",
+		}
+	}
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/api/configs/ebpf-profiles/activate", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (a collector that won't start is not a caller mistake)", resp.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["still_running"] != "otlp-to-bronto · staging" {
+		t.Errorf("still_running = %q, want %q", body["still_running"], "otlp-to-bronto · staging")
+	}
+	if !strings.Contains(body["error"], "panic: bad exporter") {
+		t.Errorf("error = %q, want the collector's diagnostic", body["error"])
+	}
+
+	// An ordinary error carries no such field.
+	api.Activate = func(name, preset string) error { return errWithMessage("boom") }
+	srv2 := httptest.NewServer(Handler(api))
+	defer srv2.Close()
+	resp2, err := http.Post(srv2.URL+"/api/configs/x/activate", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	body = nil
+	if err := json.NewDecoder(resp2.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := body["still_running"]; ok {
+		t.Errorf("plain error body = %v, want no still_running", body)
+	}
+}
+
+func TestStopAndStartRoutes(t *testing.T) {
+	api := fakeAPI()
+	stopped, started := false, false
+	api.Stop = func() error { stopped = true; return nil }
+	api.Start = func() error { started = true; return nil }
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		path string
+		done *bool
+	}{{"/api/service/stop", &stopped}, {"/api/service/start", &started}} {
+		resp, err := http.Post(srv.URL+tc.path, "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("POST %s = %d, want 200", tc.path, resp.StatusCode)
+		}
+		if !*tc.done {
+			t.Errorf("POST %s did not reach its closure", tc.path)
+		}
+	}
+}
+
+// TestDownloadProgressRoute: the Settings screen POSTs a fetch, which
+// returns at once, and follows it here.
+func TestDownloadProgressRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotName string
+	api.DownloadProgress = func(name string) (any, error) {
+		gotName = name
+		return map[string]any{"status": "downloading", "pct": 51}, nil
+	}
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/distros/otelcol-k8s/progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if gotName != "otelcol-k8s" || body["status"] != "downloading" || body["pct"] != float64(51) {
+		t.Fatalf("progress for %q = %v", gotName, body)
+	}
+}
+
+// TestHealthRoute: the Collector screen's four numbers reach it through the
+// route, and a stopped collector is a 200 with available:false, never an
+// error the screen would have to render as a failure.
+func TestHealthRoute(t *testing.T) {
+	api := fakeAPI()
+	api.Health = func() (any, error) {
+		return map[string]any{"available": true, "received": 12, "exported": 8, "queue": 2, "dropped": 1}, nil
+	}
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/collector/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["available"] != true || body["received"] != float64(12) || body["dropped"] != float64(1) {
+		t.Fatalf("health body = %v", body)
+	}
+}
