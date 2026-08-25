@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -290,16 +291,49 @@ func (m *menu) doAct(note string, fn func() error) {
 	m.sync()
 }
 
-// handleOpenApp spawns the standalone window as its own process — systray
-// owns this process's main thread, and the webview needs one of its own.
+// handleOpenApp opens the standalone window: spawned as its own process —
+// systray owns this process's main thread, and the webview needs one of its
+// own — but at most one at a time. Clicking again raises the window that is
+// already open (see openWindow).
 func handleOpenApp(item *systray.MenuItem) {
+	var cur *windowProc
 	for range item.ClickedCh {
-		exe, err := os.Executable()
-		if err == nil {
-			err = exec.Command(exe, "window").Start()
-		}
+		next, err := openWindow(cur, spawnWindow, raiseWindow)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "compy tray: open window:", err)
+			continue // keep cur: a failed raise must not stack a second window
 		}
+		cur = next
 	}
+}
+
+// spawnWindow starts `compy window` and reaps it in the background, so
+// windowProc.alive() flips as soon as the user closes it.
+func spawnWindow() (*windowProc, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(exe, "window")
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	w := &windowProc{pid: cmd.Process.Pid, done: make(chan struct{})}
+	go func() {
+		_ = cmd.Wait()
+		close(w.done)
+	}()
+	return w, nil
+}
+
+// raiseWindow brings another process's windows to the front. compy has no
+// app bundle of its own to activate, so System Events by unix id is the way
+// in; it needs Accessibility permission, and says so when it doesn't have it.
+func raiseWindow(pid int) error {
+	script := fmt.Sprintf("tell application \"System Events\" to set frontmost of every process whose unix id is %d to true", pid)
+	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("raise the open window (pid %d): %w: %s", pid, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
