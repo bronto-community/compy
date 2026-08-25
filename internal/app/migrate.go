@@ -38,7 +38,17 @@ func (a *App) migrateLegacy() error {
 	// change nothing else (no launchd, no settings, no configs). Observed
 	// live 2026-08-25: the un-guarded re-run stopped the collector and
 	// clobbered the archive.
+	// Staleness signals: an active v2 config, or the migrated configuration
+	// already existing (covers the nothing-was-enabled migration, where
+	// ActiveConfig stays empty). A LoadSettings error falls through to the
+	// genuine path — safe either way, since archiveLegacy never clobbers.
+	stale := false
 	if s, err := state.LoadSettings(); err == nil && s.ActiveConfig != "" {
+		stale = true
+	} else if _, _, err := cfgstore.Get(a.Dir, "migrated"); err == nil {
+		stale = true
+	}
+	if stale {
 		archive, err := a.archiveLegacy(legacy)
 		if err != nil {
 			return err
