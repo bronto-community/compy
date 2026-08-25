@@ -193,6 +193,9 @@ func List(root string) ([]Info, error) {
 		if !e.IsDir() {
 			continue
 		}
+		if !exists(root, e.Name()) {
+			continue // no config.yaml: e.g. left behind by a failed CreateFromURL
+		}
 		info, _, err := buildInfo(root, e.Name())
 		if err != nil {
 			return nil, err
@@ -241,16 +244,24 @@ func Create(root, name, yaml string) error {
 }
 
 // CreateFromURL fetches yaml from url and creates a new remote configuration,
-// recording the pristine hash for edit-protection.
+// recording the pristine hash for edit-protection. The fetch runs before any
+// directory is created, so a failed fetch (typo'd URL) leaves nothing behind
+// for a retry to trip over.
 func CreateFromURL(root, name, url string, fetch Fetch) error {
-	if err := createDir(root, name); err != nil {
+	if err := validateName(name); err != nil {
 		return err
+	}
+	if exists(root, name) {
+		return fmt.Errorf("config %q already exists", name)
 	}
 	content, err := fetch(url)
 	if err != nil {
 		return err
 	}
 	yaml := string(content)
+	if err := createDir(root, name); err != nil {
+		return err
+	}
 	if err := writeYAMLFile(root, name, yaml); err != nil {
 		return err
 	}

@@ -87,12 +87,16 @@ func (a *App) migrateLegacy() error {
 // a plain copy of the old base.yaml. The second return value says which.
 func (a *App) renderLegacy(legacy string, old legacySettings) (yaml, how string) {
 	base := filepath.Join(legacy, "base.yaml")
+	fallbackSrc, fallbackName := base, "base.yaml"
+	if old.RawMode {
+		fallbackSrc, fallbackName = filepath.Join(legacy, "custom.yaml"), "custom.yaml"
+	}
 	fallback := func(reason string) (string, string) {
-		data, err := os.ReadFile(base)
+		data, err := os.ReadFile(fallbackSrc)
 		if err != nil {
 			return "# compy: the v1 config could not be read during migration\n", "empty: " + err.Error()
 		}
-		return string(data), "copied base.yaml: " + reason
+		return string(data), "copied " + fallbackName + ": " + reason
 	}
 
 	bin := a.installedDistro()

@@ -3,6 +3,7 @@ package app_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -386,6 +387,36 @@ func TestNewMaterializesDefaults(t *testing.T) {
 	}
 }
 
+func TestAddDistroWarnsOnDefinitionNameCollision(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "otelcol")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	addErr := a.AddDistro("core", bin) // "core" is a shipped distro.Defs() name
+	w.Close()
+	os.Stderr = orig
+	out, _ := io.ReadAll(r)
+
+	if addErr != nil {
+		t.Fatalf("AddDistro: %v", addErr)
+	}
+	if !strings.Contains(string(out), "core") || !strings.Contains(string(out), "overrides") {
+		t.Errorf("stderr = %q, want a warning that %q overrides the shipped definition", out, "core")
+	}
+}
+
 // writeLegacyTree fabricates a v1 state dir: config/base.yaml, one enabled
 // backend fragment, and a v1 settings.json.
 func writeLegacyTree(t *testing.T, dir, binPath string, enabled []string, grpcPort int) {
@@ -488,6 +519,31 @@ func TestMigrationFallsBackToBaseYAML(t *testing.T) {
 	}
 	if !strings.Contains(yaml, "otlp") {
 		t.Errorf("migrated yaml = %q, want a copy of the old base.yaml", yaml)
+	}
+}
+
+func TestMigrationRawModeFallsBackToCustomYAML(t *testing.T) {
+	setup(t, "")
+	dir := os.Getenv("COMPY_HOME")
+	writeLegacyTree(t, dir, filepath.Join(t.TempDir(), "does-not-exist"), nil, 1)
+	// raw_mode: true with a custom.yaml the fallback must prefer over base.yaml.
+	if err := os.WriteFile(filepath.Join(dir, "config", "custom.yaml"), []byte("custom: marker\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings := fmt.Sprintf(`{"grpc_port":1,"http_port":14318,"distro":"fake","enabled":[],"raw_mode":true}`)
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.New(); err != nil {
+		t.Fatalf("New() = %v, want nil", err)
+	}
+	_, yaml, err := cfgstore.Get(dir, "migrated")
+	if err != nil {
+		t.Fatalf("migrated config missing: %v", err)
+	}
+	if !strings.Contains(yaml, "custom: marker") {
+		t.Errorf("migrated yaml = %q, want a copy of custom.yaml (raw_mode fallback)", yaml)
 	}
 }
 

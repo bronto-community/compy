@@ -1,6 +1,7 @@
 package cfgstore
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,6 +104,40 @@ func TestCopyDropsProvenance(t *testing.T) {
 	}
 	if srcInfo.Provenance != "remote" {
 		t.Fatalf("src provenance = %q, want remote (unaffected by copy)", srcInfo.Provenance)
+	}
+}
+
+func TestCreateFromURLFailedFetchSelfHeals(t *testing.T) {
+	root := t.TempDir()
+
+	failing := func(url string) ([]byte, error) { return nil, errors.New("dial tcp: no such host") }
+	if err := CreateFromURL(root, "bad", "https://typo.example/c.yaml", failing); err == nil {
+		t.Fatal("CreateFromURL with failing fetch: want error, got nil")
+	}
+
+	// A failed fetch must not leave a half-created configs/bad/ behind: List
+	// still works and doesn't show "bad".
+	list, err := List(root)
+	if err != nil {
+		t.Fatalf("List after failed CreateFromURL: %v", err)
+	}
+	for _, info := range list {
+		if info.Name == "bad" {
+			t.Fatalf("List includes %q from a failed CreateFromURL", info.Name)
+		}
+	}
+
+	// Retry with a working fetch succeeds cleanly.
+	working := func(url string) ([]byte, error) { return []byte("receivers: {}\n"), nil }
+	if err := CreateFromURL(root, "bad", "https://typo.example/c.yaml", working); err != nil {
+		t.Fatalf("CreateFromURL retry: %v", err)
+	}
+	info, _, err := Get(root, "bad")
+	if err != nil {
+		t.Fatalf("Get after retry: %v", err)
+	}
+	if info.Provenance != "remote" {
+		t.Fatalf("provenance = %q, want remote", info.Provenance)
 	}
 }
 
