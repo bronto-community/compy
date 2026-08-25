@@ -242,7 +242,7 @@ function clearError() { lastError = null; }
 function errorStrip() {
   if (!lastError) return null;
   return el("div", { class: "errbar" }, [
-    el("div", { class: "bar" }, [
+    el("div", { class: "failbar" }, [
       el("span", { class: "dot6", attrs: { style: "background: var(--err)" } }),
       span("msg", lastError.msg),
       el("span", { class: "grow" }),
@@ -494,7 +494,7 @@ function nothingActiveStrip() {
 function failurePanel() {
   const name = S.errName;
   return el("div", { class: "fail" }, [
-    el("div", { class: "bar" }, [
+    el("div", { class: "failbar" }, [
       el("span", { class: "dot6", attrs: { style: "background: var(--err)" } }),
       span("headline", "couldn't activate " + name),
       el("span", { class: "grow" }),
