@@ -216,7 +216,7 @@ async function refreshNavStatus() {
     state.status = s;
     document.getElementById("nav-led").classList.toggle("on", !!s.running);
     document.getElementById("nav-status-text").textContent = s.running
-      ? "running" + (s.config ? " · " + s.config : "")
+      ? "running" + (s.config ? " · " + s.config + (s.set ? " · " + s.set : "") : "")
       : "stopped";
   } catch (e) {
     // surfaced already by whatever view fetch failed; don't double-report.
@@ -925,8 +925,10 @@ async function renderCollectorView() {
       el("span", { text: status.running ? "running" : "stopped" }),
     ])]),
     el("tr", {}, [el("th", { text: "config" }), el("td", {
+      // Always name the set, "(none)" included: which variables the running
+      // collector actually got is not something to leave the reader guessing.
       text: status.config
-        ? status.config + (status.set ? " · set " + status.set : "")
+        ? status.config + " · set " + (status.set || "(none)")
         : "no configuration active",
     })]),
     el("tr", {}, [el("th", { text: "distro" }), el("td", { text: status.distro || "(none)" })]),
