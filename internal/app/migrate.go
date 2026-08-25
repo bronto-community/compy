@@ -31,6 +31,22 @@ func (a *App) migrateLegacy() error {
 		return nil
 	}
 
+	// Stale-recreation guard: a still-running v1 process (typically the old
+	// tray, which re-created config/base.yaml on its 5s resync) can rebuild
+	// the legacy tree AFTER a completed migration. A genuine v1 upgrade has
+	// no v2 state yet — so if v2 state exists, archive the leftovers and
+	// change nothing else (no launchd, no settings, no configs). Observed
+	// live 2026-08-25: the un-guarded re-run stopped the collector and
+	// clobbered the archive.
+	if s, err := state.LoadSettings(); err == nil && s.ActiveConfig != "" {
+		archive, err := a.archiveLegacy(legacy)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "compy: archived stale v1 leftovers (recreated by an old compy process still running?) in %s; nothing else changed\n", archive)
+		return nil
+	}
+
 	var old legacySettings
 	if data, err := os.ReadFile(filepath.Join(a.Dir, "settings.json")); err == nil {
 		_ = json.Unmarshal(data, &old) // best effort: a broken file just means no enabled backends
@@ -55,11 +71,8 @@ func (a *App) migrateLegacy() error {
 		}
 	}
 
-	archive := filepath.Join(a.Dir, "legacy-v1")
-	if err := os.RemoveAll(archive); err != nil {
-		return err
-	}
-	if err := os.Rename(legacy, archive); err != nil {
+	archive, err := a.archiveLegacy(legacy)
+	if err != nil {
 		return err
 	}
 
@@ -79,6 +92,20 @@ func (a *App) migrateLegacy() error {
 	fmt.Fprintf(os.Stderr, "compy: migrated v1 backends into configuration %q (%s); %s; old files archived in %s\n",
 		"migrated", how, note, archive)
 	return nil
+}
+
+// archiveLegacy moves the legacy tree aside without ever overwriting a
+// previous archive: legacy-v1, then legacy-v1.2, .3, ….
+func (a *App) archiveLegacy(legacy string) (string, error) {
+	base := filepath.Join(a.Dir, "legacy-v1")
+	archive := base
+	for i := 2; ; i++ {
+		if _, err := os.Stat(archive); os.IsNotExist(err) {
+			break
+		}
+		archive = fmt.Sprintf("%s.%d", base, i)
+	}
+	return archive, os.Rename(legacy, archive)
 }
 
 // renderLegacy produces the migrated YAML: the v1 arg list run through the
