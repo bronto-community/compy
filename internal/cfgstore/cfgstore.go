@@ -513,7 +513,7 @@ func UsePreset(root, name, preset string) error {
 
 // RenamePreset renames a preset from -> to. It errors if to is empty,
 // from does not exist, or to already exists. Renaming the active preset
-// updates active_set to follow it.
+// updates active_preset to follow it.
 func RenamePreset(root, name, from, to string) error {
 	if err := validateName(name); err != nil {
 		return err
@@ -544,7 +544,8 @@ func RenamePreset(root, name, from, to string) error {
 
 // SnapshotActive copies configs/<name>/ and settings.json into last-good/,
 // replacing any prior snapshot. Callers take it only once a configuration is
-// proven to start, so it is the rollback target.
+// proven to have started, so the snapshot is always a setup that ran: it is
+// what RestoreActive puts back when the next one fails to start.
 func SnapshotActive(root, name string) error {
 	if err := validateName(name); err != nil {
 		return err
@@ -559,13 +560,19 @@ func SnapshotActive(root, name string) error {
 	return copyFile(filepath.Join(root, "settings.json"), filepath.Join(dst, "settings.json"), 0o600)
 }
 
+// HasSnapshot reports whether a last-good snapshot exists to restore.
+// state.Dir() pre-creates last-good/ empty, so its mere existence proves
+// nothing; settings.json only lands there via SnapshotActive.
+func HasSnapshot(root string) bool {
+	_, err := os.Stat(filepath.Join(root, "last-good", "settings.json"))
+	return err == nil
+}
+
 // RestoreActive copies the last-good snapshot back over settings.json and
 // the configuration it was taken from (the active_config recorded in the
 // snapshot's settings.json). It errors if no snapshot exists.
 func RestoreActive(root string) error {
 	src := filepath.Join(root, "last-good")
-	// state.Dir() pre-creates last-good/ empty, so its mere existence proves
-	// nothing; settings.json only lands there via SnapshotActive.
 	data, err := os.ReadFile(filepath.Join(src, "settings.json"))
 	if err != nil {
 		return errors.New("no last-good snapshot to restore")

@@ -185,14 +185,6 @@ func UninstallAgent(label string) error {
 	return nil
 }
 
-// Bootout stops the collector job, leaving its plist in place. Stopping a
-// job that is not loaded is not a failure — launchctl reports it as one and
-// gives us nothing finer to tell the two apart — so the error is dropped and
-// "stopped" simply means the job is absent.
-func Bootout() {
-	_, _ = Exec("bootout", guiTarget()+"/"+Label)
-}
-
 // Kickstart restarts the running (or not) job in place.
 func Kickstart() error {
 	_, err := Exec("kickstart", "-k", guiTarget()+"/"+Label)

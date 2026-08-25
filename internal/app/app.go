@@ -216,20 +216,27 @@ func (a *App) launch(name, preset string) error {
 	return launchd.Kickstart()
 }
 
-// restorePrevious puts back the configuration the last-good snapshot was
-// taken from — its YAML, its preset, and the settings that named it — and
-// starts it again. It deliberately does not re-probe: that configuration was
-// up seconds ago, and a second probe timeout on the failure path only delays
-// the diagnostic the user is waiting for.
-func (a *App) restorePrevious() error {
+// restorePrevious puts back the last setup that actually started — the
+// snapshot's YAML, its preset, and the settings that named it, collector
+// binary included — and starts it again, returning what it put back
+// ("otlp-to-bronto · staging"). It deliberately does not re-probe: that
+// configuration was up moments ago, and a second probe timeout on the
+// failure path only delays the diagnostic the user is waiting for.
+func (a *App) restorePrevious() (string, error) {
 	if err := cfgstore.RestoreActive(a.Dir); err != nil {
-		return err
+		return "", err
 	}
 	name, preset, err := a.ActiveConfig()
 	if err != nil {
-		return err
+		return "", err
 	}
-	return a.launch(name, preset)
+	if err := a.launch(name, preset); err != nil {
+		return "", err
+	}
+	if preset == "" {
+		return name, nil
+	}
+	return name + " · " + preset, nil
 }
 
 // Activate makes name the running configuration: it resolves the collector
@@ -239,10 +246,14 @@ func (a *App) restorePrevious() error {
 // the configuration's current active_preset.
 //
 // A configuration the collector rejects changes nothing. A configuration it
-// accepts but cannot start puts the previous configuration and preset back
-// and says so, per the design's guarantee that "on failure the previously
-// active configuration keeps running": the snapshot is taken before anything
-// moves, and restored if the collector never comes up.
+// accepts but cannot start restores the last-good snapshot — the last setup
+// that actually started — per the design's guarantee that "on failure the
+// previously active configuration keeps running".
+//
+// The snapshot is taken on success, never before the install. Every
+// reactivating caller (WriteConfigYAML, Sync, UseDistro, the preset writes)
+// persists the user's intent BEFORE re-activating, so a snapshot taken here
+// would capture the very edit that is about to fail and "restore" it.
 func (a *App) Activate(name, preset string) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
@@ -274,16 +285,6 @@ func (a *App) Activate(name, preset string) error {
 		return state.BadRequest(err)
 	}
 
-	// Past this line the running setup changes, so snapshot the one that is
-	// running now — it is the thing a failed start has to come back to.
-	prevName, prevPreset, prevErr := a.ActiveConfig()
-	restorable := prevErr == nil && prevName != ""
-	if restorable {
-		if err := cfgstore.SnapshotActive(a.Dir, prevName); err != nil {
-			return err
-		}
-	}
-
 	if preset != "" && preset != info.Meta.ActivePreset {
 		if err := cfgstore.UsePreset(a.Dir, name, preset); err != nil {
 			return err
@@ -303,18 +304,27 @@ func (a *App) Activate(name, preset string) error {
 		if running, rerr := launchd.Running(); rerr != nil || !running {
 			tail, _ := collector.TailLog(a.LogPath(), 20)
 			failure := fmt.Errorf("collector did not come up: %w\n%s", err, tail)
-			if !restorable {
+			if !cfgstore.HasSnapshot(a.Dir) {
+				return failure // nothing ever started; nothing to come back to
+			}
+			still, rerr := a.restorePrevious()
+			if rerr != nil {
+				return fmt.Errorf("%w\nand restoring the last working setup failed too: %v", failure, rerr)
+			}
+			// The reassurance is a claim about the world, so make it only
+			// when launchd agrees: a restore that itself failed to start
+			// must not be reported as "still running".
+			if back, _ := launchd.Running(); !back {
 				return failure
-			}
-			if rerr := a.restorePrevious(); rerr != nil {
-				return fmt.Errorf("%w\nand putting %q back failed too: %v", failure, prevName, rerr)
-			}
-			still := prevName
-			if prevPreset != "" {
-				still += " · " + prevPreset
 			}
 			return state.StillRunning(failure, still)
 		}
+	}
+	// Proven to have started: this is the setup a later failure comes back
+	// to. Snapshot before remember() so the two writes to settings.json
+	// cannot interleave into a snapshot of a half-updated file.
+	if err := cfgstore.SnapshotActive(a.Dir, name); err != nil {
+		return err
 	}
 	return a.remember(name)
 }
@@ -330,13 +340,13 @@ func (a *App) remember(name string) error {
 	return state.SaveSettings(s)
 }
 
-// Stop stops the collector. Nothing is recorded: a stopped collector is
-// simply one whose launchd job is absent, and the active configuration stays
-// named so the window can show it dimmed rather than forget it.
-func (a *App) Stop() error {
-	launchd.Bootout()
-	return nil
-}
+// Stop stops the collector by removing its LaunchAgent entirely. Booting the
+// job out while leaving the plist behind would only stop it until the next
+// login — the plist carries RunAtLoad — and "stopped" has to mean stopped.
+// Start reinstalls it. Nothing is recorded: a stopped collector is simply one
+// whose job is absent, and the active configuration stays named so the window
+// can show it dimmed rather than forget it.
+func (a *App) Stop() error { return launchd.Uninstall() }
 
 // Start runs the active configuration again — the same operation as Apply,
 // under the word the UI and CLI use for it.
@@ -574,7 +584,15 @@ func (a *App) RenamePreset(name, from, to string) error {
 // data moving through it. It never fails: a stopped or unreachable collector
 // answers {"available": false}, which is what the Collector screen shows as
 // dashes.
-func (a *App) Health() (any, error) { return collector.Scrape(), nil }
+func (a *App) Health() (any, error) {
+	// Only our own collector's numbers are ours to show. :8888 is otelcol's
+	// default, so a second collector on the machine answers there when ours
+	// is stopped — and its throughput is not this one's.
+	if running, err := launchd.Running(); err != nil || !running {
+		return collector.Health{}, nil
+	}
+	return collector.Scrape(), nil
+}
 
 // Log returns the last n lines of the collector log.
 func (a *App) Log(n int) (string, error) { return collector.TailLog(a.LogPath(), n) }

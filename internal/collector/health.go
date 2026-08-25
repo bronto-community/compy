@@ -23,6 +23,9 @@ const MetricsURL = "http://localhost:8888/metrics"
 // looking at, so a collector that is wedged must not hold the page.
 const healthTimeout = 2 * time.Second
 
+// maxLineBytes caps one sample line; see the scanner buffer in health.
+const maxLineBytes = 1 << 20
+
 // maxMetricsBytes caps the scrape. A collector with many exporters emits a
 // few hundred KB; anything past this is not our /metrics page.
 const maxMetricsBytes = 4 << 20
@@ -73,6 +76,9 @@ func health(url string) Health {
 
 	h := Health{Available: true}
 	scanner := bufio.NewScanner(io.LimitReader(resp.Body, maxMetricsBytes))
+	// A sample line carrying many labels can pass bufio's 64KB default,
+	// which would silently end the scan mid-page.
+	scanner.Buffer(nil, maxLineBytes)
 	for scanner.Scan() {
 		name, value, ok := parseSample(scanner.Text())
 		if !ok {

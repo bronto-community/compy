@@ -1004,3 +1004,31 @@ func TestDownloadProgressRoute(t *testing.T) {
 		t.Fatalf("progress for %q = %v", gotName, body)
 	}
 }
+
+// TestHealthRoute: the Collector screen's four numbers reach it through the
+// route, and a stopped collector is a 200 with available:false, never an
+// error the screen would have to render as a failure.
+func TestHealthRoute(t *testing.T) {
+	api := fakeAPI()
+	api.Health = func() (any, error) {
+		return map[string]any{"available": true, "received": 12, "exported": 8, "queue": 2, "dropped": 1}, nil
+	}
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/collector/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["available"] != true || body["received"] != float64(12) || body["dropped"] != float64(1) {
+		t.Fatalf("health body = %v", body)
+	}
+}
