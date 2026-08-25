@@ -787,3 +787,31 @@ func TestServesVendoredCodeMirror(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 }
+
+// TestServesAppShellStaticFiles is the T3 static-serve smoke test: the
+// real four-view app (index.html + app.css + app.js) is embedded and
+// served, replacing the P1 stopgap page.
+func TestServesAppShellStaticFiles(t *testing.T) {
+	api := fakeAPI()
+	for _, path := range []string{"/", "/app.css", "/app.js"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "localhost"
+		rec := httptest.NewRecorder()
+		Handler(api).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, want 200", path, rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "localhost"
+	rec := httptest.NewRecorder()
+	Handler(api).ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, "<title>compy</title>") {
+		t.Fatalf("index.html missing expected title, got: %s", body)
+	}
+	if !strings.Contains(body, `href="app.css"`) || !strings.Contains(body, `src="app.js"`) {
+		t.Fatalf("index.html doesn't reference app.css/app.js, got: %s", body)
+	}
+}
