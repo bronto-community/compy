@@ -104,7 +104,11 @@ a { color: var(--accent); }
   font-family: var(--mono);
   font-size: 11px;
 }
-.led { width: 7px; height: 7px; border-radius: 50%; background: var(--bad); flex: none; }
+/* display matters: as a plain inline <span> the width/height are ignored,
+   so outside a flex row (the Collector view's status cell) the dot
+   collapsed to nothing and left only its margin — the "stray space
+   before running" in the 2026-08-25 feedback. */
+.led { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); flex: none; }
 .led.on { background: var(--ok); }
 .nav-btn {
   text-align: left;
