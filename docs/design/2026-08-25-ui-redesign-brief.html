@@ -1,0 +1,211 @@
+<title>compy Design Brief</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #FAF9F5;
+    --ink: #211F1B;
+    --muted: #6F6B61;
+    --line: #E4E0D4;
+    --accent: #B57400;
+    --code-bg: #24221D;
+    --code-ink: #EAE6DB;
+    --card: #FFFFFF;
+    --warn-bg: #FBF3DC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1C1A16;
+      --ink: #ECE8DF;
+      --muted: #9C968A;
+      --line: #37342C;
+      --accent: #F0A93C;
+      --code-bg: #14130F;
+      --code-ink: #DDD8CC;
+      --card: #232019;
+      --warn-bg: #33290F;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1C1A16;
+    --ink: #ECE8DF;
+    --muted: #9C968A;
+    --line: #37342C;
+    --accent: #F0A93C;
+    --code-bg: #14130F;
+    --code-ink: #DDD8CC;
+    --card: #232019;
+    --warn-bg: #33290F;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.6;
+  }
+  main { max-width: 740px; margin: 0 auto; padding: 56px 24px 96px; }
+  h1 { font-size: 30px; font-weight: 600; line-height: 1.2; margin: 0 0 6px; text-wrap: balance; }
+  .subtitle { color: var(--muted); margin: 0 0 40px; max-width: 60ch; }
+  h2 {
+    font-size: 13px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--accent); margin: 52px 0 14px; padding-top: 20px; border-top: 1px solid var(--line);
+  }
+  h3 { font-size: 17px; font-weight: 600; margin: 28px 0 8px; text-wrap: balance; }
+  p { margin: 0 0 14px; max-width: 66ch; }
+  ul { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 6px; max-width: 62ch; }
+  code, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.92em;
+  }
+  code { background: color-mix(in srgb, var(--line) 45%, transparent); padding: 1px 5px; border-radius: 3px; }
+  pre {
+    background: var(--code-bg); color: var(--code-ink);
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; line-height: 1.55;
+    padding: 14px 16px; border-radius: 6px; overflow-x: auto; margin: 0 0 16px;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 18px; font-size: 14px; }
+  th {
+    text-align: left; font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 500;
+    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+    padding: 8px 10px; border-bottom: 1px solid var(--ink);
+  }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; white-space: nowrap; }
+  .table-wrap { overflow-x: auto; }
+  .tag {
+    display: inline-block; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px;
+    letter-spacing: 0.05em; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px;
+    color: var(--muted); margin-right: 6px; white-space: nowrap;
+  }
+  .tag.bug { color: var(--accent); border-color: var(--accent); }
+  .note {
+    background: var(--warn-bg); border-left: 3px solid var(--accent);
+    padding: 12px 16px; margin: 0 0 16px; border-radius: 0 6px 6px 0;
+  }
+  .note p:last-child { margin-bottom: 0; }
+  .quiet { color: var(--muted); }
+  .screen {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 22px 24px 10px; margin: 0 0 26px;
+  }
+  .screen h3:first-child { margin-top: 0; }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<main>
+<h1>compy Design Brief</h1>
+<p class="subtitle">Everything you need to design compy's five surfaces in Claude Design. The facts here are the running product — real data shapes, every action, real latencies. Your screens become the spec; they get implemented pixel-exact and verified by clicking, not by screenshots.</p>
+
+<h2>What compy is</h2>
+<p>A macOS menu-bar app (plus a window and CLI) that runs a local OpenTelemetry Collector for a developer. Apps on the machine send telemetry to compy; compy forwards it wherever the active <strong>configuration</strong> says. The whole product is: <em>see what's running, switch what telemetry does in seconds, edit configurations comfortably.</em></p>
+<p>Audience: developers who live in terminals. The current UI direction ("dense utility": mono type, tables, quiet text actions, amber only for the active thing) was your pick — keep it, evolve it, or replace it. The look is yours now; this brief only fixes <em>what the screens must do</em>.</p>
+
+<h2>Product truths that shape every screen</h2>
+<ul>
+  <li><strong>Exactly one configuration is active.</strong> Activating another one restarts the collector: takes 1–10 seconds, can fail. Design the in-between moment (progress) and the failure moment (see error model).</li>
+  <li><strong>A configuration is a YAML document</strong> plus: named <strong>value sets</strong> (see vocabulary), an optional source URL it was fetched from, and an optional pinned collector binary.</li>
+  <li><strong>Variables:</strong> writing <code>${env:API_KEY}</code> in the YAML creates a variable; a comment on the same line becomes its description; <code>:-something</code> becomes its default. The variables UI is <em>derived from the YAML</em> — users don't declare variables separately.</li>
+  <li><strong>Origin &amp; protection:</strong> configurations come from three places — bundled with compy, created by the user, or fetched from a URL. Bundled ones update with compy <em>unless the user edited them</em>; URL ones can re-sync <em>unless edited</em>. Editing a protected one asks one confirmation, then it's theirs.</li>
+  <li><strong>Rollback exists</strong>: compy keeps the last configuration that provably worked; one action restores it. Today it's an orphaned menu item — give it a proper home and language (e.g. "restore last working setup"), likely near collector health.</li>
+  <li><strong>Slow actions:</strong> activate / restart / rollback / save-and-validate (1–10s). Everything else is instant.</li>
+</ul>
+
+<h2>Error model (design input, partly broken today)</h2>
+<ul>
+  <li><strong>User mistakes</strong> (bad name, missing field, invalid URL): short message, inline, near the cause. Never technical dumps.</li>
+  <li><strong>Collector failures</strong> (config invalid, process won't start): the collector's own diagnostic text is the single most useful thing we have — it's multi-line, technical, and exactly what the user needs. Design a proper home for it (validation results, activation failures) instead of today's one-strip-for-everything.</li>
+  <li><span class="tag bug">bug, not design</span> Several interactions are currently broken (activate-click, copy, delete, log search, duplicate windows). Don't design around them — they get fixed to match your screens.</li>
+</ul>
+
+<h2>Vocabulary — needs your replacements</h2>
+<div class="table-wrap"><table>
+  <tr><th>today</th><th>meaning</th><th>notes</th></tr>
+  <tr><td>shipped</td><td>bundled with compy, auto-updates until edited</td><td>your call: "built-in"? "bundled"? You vetoed "shipped".</td></tr>
+  <tr><td>local</td><td>created by the user on this machine</td><td>maybe needs no label at all — it's the normal case.</td></tr>
+  <tr><td>remote</td><td>fetched from a URL, can re-sync</td><td>"linked"? Show the URL host instead of a category word?</td></tr>
+  <tr><td>variable set</td><td>a named bundle of values for the config's variables (e.g. <em>staging</em>, <em>prod-key</em>, <em>customer-x</em>)</td><td>"profile"? "preset"? Pick once, use everywhere.</td></tr>
+  <tr><td>distro / definition</td><td>a collector binary; four are known and downloadable, users can add their own</td><td>you vetoed "definition". Suggest thinking in states: <em>available to download</em> / <em>installed</em> / <em>added by you</em>.</td></tr>
+  <tr><td>modified</td><td>a bundled/URL config the user has edited (update/sync stops)</td><td>"edited"? A subtle mark may beat a word.</td></tr>
+</table></div>
+<div class="note"><p><strong>The name rule, explained:</strong> configuration names become folder names on disk and CLI arguments, hence <code>lowercase-digits-dashes</code>. That constraint is real, but the <em>experience</em> is free: auto-convert while typing ("My Collector" → <code>my-collector</code>) instead of rejecting — your call in the design.</p></div>
+
+<h2>Screen 1 — Configurations (home)</h2>
+<div class="screen">
+<h3>Job</h3>
+<p>See at a glance what's running; switch in one gesture; manage the list.</p>
+<h3>Each row is</h3>
+<p><code>name</code> · active? · origin (see vocabulary — you asked for this de-emphasized) · edited-mark when protection is broken · for URL configs: sync availability.</p>
+<h3>Actions</h3>
+<div class="table-wrap"><table>
+  <tr><th>action</th><th>behavior</th><th>notes</th></tr>
+  <tr><td>activate</td><td>restarts collector on this config, 1–10s, can fail</td><td>the product's core gesture — make it unmissable and design its progress + failure</td></tr>
+  <tr><td>open</td><td>go to editor</td><td>row click?</td></tr>
+  <tr><td>new</td><td>blank, or from URL</td><td>two inputs max: name (+ optional URL)</td></tr>
+  <tr><td>copy</td><td>duplicate incl. value sets, becomes user-owned</td><td>asks for the new name</td></tr>
+  <tr><td>delete</td><td>gone (fragment + sets)</td><td>blocked for the active one; needs confirm</td></tr>
+  <tr><td>sync / sync all</td><td>re-fetch URL configs</td><td>only for unedited URL configs; edited ones instead offer "discard my edits &amp; re-sync" (destructive, confirm)</td></tr>
+</table></div>
+<h3>Empty state</h3>
+<p>Fresh installs already have the bundled configs, so the true empty state never occurs — but a "nothing active" state does. Design it: it's the first-run moment.</p>
+</div>
+
+<h2>Screen 2 — Configuration editor</h2>
+<div class="screen">
+<h3>Job</h3>
+<p>Edit one configuration: its YAML, its variables and value sets, its origin and binary. You called the current layout bloated and the variables area "a mess" — this screen is the redesign's heart.</p>
+<h3>Identity &amp; origin</h3>
+<ul>
+  <li>Name: design it editable (inline rename). <span class="tag">backend follows</span> Rename isn't wired yet; it will be built to match your design.</li>
+  <li>Origin: for URL configs — the URL (editable), sync state, sync / discard-and-resync. For bundled — update-protection state. For user-owned — nothing to show, don't invent chrome.</li>
+  <li>Collector binary: optional override, defaults to the global choice. Low-importance control.</li>
+</ul>
+<h3>Variables &amp; value sets — the hard problem</h3>
+<p>Data shape: N variables (name, description, default) × M named value sets, one set active. Typical: 2–6 variables, 1–3 sets. Operations: edit values, add / rename / delete a set, choose the active set. Cells hold secrets (API keys) — consider masking.</p>
+<p>The current matrix-of-inputs failed. Honest options to explore (pick your own): one set visible at a time with a set switcher; master–detail (sets left, values right); or value sets as first-class cards. Nothing constrains you to a table.</p>
+<h3>YAML</h3>
+<ul>
+  <li>Code editor (syntax highlight, line numbers) — component exists, style is yours.</li>
+  <li>Protection flow for bundled/URL configs: read-only until an explicit unlock with one plain confirmation ("future updates will keep your version" / "editing disconnects it from its URL").</li>
+  <li>Save = validate with the real collector: success (small, quiet) and failure (the collector's multi-line diagnostic — give it space, mono, dismissible) both need designed homes. If active, save also re-applies (slow-action moment).</li>
+</ul>
+</div>
+
+<h2>Screen 3 — Collector</h2>
+<div class="screen">
+<h3>Job</h3>
+<p>Is telemetry flowing, and what is the collector saying?</p>
+<ul>
+  <li>Status: running/stopped · active config <strong>and its value set</strong> (missing today — your feedback) · binary · listening ports.</li>
+  <li>Actions: restart · rollback ("restore last working setup") — rollback likely lives here.</li>
+  <li>Log: the collector's output. Needs working search/filter (your feedback: it's broken), error/warning visibility, and a sane refresh story (live tail? on-demand?). Log lines are long — design for horizontal overflow.</li>
+</ul>
+</div>
+
+<h2>Screen 4 — Settings</h2>
+<div class="screen">
+<h3>Job</h3>
+<p>Manage collector binaries; a few app options. <span class="tag bug">bug, not design</span> User-added binaries currently appear unusable — they are usable; the state model just renders confusingly. Design the honest model:</p>
+<ul>
+  <li>Four known collectors (core, contrib, otlp, ebpf-profiler) exist as <em>downloadable</em>: one click fetches and verifies. ebpf-profiler is unavailable on macOS — show why, not just a dead row.</li>
+  <li>States per row: available to download · installed (+ where) · added by you (name + path). Actions: download · make default · change path · remove (added ones).</li>
+  <li>Add your own: name + path to a binary.</li>
+  <li>App options: "Show collector switcher in menu bar" toggle · "Set OTEL_* variables system-wide" toggle. That's all — ports and shell-wiring left the UI deliberately (CLI: <code>compy env</code>).</li>
+</ul>
+</div>
+
+<h2>Screen 5 — Menu bar (optional artboard)</h2>
+<div class="screen">
+<p>Native macOS menu, so design = ordering + wording, not pixels. Current contents: status (state, config, set) · ports + error/warn counts · configuration picker (inline, overflow past 10) · value-set picker (when the active config has several) · optional collector switcher · Open compy · Quit. <span class="tag bug">bug, not design</span> "Open compy" spawning a new window every time is a bug; single-window focus is the intended behavior. Sketch the menu as a text artboard if you want to reorder or reword it.</p>
+</div>
+
+<h2>Working agreement</h2>
+<ul>
+  <li>Design in <a href="https://claude.ai/design">claude.ai/design</a> — one artboard per screen is plenty; rough is fine where you're undecided, exact where you care.</li>
+  <li>Anything this brief didn't specify is yours to decide. Where your design contradicts a "product truth" above, say so — some truths are cheaper to change than to design around.</li>
+  <li>Hand the finished screens back; implementation follows them exactly, and every interaction gets click-verified against a real instance before it ships.</li>
+</ul>
+</main>
