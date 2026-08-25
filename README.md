@@ -103,6 +103,17 @@ registers it as a login LaunchAgent so it appears at every login;
 and web UI. Default OTLP ports are 14317 (gRPC) and 14318 (HTTP),
 configurable via `settings.json`.
 
+## HTTP API
+
+Whatever UI process is running (`compy ui`, `compy window`, or the tray's
+"Open compy") serves the same localhost-only REST API `compy ui` does —
+there's no separate daemon. The full contract is `api/openapi.json`.
+
+```
+compy ui --port 8080 &
+curl http://localhost:8080/api/status
+```
+
 ## Migrating from v1
 
 If compy finds a v1 state directory (`config/base.yaml` + enabled

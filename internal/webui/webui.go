@@ -382,10 +382,15 @@ func handleGetConfig(api API) http.HandlerFunc {
 	}
 }
 
+// maxConfigYAMLBytes caps the body handlePutConfigYAML will read, mirroring
+// cfgstore.HTTPFetch's 5MB fetch cap.
+const maxConfigYAMLBytes = 5 << 20
+
 // handlePutConfigYAML's body is text/plain, not JSON: the whole body is the
 // new YAML content.
 func handlePutConfigYAML(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxConfigYAMLBytes)
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err)

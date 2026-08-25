@@ -297,6 +297,27 @@ func TestCreateConfigRoute(t *testing.T) {
 	}
 }
 
+// TestPutConfigYAMLOversizedBody guards the http.MaxBytesReader cap on
+// handlePutConfigYAML: a body over the 5MB limit must fail with 400, not
+// exhaust memory reading an unbounded body.
+func TestPutConfigYAMLOversizedBody(t *testing.T) {
+	api := fakeAPI()
+	api.PutConfigYAML = func(name, yaml string) error {
+		t.Fatal("PutConfigYAML should not be called for an oversized body")
+		return nil
+	}
+
+	body := strings.Repeat("a", maxConfigYAMLBytes+1)
+	rec := call(handlePutConfigYAML(api), http.MethodPut, body, map[string]string{"name": "debug"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	var got map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil || got["error"] == "" {
+		t.Fatalf("body = %v, %v, want {\"error\":...}", got, err)
+	}
+}
+
 func TestCopyConfigRoute(t *testing.T) {
 	api := fakeAPI()
 	var gotSrc, gotDst string
