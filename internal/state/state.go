@@ -9,17 +9,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"slices"
 )
 
-// Settings holds the persisted collector configuration.
+// Settings holds compy's global settings. Unknown fields in settings.json
+// (v1's "enabled"/"raw_mode") are ignored on load, and missing fields keep
+// their defaults, so a v1 file loads without error.
 type Settings struct {
-	GRPCPort int      `json:"grpc_port"` // default 14317
-	HTTPPort int      `json:"http_port"` // default 14318
-	Distro   string   `json:"distro"`    // name of selected distro, "" = none
-	Enabled  []string `json:"enabled"`   // enabled backend names, kept sorted
-	RawMode  bool     `json:"raw_mode"`
-	OSEnv    bool     `json:"os_env"` // OS-level env injection active
+	GRPCPort       int    `json:"grpc_port"`        // default 14317
+	HTTPPort       int    `json:"http_port"`        // default 14318
+	Distro         string `json:"distro"`           // global default distro, "" = none
+	ActiveConfig   string `json:"active_config"`    // active configuration, "" = none
+	MenuDistroSwap bool   `json:"menu_distro_swap"` // show the tray's distro submenu
+	OSEnv          bool   `json:"os_env"`           // OS-level env injection active
 }
 
 // Distro describes a selectable collector distribution.
@@ -54,8 +55,9 @@ func baseDir(goos, xdgDataHome, home string) string {
 	return filepath.Join(xdgDataHome, "compy")
 }
 
-// Dir resolves the compy state directory, creating it (and its
-// config/backends, logs, and last-good subdirectories) if needed.
+// Dir resolves the compy state directory, creating it (and its configs,
+// logs, and last-good subdirectories) if needed. It deliberately does NOT
+// create the v1 config/ tree: its presence is what triggers migration.
 func Dir() (string, error) {
 	base := os.Getenv("COMPY_HOME")
 	if base == "" {
@@ -65,7 +67,7 @@ func Dir() (string, error) {
 		}
 		base = baseDir(runtime.GOOS, os.Getenv("XDG_DATA_HOME"), home)
 	}
-	for _, sub := range []string{filepath.Join("config", "backends"), "logs", "last-good"} {
+	for _, sub := range []string{"configs", "logs", "last-good"} {
 		if err := os.MkdirAll(filepath.Join(base, sub), 0o755); err != nil {
 			return "", err
 		}
@@ -108,7 +110,7 @@ func loadJSON[T any](name string, zero T) (T, error) {
 	if err != nil {
 		return zero, err
 	}
-	var v T
+	v := zero // fields absent from the file keep their default
 	if err := json.Unmarshal(data, &v); err != nil {
 		return zero, err
 	}
@@ -134,11 +136,8 @@ func LoadSettings() (Settings, error) {
 	return loadJSON("settings.json", defaults)
 }
 
-// SaveSettings writes settings.json atomically, keeping Enabled sorted.
-// The caller's Enabled slice is not mutated.
+// SaveSettings writes settings.json atomically.
 func SaveSettings(s Settings) error {
-	s.Enabled = slices.Clone(s.Enabled)
-	slices.Sort(s.Enabled)
 	return saveJSON("settings.json", s)
 }
 

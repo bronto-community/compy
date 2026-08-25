@@ -14,24 +14,61 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if err != nil || s.GRPCPort != 14317 || s.HTTPPort != 14318 {
 		t.Fatalf("defaults wrong: %+v %v", s, err)
 	}
-	s.Enabled = []string{"jaeger", "bronto"}
+	s.ActiveConfig = "debug"
+	s.Distro = "core"
+	s.MenuDistroSwap = true
 	if err := SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
-	s2, _ := LoadSettings()
-	if !slices.Equal(s2.Enabled, []string{"bronto", "jaeger"}) { // sorted on save
-		t.Fatalf("got %v", s2.Enabled)
+	s2, err := LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2 != s {
+		t.Fatalf("round trip: got %+v, want %+v", s2, s)
 	}
 }
 
-func TestSaveSettingsDoesNotMutateCaller(t *testing.T) {
-	t.Setenv("COMPY_HOME", t.TempDir())
-	s := Settings{Enabled: []string{"zeta", "alpha"}}
-	if err := SaveSettings(s); err != nil {
+// A v1 settings.json carries "enabled"/"raw_mode" and no v2 fields: it must
+// load without error, ignoring what it does not know and defaulting the rest.
+func TestLoadSettingsAcceptsV1File(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("COMPY_HOME", home)
+	if _, err := Dir(); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(s.Enabled, []string{"zeta", "alpha"}) {
-		t.Fatalf("caller's slice was mutated: got %v", s.Enabled)
+	old := `{"grpc_port":14317,"http_port":14318,"distro":"core","enabled":["bronto"],"raw_mode":true,"os_env":true}`
+	if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings on a v1 file: %v", err)
+	}
+	if s.GRPCPort != 14317 || s.Distro != "core" || !s.OSEnv {
+		t.Errorf("known fields lost: %+v", s)
+	}
+	if s.ActiveConfig != "" || s.MenuDistroSwap {
+		t.Errorf("new fields not defaulted: %+v", s)
+	}
+}
+
+// A settings.json missing the port fields must still get compy's defaults.
+func TestLoadSettingsDefaultsMissingPorts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("COMPY_HOME", home)
+	if _, err := Dir(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte(`{"distro":"core"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.GRPCPort != 14317 || s.HTTPPort != 14318 {
+		t.Fatalf("ports = %d/%d, want defaults", s.GRPCPort, s.HTTPPort)
 	}
 }
 
@@ -74,7 +111,7 @@ func TestDirCreatesSubdirs(t *testing.T) {
 	if _, err := Dir(); err != nil {
 		t.Fatal(err)
 	}
-	for _, sub := range []string{"config/backends", "logs", "last-good"} {
+	for _, sub := range []string{"configs", "logs", "last-good"} {
 		if _, err := os.Stat(filepath.Join(home, sub)); err != nil {
 			t.Fatal(sub, err)
 		}

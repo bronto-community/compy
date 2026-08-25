@@ -4,17 +4,27 @@ package collector
 import (
 	"bufio"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
+	"slices"
 	"time"
 )
 
-// Validate runs `bin validate <configArgs...>` and returns an error whose
-// message contains the process's combined output if it exits non-zero.
-func Validate(bin string, configArgs []string) error {
+// Validate runs `bin validate <configArgs...>` with env added to the
+// process environment — the collector expands ${VAR} references itself, so
+// validation must see the same variables the running service will get — and
+// returns an error whose message contains the process's combined output if
+// it exits non-zero.
+func Validate(bin string, configArgs []string, env map[string]string) error {
 	args := append([]string{"validate"}, configArgs...)
-	out, err := exec.Command(bin, args...).CombinedOutput()
+	cmd := exec.Command(bin, args...)
+	cmd.Env = os.Environ()
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		cmd.Env = append(cmd.Env, k+"="+env[k])
+	}
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %s", err, out)
 	}

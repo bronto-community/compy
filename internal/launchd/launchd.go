@@ -142,7 +142,10 @@ func InstallAgent(label, bin string, args []string, logPath string, keepAlive bo
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := state.WriteFileAtomic(path, renderPlist(label, bin, args, logPath, keepAlive, env), 0o644); err != nil {
+	// 0600: EnvironmentVariables now carries the active variable set, i.e.
+	// user API keys. launchd only requires the plist be owned by the user
+	// and not group/world writable.
+	if err := state.WriteFileAtomic(path, renderPlist(label, bin, args, logPath, keepAlive, env), 0o600); err != nil {
 		return err
 	}
 

@@ -377,6 +377,74 @@ func TestWriteYAMLRejectsPathTraversal(t *testing.T) {
 	}
 }
 
+func TestSnapshotRestoreActive(t *testing.T) {
+	root := t.TempDir()
+	settings := filepath.Join(root, "settings.json")
+
+	if err := RestoreActive(root); err == nil {
+		t.Fatal("RestoreActive without a snapshot: want error, got nil")
+	}
+
+	if err := Create(root, "prod", "good: true\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetVar(root, "prod", "default", "KEY", "good"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"grpc_port":1,"active_config":"prod"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SnapshotActive(root, "prod"); err != nil {
+		t.Fatalf("SnapshotActive: %v", err)
+	}
+
+	// Break both the config and settings after the snapshot.
+	if err := WriteYAML(root, "prod", "bad: true\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetVar(root, "prod", "default", "KEY", "bad"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"grpc_port":2,"active_config":"prod"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RestoreActive(root); err != nil {
+		t.Fatalf("RestoreActive: %v", err)
+	}
+	info, yaml, err := Get(root, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if yaml != "good: true\n" {
+		t.Errorf("yaml = %q, want the snapshotted content", yaml)
+	}
+	if info.Meta.VariableSets["default"]["KEY"] != "good" {
+		t.Errorf("variable sets = %v, want the snapshotted values", info.Meta.VariableSets)
+	}
+	data, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"grpc_port":1`) {
+		t.Errorf("settings.json = %s, want the snapshotted content", data)
+	}
+}
+
+func TestRestoreActiveRejectsTraversalName(t *testing.T) {
+	root := t.TempDir()
+	snap := filepath.Join(root, "last-good")
+	if err := os.MkdirAll(snap, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snap, "settings.json"), []byte(`{"active_config":"../evil"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreActive(root); err == nil {
+		t.Fatal("RestoreActive with a traversal active_config: want error, got nil")
+	}
+}
+
 func TestAllNamedFunctionsRejectTraversal(t *testing.T) {
 	root := t.TempDir()
 	const bad = "../x"
@@ -399,6 +467,7 @@ func TestAllNamedFunctionsRejectTraversal(t *testing.T) {
 		{"SetVar", func() error { return SetVar(root, bad, "set", "K", "V") }},
 		{"DeleteSet", func() error { return DeleteSet(root, bad, "set") }},
 		{"UseSet", func() error { return UseSet(root, bad, "set") }},
+		{"SnapshotActive", func() error { return SnapshotActive(root, bad) }},
 	}
 	for _, c := range checks {
 		if err := c.call(); err == nil {

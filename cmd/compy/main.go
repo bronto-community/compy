@@ -1,5 +1,6 @@
-// Command compy manages a local OpenTelemetry Collector: backends, distros,
-// the LaunchAgent service, environment variables, and a small web UI.
+// Command compy manages a local OpenTelemetry Collector: configurations,
+// variable sets, distros, the LaunchAgent service, environment variables,
+// and a small web UI.
 //
 // This file is wiring only — argument parsing and printing. All behavior
 // lives in internal/app.
@@ -16,10 +17,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/bronto-io/compy/internal/app"
-	"github.com/bronto-io/compy/internal/config"
 	"github.com/bronto-io/compy/internal/envvars"
 	"github.com/bronto-io/compy/internal/launchd"
 	"github.com/bronto-io/compy/internal/state"
@@ -32,17 +34,22 @@ const usage = `compy — local OpenTelemetry Collector manager
 
   compy status [--json]
   compy apply | rollback | validate
-  compy backend list
-  compy backend add <name> --kind otlp-grpc|otlp-http|bronto|debug [--endpoint URL] [--api-key KEY]
-  compy backend remove|enable|disable|edit <name>
+  compy config list
+  compy config show|edit|delete|sync|resync <name>
+  compy config create <name> [--from-url URL]
+  compy config copy <src> <dst>
+  compy config sync-all
+  compy use <config> [<set>]
+  compy vars <config>
+  compy set <config> <set> KEY=VALUE
+  compy sets use|delete <config> <set>
   compy distro list
   compy distro add <name> <path>
-  compy distro use <name>
+  compy distro use|fetch <name>
   compy service install|uninstall|status
   compy env [--shell sh|fish|pwsh]
   compy env set-os | unset-os
   compy run -- <cmd...>
-  compy raw on|off|edit
   compy ui [--port N]
   compy tray [install|uninstall]
   compy window
@@ -79,8 +86,33 @@ func run(args []string) error {
 			fmt.Println("config ok")
 			return nil
 		})
-	case "backend":
-		return cmdBackend(rest)
+	case "config":
+		return cmdConfig(rest)
+	case "use":
+		if len(rest) < 1 || len(rest) > 2 {
+			return errors.New("use: need <config> [<set>]")
+		}
+		set := ""
+		if len(rest) == 2 {
+			set = rest[1]
+		}
+		return withApp(func(a *app.App) error { return a.Activate(rest[0], set) })
+	case "vars":
+		if len(rest) != 1 {
+			return errors.New("vars: need <config>")
+		}
+		return withApp(func(a *app.App) error { return printVars(a, rest[0]) })
+	case "set":
+		if len(rest) != 3 {
+			return errors.New("set: need <config> <set> KEY=VALUE")
+		}
+		key, value, ok := strings.Cut(rest[2], "=")
+		if !ok {
+			return errors.New("set: need KEY=VALUE")
+		}
+		return withApp(func(a *app.App) error { return a.SetVar(rest[0], rest[1], key, value) })
+	case "sets":
+		return cmdSets(rest)
 	case "distro":
 		return cmdDistro(rest)
 	case "service":
@@ -89,8 +121,6 @@ func run(args []string) error {
 		return cmdEnv(rest)
 	case "run":
 		return cmdRun(rest)
-	case "raw":
-		return cmdRaw(rest)
 	case "ui":
 		return cmdUI(rest)
 	case "window":
@@ -119,7 +149,8 @@ func cmdTray(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := launchd.InstallAgent(launchd.TrayLabel, bin, []string{"tray"}, filepath.Join(dir, "logs", "tray.log"), false); err != nil {
+		log := filepath.Join(dir, "logs", "tray.log")
+		if err := launchd.InstallAgent(launchd.TrayLabel, bin, []string{"tray"}, log, false, nil); err != nil {
 			return err
 		}
 		fmt.Println("tray installed (starts at login; running now)")
@@ -161,71 +192,183 @@ func cmdStatus(args []string) error {
 		if st.Running {
 			running = "running"
 		}
+		config := st.Config
+		if config == "" {
+			config = "(none)"
+		} else if st.Set != "" {
+			config += " (set " + st.Set + ")"
+		}
 		distro := st.Distro
 		if distro == "" {
 			distro = "(none)"
 		}
-		fmt.Printf("service:  %s\ndistro:   %s\nendpoint: http://127.0.0.1:%d (grpc %d)\nenabled:  %s\nraw mode: %v\n",
-			running, distro, st.HTTPPort, st.GRPCPort, strings.Join(st.Enabled, ", "), st.RawMode)
+		fmt.Printf("service:  %s\nconfig:   %s\ndistro:   %s\nendpoint: http://127.0.0.1:%d (grpc %d)\n",
+			running, config, distro, st.HTTPPort, st.GRPCPort)
 		return nil
 	})
 }
 
-func cmdBackend(args []string) error {
+func cmdConfig(args []string) error {
 	if len(args) == 0 {
-		return errors.New("backend: need a subcommand")
+		return errors.New("config: need a subcommand")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
 	case "list":
+		return withApp(listConfigs)
+	case "sync-all":
 		return withApp(func(a *app.App) error {
-			backends, err := a.Backends()
-			if err != nil {
-				return err
+			synced, err := a.SyncAll()
+			for _, n := range synced {
+				fmt.Println("synced", n)
 			}
-			for _, b := range backends {
-				mark := " "
-				if b["enabled"] == true {
-					mark = "*"
-				}
-				fmt.Printf("%s %s\n", mark, b["name"])
-			}
-			return nil
+			return err
 		})
-	case "add":
+	case "create":
 		if len(rest) == 0 {
-			return errors.New("backend add: need a name")
+			return errors.New("config create: need a name")
 		}
 		name := rest[0]
-		fs := flag.NewFlagSet("backend add", flag.ContinueOnError)
-		kind := fs.String("kind", "", "otlp-grpc|otlp-http|bronto|debug")
-		endpoint := fs.String("endpoint", "", "exporter endpoint URL")
-		apiKey := fs.String("api-key", "", "API key")
+		fs := flag.NewFlagSet("config create", flag.ContinueOnError)
+		fromURL := fs.String("from-url", "", "fetch the configuration from this URL")
 		if err := fs.Parse(rest[1:]); err != nil {
 			return err
 		}
-		return withApp(func(a *app.App) error { return a.AddBackend(name, *kind, *endpoint, *apiKey) })
-	case "remove", "enable", "disable", "edit":
+		return withApp(func(a *app.App) error {
+			if *fromURL != "" {
+				return a.CreateFromURL(name, *fromURL)
+			}
+			return a.CreateConfig(name, blankConfig)
+		})
+	case "copy":
+		if len(rest) != 2 {
+			return errors.New("config copy: need <src> <dst>")
+		}
+		return withApp(func(a *app.App) error { return a.CopyConfig(rest[0], rest[1]) })
+	case "show", "edit", "delete", "sync", "resync":
 		if len(rest) != 1 {
-			return fmt.Errorf("backend %s: need exactly one name", sub)
+			return fmt.Errorf("config %s: need exactly one name", sub)
 		}
 		name := rest[0]
 		return withApp(func(a *app.App) error {
 			switch sub {
-			case "remove":
-				return a.RemoveBackend(name)
-			case "enable":
-				return a.SetEnabled(name, true)
-			case "disable":
-				return a.SetEnabled(name, false)
+			case "show":
+				_, yaml, err := a.Config(name)
+				if err != nil {
+					return err
+				}
+				fmt.Print(yaml)
+				return nil
+			case "delete":
+				return a.DeleteConfig(name)
+			case "sync":
+				return a.Sync(name)
+			case "resync":
+				return a.Resync(name)
 			default:
-				return editThen(config.BackendPath(a.Dir, name),
-					func(s string) error { return a.WriteFragment(name, s) })
+				return editThen(a.ConfigPath(name),
+					func(s string) error { return a.WriteConfigYAML(name, s) })
 			}
 		})
 	default:
-		return fmt.Errorf("backend: unknown subcommand %q", sub)
+		return fmt.Errorf("config: unknown subcommand %q", sub)
 	}
+}
+
+// blankConfig is the starting point for `compy config create` without a URL:
+// enough shape to edit, using compy's ports.
+const blankConfig = `receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}
+      http:
+        endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}
+exporters:
+  debug:
+service:
+  pipelines:
+    traces: {receivers: [otlp], exporters: [debug]}
+    metrics: {receivers: [otlp], exporters: [debug]}
+    logs: {receivers: [otlp], exporters: [debug]}
+`
+
+func listConfigs(a *app.App) error {
+	configs, err := a.Configs()
+	if err != nil {
+		return err
+	}
+	active, _, err := a.ActiveConfig()
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	for _, c := range configs {
+		mark := " "
+		if c.Name == active {
+			mark = "*"
+		}
+		prov := c.Provenance
+		if c.Modified {
+			prov += ", modified"
+		}
+		fmt.Fprintf(w, "%s %s\t%s\t%s\n", mark, c.Name, prov, c.Meta.ActiveSet)
+	}
+	return w.Flush()
+}
+
+// printVars renders the configuration's variables as a table: one row per
+// variable, one column per variable set.
+func printVars(a *app.App, name string) error {
+	info, _, err := a.Config(name)
+	if err != nil {
+		return err
+	}
+	sets := make([]string, 0, len(info.Meta.VariableSets))
+	for set := range info.Meta.VariableSets {
+		sets = append(sets, set)
+	}
+	slices.Sort(sets)
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprint(w, "VARIABLE\tDEFAULT\tDESCRIPTION")
+	for _, set := range sets {
+		mark := ""
+		if set == info.Meta.ActiveSet {
+			mark = "*"
+		}
+		fmt.Fprintf(w, "\t%s%s", set, mark)
+	}
+	fmt.Fprintln(w)
+	for _, v := range info.Vars {
+		def := v.Default
+		if !v.HasDefault {
+			def = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s", v.Name, def, v.Description)
+		for _, set := range sets {
+			fmt.Fprintf(w, "\t%s", info.Meta.VariableSets[set][v.Name])
+		}
+		fmt.Fprintln(w)
+	}
+	return w.Flush()
+}
+
+func cmdSets(args []string) error {
+	if len(args) != 3 {
+		return errors.New("sets: need use|delete <config> <set>")
+	}
+	sub, name, set := args[0], args[1], args[2]
+	return withApp(func(a *app.App) error {
+		switch sub {
+		case "use":
+			return a.UseSet(name, set)
+		case "delete":
+			return a.DeleteSet(name, set)
+		default:
+			return fmt.Errorf("sets: unknown subcommand %q", sub)
+		}
+	})
 }
 
 func cmdDistro(args []string) error {
@@ -234,22 +377,32 @@ func cmdDistro(args []string) error {
 	}
 	switch args[0] {
 	case "list":
-		distros, err := state.LoadDistros()
-		if err != nil {
-			return err
-		}
-		s, err := state.LoadSettings()
-		if err != nil {
-			return err
-		}
-		for _, d := range distros {
-			mark := " "
-			if d.Name == s.Distro {
-				mark = "*"
+		return withApp(func(a *app.App) error {
+			distros, err := a.Distros()
+			if err != nil {
+				return err
 			}
-			fmt.Printf("%s %s\t%s\n", mark, d.Name, d.Path)
-		}
-		return nil
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			for _, d := range distros {
+				mark := " "
+				if d["selected"] == true {
+					mark = "*"
+				}
+				note := "user"
+				if d["definition"] == true {
+					switch {
+					case d["available"] != true:
+						note = "unavailable on this platform"
+					case d["downloaded"] == true:
+						note = "downloaded"
+					default:
+						note = "available (downloads on first use)"
+					}
+				}
+				fmt.Fprintf(w, "%s %s\t%s\t%s\n", mark, d["name"], note, d["path"])
+			}
+			return w.Flush()
+		})
 	case "add":
 		if len(args) != 3 {
 			return errors.New("distro add: need <name> <path>")
@@ -260,6 +413,18 @@ func cmdDistro(args []string) error {
 			return errors.New("distro use: need <name>")
 		}
 		return withApp(func(a *app.App) error { return a.UseDistro(args[1]) })
+	case "fetch":
+		if len(args) != 2 {
+			return errors.New("distro fetch: need <name>")
+		}
+		return withApp(func(a *app.App) error {
+			path, err := a.EnsureDistro(args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Println(path)
+			return nil
+		})
 	default:
 		return fmt.Errorf("distro: unknown subcommand %q", args[0])
 	}
@@ -332,24 +497,6 @@ func cmdRun(args []string) error {
 	})
 }
 
-func cmdRaw(args []string) error {
-	if len(args) != 1 {
-		return errors.New("raw: need on|off|edit")
-	}
-	return withApp(func(a *app.App) error {
-		switch args[0] {
-		case "on":
-			return a.SetRawMode(true)
-		case "off":
-			return a.SetRawMode(false)
-		case "edit":
-			return editThen(a.RawPath(), a.WriteRaw)
-		default:
-			return fmt.Errorf("raw: unknown subcommand %q", args[0])
-		}
-	})
-}
-
 func cmdUI(args []string) error {
 	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
 	port := fs.Int("port", 0, "port (0 = pick a free one)")
@@ -373,7 +520,7 @@ func cmdUI(args []string) error {
 }
 
 // editThen opens path in $EDITOR (vi by default), then hands the edited
-// content to save (which decides whether an apply is needed).
+// content to save (which decides whether a re-activation is needed).
 func editThen(path string, save func(string) error) error {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
