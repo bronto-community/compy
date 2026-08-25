@@ -861,7 +861,10 @@ func (a *App) RemoveDistro(name string) (bool, error) {
 }
 
 // UseDistro selects the global default distro, re-applying if a
-// configuration is active.
+// configuration is active. The switch sticks when the collector starts, and
+// when the active configuration is merely rejected by it (nothing moved); it
+// does not stick when the new collector fails to start, because the restore
+// that puts the previous configuration back restores settings.json with it.
 func (a *App) UseDistro(name string) error {
 	if _, err := a.EnsureDistro(name, nil); err != nil {
 		return err
@@ -881,16 +884,25 @@ func (a *App) UseDistro(name string) error {
 	if err == nil {
 		return nil
 	}
-	// The default is switched either way — it is a global preference, not
-	// something one configuration gets to veto. Only say the configuration
-	// is incompatible when that is actually what failed: a plist write or a
-	// launchctl refusal is our fault, and keeps both its own message and its
-	// 500 (the collector log tail the UI shows there is the diagnostic).
-	if !state.IsBadRequest(err) {
-		return err
+	// Whether the switch survived depends on how the apply failed, so say
+	// which happened rather than assume.
+	//
+	// A configuration the collector rejects never reached launchd: nothing
+	// moved, the switch stands, and it is a caller mistake (400).
+	if state.IsBadRequest(err) {
+		// Already marked, so the wrap stays a 400 (IsBadRequest unwraps).
+		return fmt.Errorf("default collector is now %q, but the active configuration does not run with it: %w", name, err)
 	}
-	// Already marked, so the wrap stays a 400 (IsBadRequest unwraps).
-	return fmt.Errorf("default collector is now %q, but the active configuration does not run with it: %w", name, err)
+	// A collector that will not start restores the last-good snapshot,
+	// settings.json included, which puts the previous collector back — so
+	// read the setting rather than claim it stuck.
+	if after, lerr := state.LoadSettings(); lerr == nil && after.Distro != name {
+		return fmt.Errorf("%q did not start; the collector is still %q: %w", name, after.Distro, err)
+	}
+	// Anything else — a plist write, a launchctl refusal — is our fault and
+	// keeps both its own message and its 500 (the collector log tail the UI
+	// shows there is the diagnostic).
+	return err
 }
 
 // Vars returns the OTEL_* environment variables for the current settings.
