@@ -43,12 +43,16 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy vars <config>
   compy set <config> <set> KEY=VALUE
   compy sets use|delete <config> <set>
+  compy sets rename <config> <from> <to>
   compy distro list
   compy distro add <name> <path>
+  compy distro set-path <name> <path>
+  compy distro remove <name>
   compy distro use|fetch <name>
   compy service install|uninstall|status
   compy env [--shell sh|fish|pwsh]
   compy env set-os | unset-os
+  compy log [--lines N]
   compy run -- <cmd...>
   compy ui [--port N]
   compy tray [install|uninstall]
@@ -119,6 +123,8 @@ func run(args []string) error {
 		return cmdService(rest)
 	case "env":
 		return cmdEnv(rest)
+	case "log":
+		return cmdLog(rest)
 	case "run":
 		return cmdRun(rest)
 	case "ui":
@@ -357,8 +363,12 @@ func printVars(a *app.App, name string) error {
 }
 
 func cmdSets(args []string) error {
+	if len(args) == 4 && args[0] == "rename" {
+		name, from, to := args[1], args[2], args[3]
+		return withApp(func(a *app.App) error { return a.RenameSet(name, from, to) })
+	}
 	if len(args) != 3 {
-		return errors.New("sets: need use|delete <config> <set>")
+		return errors.New("sets: need use|delete <config> <set>, or rename <config> <from> <to>")
 	}
 	sub, name, set := args[0], args[1], args[2]
 	return withApp(func(a *app.App) error {
@@ -410,6 +420,36 @@ func cmdDistro(args []string) error {
 			return errors.New("distro add: need <name> <path>")
 		}
 		return withApp(func(a *app.App) error { return a.AddDistro(args[1], args[2]) })
+	case "set-path":
+		if len(args) != 3 {
+			return errors.New("distro set-path: need <name> <path>")
+		}
+		return withApp(func(a *app.App) error {
+			warning, err := a.SetDistroPath(args[1], args[2])
+			if err != nil {
+				return err
+			}
+			if warning != "" {
+				fmt.Fprintln(os.Stderr, "compy:", warning)
+			}
+			return nil
+		})
+	case "remove":
+		if len(args) != 2 {
+			return errors.New("distro remove: need <name>")
+		}
+		return withApp(func(a *app.App) error {
+			reverted, err := a.RemoveDistro(args[1])
+			if err != nil {
+				return err
+			}
+			if reverted {
+				fmt.Println("reverted to the shipped definition")
+			} else {
+				fmt.Println("removed")
+			}
+			return nil
+		})
 	case "use":
 		if len(args) != 2 {
 			return errors.New("distro use: need <name>")
@@ -473,6 +513,22 @@ func cmdEnv(args []string) error {
 			return err
 		}
 		fmt.Print(script)
+		return nil
+	})
+}
+
+func cmdLog(args []string) error {
+	fs := flag.NewFlagSet("log", flag.ContinueOnError)
+	lines := fs.Int("lines", 50, "number of lines to show")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return withApp(func(a *app.App) error {
+		tail, err := a.Log(*lines)
+		if err != nil {
+			return err
+		}
+		fmt.Print(tail)
 		return nil
 	})
 }

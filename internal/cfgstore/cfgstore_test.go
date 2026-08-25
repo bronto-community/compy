@@ -251,6 +251,50 @@ func TestVariableSets(t *testing.T) {
 	}
 }
 
+func TestRenameSet(t *testing.T) {
+	root := t.TempDir()
+	if err := Create(root, "cfg", "receivers: {}\n"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := SetVar(root, "cfg", "prod", "HOST", "prod.example.com"); err != nil {
+		t.Fatalf("SetVar: %v", err)
+	}
+	if err := UseSet(root, "cfg", "prod"); err != nil {
+		t.Fatalf("UseSet: %v", err)
+	}
+	if err := SetVar(root, "cfg", "staging", "HOST", "staging.example.com"); err != nil {
+		t.Fatalf("SetVar: %v", err)
+	}
+
+	// Renaming the active set follows it.
+	if err := RenameSet(root, "cfg", "prod", "production"); err != nil {
+		t.Fatalf("RenameSet: %v", err)
+	}
+	info, _, err := Get(root, "cfg")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, ok := info.Meta.VariableSets["prod"]; ok {
+		t.Fatalf("old set name still present: %+v", info.Meta.VariableSets)
+	}
+	if info.Meta.VariableSets["production"]["HOST"] != "prod.example.com" {
+		t.Fatalf("renamed set missing values: %+v", info.Meta.VariableSets)
+	}
+	if info.Meta.ActiveSet != "production" {
+		t.Fatalf("ActiveSet = %q, want it to follow the rename", info.Meta.ActiveSet)
+	}
+
+	if err := RenameSet(root, "cfg", "nonexistent", "x"); err == nil {
+		t.Fatal("RenameSet from a nonexistent set: want error, got nil")
+	}
+	if err := RenameSet(root, "cfg", "staging", "production"); err == nil {
+		t.Fatal("RenameSet onto an existing set name: want error, got nil")
+	}
+	if err := RenameSet(root, "cfg", "staging", ""); err == nil {
+		t.Fatal("RenameSet to an empty name: want error, got nil")
+	}
+}
+
 func TestWriteSetCreatesAndReplaces(t *testing.T) {
 	root := t.TempDir()
 	if err := Create(root, "cfg", "receivers: {}\n"); err != nil {
@@ -540,6 +584,7 @@ func TestAllNamedFunctionsRejectTraversal(t *testing.T) {
 		{"WriteSet", func() error { return WriteSet(root, bad, "set", map[string]string{"K": "V"}) }},
 		{"DeleteSet", func() error { return DeleteSet(root, bad, "set") }},
 		{"UseSet", func() error { return UseSet(root, bad, "set") }},
+		{"RenameSet", func() error { return RenameSet(root, bad, "set", "set2") }},
 		{"SnapshotActive", func() error { return SnapshotActive(root, bad) }},
 	}
 	for _, c := range checks {
