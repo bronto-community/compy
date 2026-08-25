@@ -251,6 +251,43 @@ func TestVariableSets(t *testing.T) {
 	}
 }
 
+func TestWriteSetCreatesAndReplaces(t *testing.T) {
+	root := t.TempDir()
+	if err := Create(root, "cfg", "receivers: {}\n"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := WriteSet(root, "cfg", "prod", map[string]string{"HOST": "prod.example.com"}); err != nil {
+		t.Fatalf("WriteSet: %v", err)
+	}
+	info, _, err := Get(root, "cfg")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(info.Meta.VariableSets["prod"]) != 1 || info.Meta.VariableSets["prod"]["HOST"] != "prod.example.com" {
+		t.Fatalf("VariableSets after create = %+v", info.Meta.VariableSets)
+	}
+
+	// A second WriteSet replaces the whole set, not merges into it.
+	if err := WriteSet(root, "cfg", "prod", map[string]string{"PORT": "443"}); err != nil {
+		t.Fatalf("WriteSet (replace): %v", err)
+	}
+	info, _, err = Get(root, "cfg")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, ok := info.Meta.VariableSets["prod"]["HOST"]; ok {
+		t.Fatalf("WriteSet merged instead of replacing: %+v", info.Meta.VariableSets["prod"])
+	}
+	if info.Meta.VariableSets["prod"]["PORT"] != "443" {
+		t.Fatalf("VariableSets after replace = %+v", info.Meta.VariableSets)
+	}
+
+	if err := WriteSet(root, "missing", "prod", map[string]string{}); err == nil {
+		t.Fatal("WriteSet on missing config: want error, got nil")
+	}
+}
+
 func TestMaterializeDefaultsUpgradeRules(t *testing.T) {
 	root := t.TempDir()
 
@@ -500,6 +537,7 @@ func TestAllNamedFunctionsRejectTraversal(t *testing.T) {
 		{"Sync", func() error { return Sync(root, bad, fetch) }},
 		{"Resync", func() error { return Resync(root, bad, fetch) }},
 		{"SetVar", func() error { return SetVar(root, bad, "set", "K", "V") }},
+		{"WriteSet", func() error { return WriteSet(root, bad, "set", map[string]string{"K": "V"}) }},
 		{"DeleteSet", func() error { return DeleteSet(root, bad, "set") }},
 		{"UseSet", func() error { return UseSet(root, bad, "set") }},
 		{"SnapshotActive", func() error { return SnapshotActive(root, bad) }},
