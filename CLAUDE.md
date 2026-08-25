@@ -30,13 +30,13 @@ out on other GOOS in `internal/tray`) and `github.com/webview/webview_go`
 ## Module layout (`internal/*`)
 
 - `app` — orchestrates everything else: turns the active configuration + its
-  variable set into a validated, installed, running collector; the one API
+  preset into a validated, installed, running collector; the one API
   the CLI, web UI, and tray all call into.
 - `collector` — runs and probes a local OpenTelemetry Collector binary
   (validate, health probe, log tail); starting it is `launchd`'s job, via
   `app.Apply`.
 - `cfgstore` — configurations: `configs/<name>/` (config.yaml + meta.json),
-  CRUD/copy, variable sets, provenance hashing, shipped defaults, remote
+  CRUD/copy, presets, provenance hashing, shipped defaults, remote
   sync, last-good snapshot/restore.
 - `vars` — extracts `${VAR}` / `${env:VAR:-default}` references (and their
   trailing-comment descriptions) from collector YAML.
@@ -72,9 +72,9 @@ updating BOTH, or `TestOpenAPIDriftAgainstRoutes` fails.
 ## Configurations
 
 A configuration (`internal/cfgstore`) is a whole collector `config.yaml` +
-`meta.json` (provenance, variable sets) under `configs/<name>/`. Exactly one
-configuration, and one of its variable sets, is active at a time;
-activating (`app.Activate`) puts that set's values into the LaunchAgent's
+`meta.json` (provenance, presets) under `configs/<name>/`. Exactly one
+configuration, and one of its presets, is active at a time;
+activating (`app.Activate`) puts that preset's values into the LaunchAgent's
 environment so the collector expands its own `${VAR}` / `${env:VAR:-def}`
 references — no text substitution in compy. Three shipped defaults
 (`debug`, `otlp`, `bronto`, embedded via `internal/cfgstore/defaults/*.yaml`)
