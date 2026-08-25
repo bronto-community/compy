@@ -79,8 +79,18 @@ func TailLog(path string, n int) (string, error) {
 		return "", err
 	}
 	start := int64(0)
+	skipFirst := false
 	if info.Size() > tailReadCap {
 		start = info.Size() - tailReadCap
+		// The read window starts mid-file. The first token the scanner
+		// reads is only a partial line — and must be dropped — unless
+		// start happens to land exactly on a line boundary, i.e. the byte
+		// right before it is a newline.
+		prev := make([]byte, 1)
+		if _, err := f.ReadAt(prev, start-1); err != nil {
+			return "", err
+		}
+		skipFirst = prev[0] != '\n'
 	}
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return "", err
@@ -88,7 +98,6 @@ func TailLog(path string, n int) (string, error) {
 
 	var lines []string
 	scanner := bufio.NewScanner(f)
-	skipFirst := start > 0
 	for scanner.Scan() {
 		if skipFirst {
 			skipFirst = false

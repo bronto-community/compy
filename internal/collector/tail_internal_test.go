@@ -43,11 +43,14 @@ func TestTailLogBoundedRead(t *testing.T) {
 }
 
 // TestTailLogBoundedReadNMoreThanAvailable asks for more lines than fit in
-// the (shrunk) read window and should get back only what's available,
-// without error and without any partial leading line.
+// the (shrunk) read window and should get back exactly what's available —
+// no more, no less. With this fixture (30 lines "l1".."l30", cap=20 bytes)
+// the read window's start (byte offset 91) lands exactly on a line
+// boundary (the byte before it is '\n'), so l26 is a whole line and must
+// be kept, not dropped as a partial line.
 func TestTailLogBoundedReadNMoreThanAvailable(t *testing.T) {
 	orig := tailReadCap
-	tailReadCap = 20 // bytes: only a couple of short lines fit
+	tailReadCap = 20 // bytes: only a few short lines fit
 	defer func() { tailReadCap = orig }()
 
 	dir := t.TempDir()
@@ -69,13 +72,8 @@ func TestTailLogBoundedReadNMoreThanAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == "" {
-		t.Fatal("want some available lines, got empty string")
-	}
-	if strings.HasPrefix(got, "l1\n") {
-		t.Fatalf("got %q, want the earliest (partial) line dropped", got)
-	}
-	if !strings.HasSuffix(got, "l30\n") {
-		t.Fatalf("got %q, want it to end with the last written line", got)
+	want := "l26\nl27\nl28\nl29\nl30\n"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
