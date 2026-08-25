@@ -56,6 +56,13 @@ out on other GOOS in `internal/tray`) and `github.com/webview/webview_go`
   via a closure struct.
 - `window` — the native window wrapper `compy window` runs.
 
+## api/
+
+`api/openapi.json` is the committed, authoritative REST contract (served by
+whatever UI process is running — no daemon). `internal/webui`'s `routes()`
+table and the spec must agree: adding, removing, or renaming a route means
+updating BOTH, or `TestOpenAPIDriftAgainstRoutes` fails.
+
 ## Configurations
 
 A configuration (`internal/cfgstore`) is a whole collector `config.yaml` +
