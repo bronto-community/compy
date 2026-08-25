@@ -15,12 +15,11 @@ import (
 // (v1's "enabled"/"raw_mode") are ignored on load, and missing fields keep
 // their defaults, so a v1 file loads without error.
 type Settings struct {
-	GRPCPort       int    `json:"grpc_port"`        // default 14317
-	HTTPPort       int    `json:"http_port"`        // default 14318
-	Distro         string `json:"distro"`           // global default distro, "" = none
-	ActiveConfig   string `json:"active_config"`    // active configuration, "" = none
-	MenuDistroSwap bool   `json:"menu_distro_swap"` // show the tray's distro submenu
-	OSEnv          bool   `json:"os_env"`           // OS-level env injection active
+	GRPCPort     int    `json:"grpc_port"`     // default 14317
+	HTTPPort     int    `json:"http_port"`     // default 14318
+	Distro       string `json:"distro"`        // global default distro, "" = none
+	ActiveConfig string `json:"active_config"` // active configuration, "" = none
+	OSEnv        bool   `json:"os_env"`        // OS-level env injection active
 }
 
 // Distro describes a selectable collector distribution.

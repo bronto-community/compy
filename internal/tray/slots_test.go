@@ -51,7 +51,7 @@ func TestStatusLines(t *testing.T) {
 		},
 		{
 			name:      "running with set",
-			st:        app.Status{Running: true, Config: "prod", Set: "eu", GRPCPort: 14317, HTTPPort: 14318},
+			st:        app.Status{Running: true, Config: "prod", Preset: "eu", GRPCPort: 14317, HTTPPort: 14318},
 			wantLine1: "running — prod (eu)",
 			wantLine2: "grpc :14317 · http :14318",
 		},
@@ -95,10 +95,10 @@ func TestStatusLines(t *testing.T) {
 
 func TestActiveVariableSets(t *testing.T) {
 	configs := []cfgstore.Info{
-		{Name: "solo", Meta: cfgstore.Meta{VariableSets: map[string]map[string]string{"default": {}}, ActiveSet: "default"}},
+		{Name: "solo", Meta: cfgstore.Meta{Presets: map[string]map[string]string{"default": {}}, ActivePreset: "default"}},
 		{Name: "multi", Meta: cfgstore.Meta{
-			VariableSets: map[string]map[string]string{"eu": {}, "default": {}, "us": {}},
-			ActiveSet:    "us",
+			Presets:      map[string]map[string]string{"eu": {}, "default": {}, "us": {}},
+			ActivePreset: "us",
 		}},
 	}
 	cases := []struct {
@@ -114,7 +114,7 @@ func TestActiveVariableSets(t *testing.T) {
 		{"multi set shown sorted", "multi", []string{"default", "eu", "us"}, "us", true},
 	}
 	for _, c := range cases {
-		names, set, show := activeVariableSets(configs, c.active)
+		names, set, show := activePresets(configs, c.active)
 		if show != c.wantShow || set != c.wantSet || !reflect.DeepEqual(names, c.wantNames) {
 			t.Errorf("%s: got names=%v set=%q show=%v, want names=%v set=%q show=%v",
 				c.name, names, set, show, c.wantNames, c.wantSet, c.wantShow)

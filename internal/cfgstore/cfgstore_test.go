@@ -66,8 +66,8 @@ func TestCopyDropsProvenance(t *testing.T) {
 	if err := SetVar(root, "src", "default", "KEY", "value"); err != nil {
 		t.Fatalf("SetVar: %v", err)
 	}
-	if err := UseSet(root, "src", "default"); err != nil {
-		t.Fatalf("UseSet: %v", err)
+	if err := UsePreset(root, "src", "default"); err != nil {
+		t.Fatalf("UsePreset: %v", err)
 	}
 
 	if err := Copy(root, "src", "dst"); err != nil {
@@ -90,11 +90,11 @@ func TestCopyDropsProvenance(t *testing.T) {
 	if info.Meta.PristineSHA256 != "" {
 		t.Fatalf("dst PristineSHA256 = %q, want empty", info.Meta.PristineSHA256)
 	}
-	if info.Meta.VariableSets["default"]["KEY"] != "value" {
-		t.Fatalf("dst variable sets = %+v, want copied KEY=value", info.Meta.VariableSets)
+	if info.Meta.Presets["default"]["KEY"] != "value" {
+		t.Fatalf("dst presets = %+v, want copied KEY=value", info.Meta.Presets)
 	}
-	if info.Meta.ActiveSet != "default" {
-		t.Fatalf("dst ActiveSet = %q, want default", info.Meta.ActiveSet)
+	if info.Meta.ActivePreset != "default" {
+		t.Fatalf("dst ActivePreset = %q, want default", info.Meta.ActivePreset)
 	}
 
 	// src untouched
@@ -220,34 +220,34 @@ func TestVariableSets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if info.Meta.VariableSets["prod"]["HOST"] != "prod.example.com" {
-		t.Fatalf("VariableSets = %+v", info.Meta.VariableSets)
+	if info.Meta.Presets["prod"]["HOST"] != "prod.example.com" {
+		t.Fatalf("Presets = %+v", info.Meta.Presets)
 	}
 
-	if err := UseSet(root, "cfg", "nonexistent"); err == nil {
-		t.Fatal("UseSet unknown set: want error, got nil")
+	if err := UsePreset(root, "cfg", "nonexistent"); err == nil {
+		t.Fatal("UsePreset unknown set: want error, got nil")
 	}
 
-	if err := UseSet(root, "cfg", "prod"); err != nil {
-		t.Fatalf("UseSet: %v", err)
+	if err := UsePreset(root, "cfg", "prod"); err != nil {
+		t.Fatalf("UsePreset: %v", err)
 	}
 
-	if err := DeleteSet(root, "cfg", "prod"); err == nil {
-		t.Fatal("DeleteSet active set: want error, got nil")
+	if err := DeletePreset(root, "cfg", "prod"); err == nil {
+		t.Fatal("DeletePreset active set: want error, got nil")
 	}
 
 	if err := SetVar(root, "cfg", "staging", "HOST", "staging.example.com"); err != nil {
 		t.Fatalf("SetVar: %v", err)
 	}
-	if err := DeleteSet(root, "cfg", "staging"); err != nil {
-		t.Fatalf("DeleteSet non-active: %v", err)
+	if err := DeletePreset(root, "cfg", "staging"); err != nil {
+		t.Fatalf("DeletePreset non-active: %v", err)
 	}
 	info, _, err = Get(root, "cfg")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if _, ok := info.Meta.VariableSets["staging"]; ok {
-		t.Fatalf("staging set still present after delete: %+v", info.Meta.VariableSets)
+	if _, ok := info.Meta.Presets["staging"]; ok {
+		t.Fatalf("staging set still present after delete: %+v", info.Meta.Presets)
 	}
 }
 
@@ -259,39 +259,39 @@ func TestRenameSet(t *testing.T) {
 	if err := SetVar(root, "cfg", "prod", "HOST", "prod.example.com"); err != nil {
 		t.Fatalf("SetVar: %v", err)
 	}
-	if err := UseSet(root, "cfg", "prod"); err != nil {
-		t.Fatalf("UseSet: %v", err)
+	if err := UsePreset(root, "cfg", "prod"); err != nil {
+		t.Fatalf("UsePreset: %v", err)
 	}
 	if err := SetVar(root, "cfg", "staging", "HOST", "staging.example.com"); err != nil {
 		t.Fatalf("SetVar: %v", err)
 	}
 
 	// Renaming the active set follows it.
-	if err := RenameSet(root, "cfg", "prod", "production"); err != nil {
-		t.Fatalf("RenameSet: %v", err)
+	if err := RenamePreset(root, "cfg", "prod", "production"); err != nil {
+		t.Fatalf("RenamePreset: %v", err)
 	}
 	info, _, err := Get(root, "cfg")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if _, ok := info.Meta.VariableSets["prod"]; ok {
-		t.Fatalf("old set name still present: %+v", info.Meta.VariableSets)
+	if _, ok := info.Meta.Presets["prod"]; ok {
+		t.Fatalf("old set name still present: %+v", info.Meta.Presets)
 	}
-	if info.Meta.VariableSets["production"]["HOST"] != "prod.example.com" {
-		t.Fatalf("renamed set missing values: %+v", info.Meta.VariableSets)
+	if info.Meta.Presets["production"]["HOST"] != "prod.example.com" {
+		t.Fatalf("renamed set missing values: %+v", info.Meta.Presets)
 	}
-	if info.Meta.ActiveSet != "production" {
-		t.Fatalf("ActiveSet = %q, want it to follow the rename", info.Meta.ActiveSet)
+	if info.Meta.ActivePreset != "production" {
+		t.Fatalf("ActivePreset = %q, want it to follow the rename", info.Meta.ActivePreset)
 	}
 
-	if err := RenameSet(root, "cfg", "nonexistent", "x"); err == nil {
-		t.Fatal("RenameSet from a nonexistent set: want error, got nil")
+	if err := RenamePreset(root, "cfg", "nonexistent", "x"); err == nil {
+		t.Fatal("RenamePreset from a nonexistent set: want error, got nil")
 	}
-	if err := RenameSet(root, "cfg", "staging", "production"); err == nil {
-		t.Fatal("RenameSet onto an existing set name: want error, got nil")
+	if err := RenamePreset(root, "cfg", "staging", "production"); err == nil {
+		t.Fatal("RenamePreset onto an existing set name: want error, got nil")
 	}
-	if err := RenameSet(root, "cfg", "staging", ""); err == nil {
-		t.Fatal("RenameSet to an empty name: want error, got nil")
+	if err := RenamePreset(root, "cfg", "staging", ""); err == nil {
+		t.Fatal("RenamePreset to an empty name: want error, got nil")
 	}
 }
 
@@ -301,34 +301,34 @@ func TestWriteSetCreatesAndReplaces(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := WriteSet(root, "cfg", "prod", map[string]string{"HOST": "prod.example.com"}); err != nil {
-		t.Fatalf("WriteSet: %v", err)
+	if err := WritePreset(root, "cfg", "prod", map[string]string{"HOST": "prod.example.com"}); err != nil {
+		t.Fatalf("WritePreset: %v", err)
 	}
 	info, _, err := Get(root, "cfg")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if len(info.Meta.VariableSets["prod"]) != 1 || info.Meta.VariableSets["prod"]["HOST"] != "prod.example.com" {
-		t.Fatalf("VariableSets after create = %+v", info.Meta.VariableSets)
+	if len(info.Meta.Presets["prod"]) != 1 || info.Meta.Presets["prod"]["HOST"] != "prod.example.com" {
+		t.Fatalf("Presets after create = %+v", info.Meta.Presets)
 	}
 
-	// A second WriteSet replaces the whole set, not merges into it.
-	if err := WriteSet(root, "cfg", "prod", map[string]string{"PORT": "443"}); err != nil {
-		t.Fatalf("WriteSet (replace): %v", err)
+	// A second WritePreset replaces the whole set, not merges into it.
+	if err := WritePreset(root, "cfg", "prod", map[string]string{"PORT": "443"}); err != nil {
+		t.Fatalf("WritePreset (replace): %v", err)
 	}
 	info, _, err = Get(root, "cfg")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if _, ok := info.Meta.VariableSets["prod"]["HOST"]; ok {
-		t.Fatalf("WriteSet merged instead of replacing: %+v", info.Meta.VariableSets["prod"])
+	if _, ok := info.Meta.Presets["prod"]["HOST"]; ok {
+		t.Fatalf("WritePreset merged instead of replacing: %+v", info.Meta.Presets["prod"])
 	}
-	if info.Meta.VariableSets["prod"]["PORT"] != "443" {
-		t.Fatalf("VariableSets after replace = %+v", info.Meta.VariableSets)
+	if info.Meta.Presets["prod"]["PORT"] != "443" {
+		t.Fatalf("Presets after replace = %+v", info.Meta.Presets)
 	}
 
-	if err := WriteSet(root, "missing", "prod", map[string]string{}); err == nil {
-		t.Fatal("WriteSet on missing config: want error, got nil")
+	if err := WritePreset(root, "missing", "prod", map[string]string{}); err == nil {
+		t.Fatal("WritePreset on missing config: want error, got nil")
 	}
 }
 
@@ -535,8 +535,8 @@ func TestSnapshotRestoreActive(t *testing.T) {
 	if yaml != "good: true\n" {
 		t.Errorf("yaml = %q, want the snapshotted content", yaml)
 	}
-	if info.Meta.VariableSets["default"]["KEY"] != "good" {
-		t.Errorf("variable sets = %v, want the snapshotted values", info.Meta.VariableSets)
+	if info.Meta.Presets["default"]["KEY"] != "good" {
+		t.Errorf("presets = %v, want the snapshotted values", info.Meta.Presets)
 	}
 	data, err := os.ReadFile(settings)
 	if err != nil {
@@ -581,15 +581,50 @@ func TestAllNamedFunctionsRejectTraversal(t *testing.T) {
 		{"Sync", func() error { return Sync(root, bad, fetch) }},
 		{"Resync", func() error { return Resync(root, bad, fetch) }},
 		{"SetVar", func() error { return SetVar(root, bad, "set", "K", "V") }},
-		{"WriteSet", func() error { return WriteSet(root, bad, "set", map[string]string{"K": "V"}) }},
-		{"DeleteSet", func() error { return DeleteSet(root, bad, "set") }},
-		{"UseSet", func() error { return UseSet(root, bad, "set") }},
-		{"RenameSet", func() error { return RenameSet(root, bad, "set", "set2") }},
+		{"WritePreset", func() error { return WritePreset(root, bad, "set", map[string]string{"K": "V"}) }},
+		{"DeletePreset", func() error { return DeletePreset(root, bad, "set") }},
+		{"UsePreset", func() error { return UsePreset(root, bad, "set") }},
+		{"RenamePreset", func() error { return RenamePreset(root, bad, "set", "set2") }},
 		{"SnapshotActive", func() error { return SnapshotActive(root, bad) }},
 	}
 	for _, c := range checks {
 		if err := c.call(); err == nil {
 			t.Errorf("%s(%q): traversal name accepted, want error", c.name, bad)
 		}
+	}
+}
+
+// TestReadMetaAcceptsLegacyKeys proves a v2 meta.json (variable_sets /
+// active_set, plus a per-config distro that v3 dropped) still yields its
+// presets, and that the distro key is silently ignored rather than
+// resurrected on the next write.
+func TestReadMetaAcceptsLegacyKeys(t *testing.T) {
+	root := t.TempDir()
+	if err := Create(root, "legacy", "x: 1\n"); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"distro":"contrib","variable_sets":{"prod":{"K":"V"}},"active_set":"prod"}`
+	if err := os.WriteFile(filepath.Join(Dir(root), "legacy", "meta.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	info, _, err := Get(root, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Meta.ActivePreset != "prod" || info.Meta.Presets["prod"]["K"] != "V" {
+		t.Fatalf("meta = %+v, want active preset prod with K=V", info.Meta)
+	}
+
+	// Any write re-emits the file under the new key names, with no distro.
+	if err := SetVar(root, "legacy", "prod", "K2", "V2"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(Dir(root), "legacy", "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(data); !strings.Contains(s, `"presets"`) || strings.Contains(s, "distro") || strings.Contains(s, "variable_sets") {
+		t.Fatalf("rewritten meta.json = %s, want presets/active_preset and no distro", s)
 	}
 }
