@@ -183,12 +183,12 @@ async function renderConfigsView() {
   const hasRemote = configs.some((c) => c.provenance === "remote");
   const toolbar = el("div", { class: "srow", attrs: { style: "padding:0 0 10px" } });
   toolbar.appendChild(el("button", {
-    class: "pill-btn", text: "+ New configuration",
+    class: "primary-act", text: "+ new",
     on: { click: () => toggleNewConfigForm() },
   }));
   if (hasRemote) {
     toolbar.appendChild(el("button", {
-      class: "pill-btn", text: "Sync all",
+      class: "primary-act", text: "sync all",
       on: {
         click: async (e) => {
           e.target.disabled = true;
@@ -206,44 +206,57 @@ async function renderConfigsView() {
 
   viewRoot.appendChild(buildNewConfigForm());
 
-  const card = el("div", { class: "card" });
+  const table = el("div", { class: "dtable configs-table" });
+  table.appendChild(el("div", { class: "dtable-head" }, [
+    el("div", { text: "Name" }), el("div", { text: "Source" }), el("div", { text: "State" }),
+    el("div", { class: "col-actions", text: "Actions" }),
+  ]));
   if (!configs.length) {
-    card.appendChild(el("div", { class: "card-empty", text: "No configurations yet." }));
+    table.appendChild(el("div", { class: "card-empty", text: "No configurations yet." }));
   }
   for (const c of configs) {
-    card.appendChild(buildConfigRow(c, active));
+    table.appendChild(buildConfigRow(c, active));
   }
-  viewRoot.appendChild(el("div", { class: "group" }, [card]));
+  viewRoot.appendChild(el("div", { class: "group" }, [
+    el("div", { class: "card" }, [el("div", { class: "dtable-scroll" }, [table])]),
+  ]));
+
+  const activeCount = configs.filter((c) => c.name === active).length;
+  viewRoot.appendChild(el("div", {
+    class: "footer-line",
+    text: configs.length + (configs.length === 1 ? " configuration" : " configurations") + " · " + activeCount + " active",
+  }));
 }
 
 function buildConfigRow(c, active) {
   const isActive = c.name === active;
-  const title = el("div", { class: "title" }, [
-    isActive ? el("span", { class: "active-marker", attrs: { "aria-label": "active" } }) : null,
-    el("a", {
-      text: c.name,
-      class: "config-name" + (isActive ? " active" : ""),
-      attrs: { href: "#/configs/" + encodeURIComponent(c.name) },
-    }),
-  ]);
-  const metaBits = [];
-  metaBits.push(el("span", { class: "chip provenance-" + c.provenance, text: c.provenance }));
-  if (c.modified) metaBits.push(el("span", { class: "chip modified", text: "locally modified" }));
-  if (c.meta && c.meta.active_set) metaBits.push(el("span", { class: "chip", text: "set " + c.meta.active_set }));
-  const meta = el("div", { class: "desc" }, metaBits);
 
-  const actions = el("div", { class: "actions" });
+  const name = el("a", {
+    text: c.name,
+    class: "config-name",
+    attrs: { href: "#/configs/" + encodeURIComponent(c.name) },
+  });
 
-  actions.appendChild(el("button", {
-    class: "pill-btn", text: "Open",
-    on: { click: () => { location.hash = "#/configs/" + encodeURIComponent(c.name); } },
+  let sourceText = c.provenance;
+  if (c.modified) sourceText += " · modified";
+  if (c.meta && c.meta.active_set) sourceText += " · set " + c.meta.active_set;
+  const source = el("div", { class: "state-muted", text: sourceText });
+
+  const state = el("div", {
+    class: isActive ? "state-active" : "state-muted",
+    text: isActive ? "active" : "—",
+  });
+
+  const actions = el("div", { class: "col-actions" });
+
+  actions.appendChild(el("a", {
+    class: "act", text: "open",
+    attrs: { href: "#/configs/" + encodeURIComponent(c.name) },
   }));
 
-  if (isActive) {
-    actions.appendChild(el("button", { class: "pill-btn", text: "Active", attrs: { disabled: "disabled" } }));
-  } else {
+  if (!isActive) {
     actions.appendChild(el("button", {
-      class: "pill-btn", text: "Use",
+      class: "act", text: "use",
       on: {
         click: async (e) => {
           e.target.disabled = true;
@@ -260,7 +273,7 @@ function buildConfigRow(c, active) {
   }
 
   actions.appendChild(el("button", {
-    class: "pill-btn", text: "Copy",
+    class: "act", text: "copy",
     on: {
       click: async () => {
         const dst = window.prompt("New configuration name (copy of " + c.name + "):");
@@ -277,7 +290,7 @@ function buildConfigRow(c, active) {
 
   if (c.provenance === "remote" && !c.modified) {
     actions.appendChild(el("button", {
-      class: "pill-btn", text: "Sync",
+      class: "act", text: "sync",
       on: {
         click: async () => {
           try {
@@ -291,26 +304,27 @@ function buildConfigRow(c, active) {
     }));
   }
 
-  const deleteBtn = el("button", { class: "danger-link", text: "Delete" });
   if (isActive) {
-    deleteBtn.disabled = true;
-    deleteBtn.title = "Can't delete the active configuration";
+    actions.appendChild(el("span", { class: "act", text: "del", attrs: { title: "Can't delete the active configuration" } }));
   } else {
-    deleteBtn.addEventListener("click", async () => {
-      if (!window.confirm('Delete configuration "' + c.name + '"? This cannot be undone.')) return;
-      try {
-        await api("/api/configs/" + encodeURIComponent(c.name), { method: "DELETE" });
-      } catch (err) {
-        showError(err);
-      }
-      await renderConfigsView();
-    });
+    actions.appendChild(el("button", {
+      class: "act danger", text: "del",
+      on: {
+        click: async () => {
+          if (!window.confirm('Delete configuration "' + c.name + '"? This cannot be undone.')) return;
+          try {
+            await api("/api/configs/" + encodeURIComponent(c.name), { method: "DELETE" });
+          } catch (err) {
+            showError(err);
+          }
+          await renderConfigsView();
+        },
+      },
+    }));
   }
-  actions.appendChild(deleteBtn);
 
-  return el("div", { class: "srow" }, [
-    el("div", { class: "grow" }, [title, meta]),
-    actions,
+  return el("div", { class: "dtable-row" + (isActive ? " is-active" : "") }, [
+    el("div", { class: "col-name" }, [name]), source, state, actions,
   ]);
 }
 
@@ -335,7 +349,7 @@ function buildNewConfigForm() {
   ]);
   const actions = el("div", { class: "form-actions" }, [
     el("button", { class: "solid-btn", attrs: { type: "submit" }, text: "Create" }),
-    el("button", { class: "pill-btn", attrs: { type: "button" }, text: "Cancel", on: { click: () => toggleNewConfigForm() } }),
+    el("button", { class: "act", attrs: { type: "button" }, text: "cancel", on: { click: () => toggleNewConfigForm() } }),
   ]);
   form.append(nameLabel, urlLabel, actions);
   form.addEventListener("submit", async (e) => {
@@ -420,8 +434,7 @@ async function renderConfigView(name) {
 
 function buildPropertiesGroup(name, info, meta, distros) {
   const prov = info.provenance || "local";
-  const chips = [el("span", { class: "chip provenance-" + prov, text: prov })];
-  if (info.modified) chips.push(el("span", { class: "chip modified", text: "locally modified" }));
+  const sourceText = prov + (info.modified ? " · modified" : "");
 
   const urlInput = el("input", {
     class: "field-input path-input",
@@ -459,7 +472,7 @@ function buildPropertiesGroup(name, info, meta, distros) {
   const syncActions = el("div", { class: "actions" });
   if (prov === "remote" && !info.modified) {
     syncActions.appendChild(el("button", {
-      class: "pill-btn", text: "Sync",
+      class: "act", text: "sync",
       on: {
         click: async (e) => {
           e.target.disabled = true;
@@ -474,7 +487,7 @@ function buildPropertiesGroup(name, info, meta, distros) {
     }));
   } else if (prov === "remote" && info.modified) {
     syncActions.appendChild(el("button", {
-      class: "danger-link", text: "Discard local edits & re-sync",
+      class: "act danger", text: "discard local edits & re-sync",
       on: {
         click: async (e) => {
           if (!window.confirm("Refetch " + name + " from its remote URL? Your local edits to this configuration are discarded.")) return;
@@ -494,7 +507,7 @@ function buildPropertiesGroup(name, info, meta, distros) {
   const card = el("div", { class: "card" }, [
     el("div", { class: "srow" }, [
       el("div", { class: "grow" }, [
-        el("div", { class: "title" }, [el("span", { text: "Source" }), ...chips]),
+        el("div", { class: "title" }, [el("span", { text: "Source" }), el("span", { class: "state-muted", text: sourceText })]),
         el("div", { class: "desc", text: info.modified ? "Edited locally — updates from the source no longer apply automatically." : "Unmodified." }),
       ]),
       syncActions,
@@ -544,7 +557,7 @@ function buildVariablesGroup(name, info, meta) {
     el("div", { class: "grow" }, [el("div", { class: "desc", text: setNames.length ? "One column per set; the active set (amber) is the one the collector runs with." : "Variable sets hold values for these variables — dev, prod, a customer, …" })]),
     el("div", { class: "actions" }, [
       el("button", {
-        class: "pill-btn", text: "+ New set",
+        class: "primary-act", text: "+ new set",
         on: {
           click: async () => {
             const set = window.prompt("Name for the new variable set:");
@@ -622,7 +635,7 @@ function buildSetHeader(name, set, stored, isActive) {
   });
 
   const saveBtn = el("button", {
-    class: "pill-btn", text: "Save",
+    class: "act", text: "save",
     on: {
       click: async (e) => {
         e.target.disabled = true;
@@ -642,7 +655,7 @@ function buildSetHeader(name, set, stored, isActive) {
   });
 
   const renameBtn = el("button", {
-    class: "pill-btn", text: "Rename",
+    class: "act", text: "rename",
     on: {
       click: async () => {
         const to = window.prompt("Rename variable set:", set);
@@ -658,7 +671,7 @@ function buildSetHeader(name, set, stored, isActive) {
     },
   });
 
-  const delBtn = el("button", { class: "danger-link", text: "Delete" });
+  const delBtn = el("button", { class: "act danger", text: "del" });
   if (isActive) {
     delBtn.disabled = true;
     delBtn.title = "Can't delete the active set";
@@ -713,7 +726,7 @@ function buildYamlGroup(name, info, yaml) {
 
   if (!editor.revealed) {
     actions.appendChild(el("button", {
-      class: "pill-btn", text: "Show YAML",
+      class: "act", text: "show yaml",
       on: {
         click: () => { editor.revealed = true; renderConfigView(name).catch(showError); },
       },
@@ -726,7 +739,7 @@ function buildYamlGroup(name, info, yaml) {
 
   if (!editor.editable) {
     actions.appendChild(el("button", {
-      class: "pill-btn", text: "Edit",
+      class: "act", text: "edit",
       on: {
         click: () => {
           const msg = prov === "remote"
@@ -748,7 +761,7 @@ function buildYamlGroup(name, info, yaml) {
   if (editor.validate) {
     const result = el("div", { class: "card-extra validate-result" }, [
       editor.validate.ok
-        ? el("span", { class: "chip ok", text: "valid" })
+        ? el("span", { class: "validate-ok", text: "valid" })
         : el("pre", { class: "code-panel validate-error", text: editor.validate.msg }),
     ]);
     card.appendChild(result);
@@ -828,25 +841,24 @@ async function renderCollectorView() {
   viewRoot.appendChild(el("p", { class: "page-desc", text: "The OpenTelemetry Collector compy runs for you as a background service." }));
 
   const statusCard = el("div", { class: "card" });
-  const line = el("div", { class: "status-line" }, [
-    el("span", { class: "led" + (status.running ? " on" : "") }),
-    el("span", { text: status.running ? "Running" : "Stopped" }),
-  ]);
-  const configLine = el("div", { class: "status-meta" }, [
-    el("span", {
+  const table = el("table", { class: "def-table" }, [
+    el("tr", {}, [el("th", { text: "state" }), el("td" , {}, [
+      el("span", { class: "led" + (status.running ? " on" : ""), attrs: { style: "margin-right:7px" } }),
+      el("span", { text: status.running ? "running" : "stopped" }),
+    ])]),
+    el("tr", {}, [el("th", { text: "config" }), el("td", {
       text: status.config
-        ? "config " + status.config + (status.set ? " · set " + status.set : "")
+        ? status.config + (status.set ? " · set " + status.set : "")
         : "no configuration active",
-    }),
+    })]),
+    el("tr", {}, [el("th", { text: "distro" }), el("td", { text: status.distro || "(none)" })]),
+    el("tr", {}, [el("th", { text: "ports" }), el("td", { text: "grpc " + status.grpc_port + " · http " + status.http_port })]),
   ]);
-  const portsLine = el("div", { class: "status-meta" }, [
-    el("span", { text: "distro " + (status.distro || "(none)") + " · grpc " + status.grpc_port + " · http " + status.http_port }),
-  ]);
-  const actions = el("div", { class: "srow", attrs: { style: "border-top:1px solid var(--line)" } }, [
+  const actions = el("div", { class: "srow" }, [
     el("div", { class: "grow" }),
-    el("div", { class: "actions" }, [
+    el("div", { class: "col-actions" }, [
       el("button", {
-        class: "pill-btn", text: "Restart",
+        class: "act", text: "restart",
         on: {
           click: async (e) => {
             e.target.disabled = true;
@@ -861,7 +873,7 @@ async function renderCollectorView() {
         },
       }),
       el("button", {
-        class: "pill-btn", text: "Roll back",
+        class: "act", text: "roll back",
         on: {
           click: async (e) => {
             e.target.disabled = true;
@@ -881,10 +893,7 @@ async function renderCollectorView() {
       }),
     ]),
   ]);
-  statusCard.append(
-    el("div", { class: "card-extra" }, [line, configLine, portsLine]),
-    actions,
-  );
+  statusCard.append(table, actions);
   viewRoot.appendChild(el("div", { class: "group" }, [
     el("div", { class: "group-title", text: "Status" }),
     statusCard,
@@ -939,23 +948,27 @@ async function renderSettingsView() {
 }
 
 function buildDistrosGroup(distros) {
-  const card = el("div", { class: "card" });
+  const table = el("div", { class: "dtable distros-table" });
+  table.appendChild(el("div", { class: "dtable-head" }, [
+    el("div", { text: "Name" }), el("div", { text: "Path" }), el("div", { text: "State" }),
+    el("div", { class: "col-actions", text: "Actions" }),
+  ]));
   if (!distros.length) {
-    card.appendChild(el("div", { class: "card-empty", text: "No distributions registered yet." }));
+    table.appendChild(el("div", { class: "card-empty", text: "No distributions registered yet." }));
   }
   for (const d of distros) {
-    card.appendChild(buildDistroRow(d));
+    table.appendChild(buildDistroRow(d));
   }
   const toolbar = el("div", { class: "srow", attrs: { style: "padding:0 0 10px" } });
   toolbar.appendChild(el("button", {
-    class: "pill-btn", text: "+ Add distribution",
+    class: "primary-act", text: "+ add distribution",
     on: { click: () => toggleAddDistroForm() },
   }));
   return el("div", { class: "group" }, [
     el("div", { class: "group-title", text: "Distributions" }),
     toolbar,
     buildAddDistroForm(),
-    card,
+    el("div", { class: "card" }, [el("div", { class: "dtable-scroll" }, [table])]),
   ]);
 }
 
@@ -980,7 +993,7 @@ function buildAddDistroForm() {
   ]);
   const actions = el("div", { class: "form-actions" }, [
     el("button", { class: "solid-btn", attrs: { type: "submit" }, text: "Add" }),
-    el("button", { class: "pill-btn", attrs: { type: "button" }, text: "Cancel", on: { click: () => toggleAddDistroForm() } }),
+    el("button", { class: "act", attrs: { type: "button" }, text: "cancel", on: { click: () => toggleAddDistroForm() } }),
   ]);
   form.append(nameLabel, pathLabel, actions);
   form.addEventListener("submit", async (e) => {
@@ -1004,33 +1017,12 @@ function buildAddDistroForm() {
 }
 
 function buildDistroRow(d) {
-  const chips = [];
-  if (d.definition) chips.push(el("span", { class: "chip", text: "definition" }));
-  chips.push(el("span", { class: "chip " + (d.downloaded ? "ok" : ""), text: d.downloaded ? "downloaded" : "not downloaded" }));
-  if (d.definition && !d.available) chips.push(el("span", { class: "chip warn", text: "unavailable" }));
-
-  const radio = el("input", {
-    attrs: { type: "radio", name: "distro-use", "aria-label": "Use " + d.name },
-    props: { checked: !!d.selected },
-    on: {
-      change: async (e) => {
-        e.target.disabled = true;
-        try {
-          await api("/api/distros/" + encodeURIComponent(d.name) + "/use", { method: "POST" });
-        } catch (err) {
-          showError(err);
-        }
-        await renderSettingsView();
-        await refreshNavStatus();
-      },
-    },
-  });
-
-  const nameLine = el("div", { class: "title" }, [el("span", { text: d.name }), ...chips]);
+  let nameText = d.name;
+  if (d.definition) nameText += " · definition";
 
   const pathInput = el("input", {
     class: "field-input path-input",
-    attrs: { "aria-label": "Path for " + d.name, placeholder: "not downloaded — set a path, or Fetch" },
+    attrs: { "aria-label": "Path for " + d.name, placeholder: "not downloaded — set a path, or fetch" },
     props: { value: d.path || "" },
   });
   pathInput.addEventListener("change", async () => {
@@ -1046,20 +1038,43 @@ function buildDistroRow(d) {
     await renderSettingsView();
   });
 
-  const actions = el("div", { class: "actions" });
+  let stateText = d.downloaded ? "downloaded" : "not downloaded";
+  let stateClass = "state-muted";
+  if (d.definition && !d.available) { stateText = "unavailable"; stateClass = "state-warn"; }
+  if (d.selected) { stateText = "selected"; stateClass = "state-active"; }
+  const state = el("div", { class: stateClass, text: stateText });
+
+  const actions = el("div", { class: "col-actions" });
   if (d.definition && !d.downloaded && d.available) {
     actions.appendChild(el("button", {
-      class: "pill-btn", text: "Fetch",
+      class: "act", text: "fetch",
       on: {
         click: async (e) => {
           e.target.disabled = true;
-          e.target.textContent = "Fetching…";
+          e.target.textContent = "fetching…";
           try {
             await api("/api/distros/" + encodeURIComponent(d.name) + "/fetch", { method: "POST" });
           } catch (err) {
             showError(err);
           }
           await renderSettingsView();
+        },
+      },
+    }));
+  }
+  if (!d.selected) {
+    actions.appendChild(el("button", {
+      class: "act", text: "use",
+      on: {
+        click: async (e) => {
+          e.target.disabled = true;
+          try {
+            await api("/api/distros/" + encodeURIComponent(d.name) + "/use", { method: "POST" });
+          } catch (err) {
+            showError(err);
+          }
+          await renderSettingsView();
+          await refreshNavStatus();
         },
       },
     }));
@@ -1072,15 +1087,16 @@ function buildDistroRow(d) {
     actions.appendChild(buildRemoveButton(d));
   }
 
-  return el("div", { class: "srow" }, [
-    radio,
-    el("div", { class: "grow" }, [nameLine, pathInput]),
+  return el("div", { class: "dtable-row" + (d.selected ? " is-active" : "") }, [
+    el("div", { class: "col-name", text: nameText }),
+    el("div", { class: "col-path" }, [pathInput]),
+    state,
     actions,
   ]);
 }
 
 function buildRemoveButton(d) {
-  const removeBtn = el("button", { class: "danger-link", text: "Remove" });
+  const removeBtn = el("button", { class: "act danger", text: "remove" });
   if (d.selected) {
     removeBtn.disabled = true;
     removeBtn.title = "Can't remove the selected distro";
@@ -1128,7 +1144,16 @@ function buildPortsGroup(settings) {
     await refreshNavStatus();
   });
   return el("div", { class: "group" }, [
-    el("div", { class: "group-title", text: "Ports" }),
+    el("div", { class: "group-title", text: "Default ports" }),
+    el("p", { class: "page-desc", attrs: { style: "margin:0 0 6px" } }, [
+      document.createTextNode("Used by shipped configurations ("),
+      el("code", { text: "${env:COMPY_GRPC_PORT}" }),
+      document.createTextNode(" / "),
+      el("code", { text: "${env:COMPY_HTTP_PORT}" }),
+      document.createTextNode(") and by "),
+      el("code", { text: "compy env" }),
+      document.createTextNode(". Your configuration's receivers control the real listeners."),
+    ]),
     el("div", { class: "card" }, [el("div", { class: "card-extra" }, [form])]),
   ]);
 }
@@ -1139,45 +1164,41 @@ function buildTogglesGroup(settings, status) {
       el("div", { class: "title", text: "Show distro switcher in menu bar" }),
       el("div", { class: "desc", text: "Off by default — most people never need to swap collector binaries from the tray." }),
     ]),
-    el("span", { class: "switch" }, [
-      el("input", {
-        attrs: { type: "checkbox", "aria-label": "Show distro switcher in menu bar" },
-        props: { checked: !!settings.menu_distro_swap },
-        on: {
-          change: async (e) => {
-            try {
-              await apiJSON("/api/settings", "PUT", { menu_distro_swap: e.target.checked });
-            } catch (err) {
-              showError(err);
-            }
-          },
+    el("input", {
+      class: "sq-check",
+      attrs: { type: "checkbox", "aria-label": "Show distro switcher in menu bar" },
+      props: { checked: !!settings.menu_distro_swap },
+      on: {
+        change: async (e) => {
+          try {
+            await apiJSON("/api/settings", "PUT", { menu_distro_swap: e.target.checked });
+          } catch (err) {
+            showError(err);
+          }
         },
-      }),
-      el("span", { class: "track" }),
-    ]),
+      },
+    }),
   ]);
   const osEnvRow = el("div", { class: "srow" }, [
     el("div", { class: "grow" }, [
       el("div", { class: "title", text: "Set variables system-wide" }),
       el("div", { class: "desc", text: "Injects OTEL_* into the login session (launchctl setenv) so newly started apps pick them up with no shell setup. Already-running apps are unaffected." }),
     ]),
-    el("span", { class: "switch" }, [
-      el("input", {
-        attrs: { type: "checkbox", "aria-label": "Set variables system-wide" },
-        props: { checked: !!status.os_env },
-        on: {
-          change: async (e) => {
-            try {
-              await apiJSON("/api/os-env", "POST", { on: e.target.checked });
-            } catch (err) {
-              showError(err);
-            }
-            await refreshNavStatus();
-          },
+    el("input", {
+      class: "sq-check",
+      attrs: { type: "checkbox", "aria-label": "Set variables system-wide" },
+      props: { checked: !!status.os_env },
+      on: {
+        change: async (e) => {
+          try {
+            await apiJSON("/api/os-env", "POST", { on: e.target.checked });
+          } catch (err) {
+            showError(err);
+          }
+          await refreshNavStatus();
         },
-      }),
-      el("span", { class: "track" }),
-    ]),
+      },
+    }),
   ]);
   return el("div", { class: "group" }, [
     el("div", { class: "group-title", text: "Menu bar & environment" }),
@@ -1187,17 +1208,17 @@ function buildTogglesGroup(settings, status) {
 
 function copyButton(sourceId) {
   return el("button", {
-    class: "pill-btn", text: "Copy",
+    class: "act", text: "copy",
     on: {
       click: async (e) => {
         const text = document.getElementById(sourceId).textContent;
         try {
           await navigator.clipboard.writeText(text);
-          e.target.textContent = "Copied";
+          e.target.textContent = "copied";
         } catch (err) {
-          e.target.textContent = "Copy failed";
+          e.target.textContent = "copy failed";
         }
-        setTimeout(() => { e.target.textContent = "Copy"; }, 1500);
+        setTimeout(() => { e.target.textContent = "copy"; }, 1500);
       },
     },
   });

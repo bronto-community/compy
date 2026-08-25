@@ -19,3 +19,31 @@ yaml.min.js
 
 Verify with:
   shasum -a 256 codemirror.min.js codemirror.min.css yaml.min.js
+
+---
+
+Fonts (direction-B "Dense utility" UI restyle), latin subset woff2 only,
+via fontsource on jsdelivr (pinned to the exact package version in the URL):
+
+fonts/space-grotesk-latin-500.woff2
+  https://cdn.jsdelivr.net/npm/@fontsource/space-grotesk@5.3.0/files/space-grotesk-latin-500-normal.woff2
+  sha256: 1b1a8131d9edf975d9decee81e2f2bf504812f7a4f498e5500f28a613e22e64c
+
+fonts/space-grotesk-latin-600.woff2
+  https://cdn.jsdelivr.net/npm/@fontsource/space-grotesk@5.3.0/files/space-grotesk-latin-600-normal.woff2
+  sha256: 685bbbf69fa616df1ef81847c85fc76be097ddfb3468ff2257be54511ab3130f
+
+fonts/ibm-plex-mono-latin-400.woff2
+  https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-400-normal.woff2
+  sha256: 08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7
+
+fonts/ibm-plex-mono-latin-500.woff2
+  https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-500-normal.woff2
+  sha256: 01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22
+
+License: SIL Open Font License 1.1, see fonts/LICENSE-space-grotesk
+  (Space Grotesk, copied from the fontsource package's LICENSE) and
+  fonts/LICENSE-ibm-plex-mono (IBM Plex Mono, ditto).
+
+Verify with:
+  shasum -a 256 fonts/*.woff2
