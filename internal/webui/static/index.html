@@ -8,25 +8,18 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<div class="app">
+<div class="win">
   <nav class="sidebar">
-    <div class="wordmark">compy</div>
-    <div class="nav-status"><span class="led" id="nav-led"></span><span id="nav-status-text">…</span></div>
-    <button class="nav-btn" data-view="configs">Configurations</button>
-    <button class="nav-btn" data-view="collector">Collector</button>
-    <button class="nav-btn" data-view="settings">Settings</button>
+    <div class="side-label">compy</div>
+    <div id="nav"></div>
+    <div class="grow"></div>
+    <div class="side-status" id="side-status"></div>
   </nav>
-  <main>
-    <div class="error-strip hidden" id="error-strip" role="alert">
-      <button class="error-dismiss" id="error-dismiss" aria-label="Dismiss">&times;</button>
-      <pre id="error-message"></pre>
-      <pre id="error-log"></pre>
-    </div>
-    <div id="view"></div>
-  </main>
+  <main id="screen"></main>
 </div>
 <script src="vendor/codemirror.min.js" defer></script>
 <script src="vendor/yaml.min.js" defer></script>
+<script src="vendor/lucide-icons.js" defer></script>
 <script src="app.js" defer></script>
 </body>
 </html>

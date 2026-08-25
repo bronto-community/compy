@@ -1,6 +1,6 @@
 // Command compy manages a local OpenTelemetry Collector: configurations,
-// variable sets, distros, the LaunchAgent service, environment variables,
-// and a small web UI.
+// presets, distros, the LaunchAgent service, environment variables, and a
+// small web UI.
 //
 // This file is wiring only — argument parsing and printing. All behavior
 // lives in internal/app.
@@ -33,21 +33,21 @@ import (
 const usage = `compy — local OpenTelemetry Collector manager
 
   compy status [--json]
-  compy apply | rollback | validate
+  compy apply | validate | stop | start
   compy config list
-  compy config show|edit|delete|sync|resync <name>
+  compy config show|edit|delete|sync|resync|reset <name>
   compy config create <name> [--from-url URL]
   compy config copy <src> <dst>
+  compy config rename <old> <new>
   compy config sync-all
-  compy config set-distro <config> <distro|-->
   compy config set-url <config> <url|-->
-  compy use <config> [<set>]
+  compy use <config> [<preset>]
   compy vars <config>
-  compy set <config> <set> KEY=VALUE
-  compy sets use|delete <config> <set>
-  compy sets rename <config> <from> <to>
+  compy presets set <config> <preset> KEY=VALUE
+  compy presets use|delete <config> <preset>
+  compy presets rename <config> <from> <to>
   compy settings
-  compy settings set [--grpc-port N] [--http-port N] [--menu-distro-swap on|off]
+  compy settings set [--grpc-port N] [--http-port N]
   compy distro list
   compy distro add <name> <path>
   compy distro set-path <name> <path>
@@ -84,8 +84,10 @@ func run(args []string) error {
 		return cmdStatus(rest)
 	case "apply":
 		return withApp(func(a *app.App) error { return a.Apply() })
-	case "rollback":
-		return withApp(func(a *app.App) error { return a.Rollback() })
+	case "stop":
+		return withApp(func(a *app.App) error { return a.Stop() })
+	case "start":
+		return withApp(func(a *app.App) error { return a.Start() })
 	case "validate":
 		return withApp(func(a *app.App) error {
 			if err := a.Validate(); err != nil {
@@ -98,29 +100,20 @@ func run(args []string) error {
 		return cmdConfig(rest)
 	case "use":
 		if len(rest) < 1 || len(rest) > 2 {
-			return errors.New("use: need <config> [<set>]")
+			return errors.New("use: need <config> [<preset>]")
 		}
-		set := ""
+		preset := ""
 		if len(rest) == 2 {
-			set = rest[1]
+			preset = rest[1]
 		}
-		return withApp(func(a *app.App) error { return a.Activate(rest[0], set) })
+		return withApp(func(a *app.App) error { return a.Activate(rest[0], preset) })
 	case "vars":
 		if len(rest) != 1 {
 			return errors.New("vars: need <config>")
 		}
 		return withApp(func(a *app.App) error { return printVars(a, rest[0]) })
-	case "set":
-		if len(rest) != 3 {
-			return errors.New("set: need <config> <set> KEY=VALUE")
-		}
-		key, value, ok := strings.Cut(rest[2], "=")
-		if !ok {
-			return errors.New("set: need KEY=VALUE")
-		}
-		return withApp(func(a *app.App) error { return a.SetVar(rest[0], rest[1], key, value) })
-	case "sets":
-		return cmdSets(rest)
+	case "presets":
+		return cmdPresets(rest)
 	case "settings":
 		return cmdSettings(rest)
 	case "distro":
@@ -207,8 +200,8 @@ func cmdStatus(args []string) error {
 		config := st.Config
 		if config == "" {
 			config = "(none)"
-		} else if st.Set != "" {
-			config += " (set " + st.Set + ")"
+		} else if st.Preset != "" {
+			config += " (preset " + st.Preset + ")"
 		}
 		distro := st.Distro
 		if distro == "" {
@@ -257,9 +250,14 @@ func cmdConfig(args []string) error {
 			return errors.New("config copy: need <src> <dst>")
 		}
 		return withApp(func(a *app.App) error { return a.CopyConfig(rest[0], rest[1]) })
-	case "set-distro", "set-url":
+	case "rename":
 		if len(rest) != 2 {
-			return fmt.Errorf("config %s: need <config> <value|-->", sub)
+			return errors.New("config rename: need <old> <new>")
+		}
+		return withApp(func(a *app.App) error { return a.RenameConfig(rest[0], rest[1]) })
+	case "set-url":
+		if len(rest) != 2 {
+			return errors.New("config set-url: need <config> <url|-->")
 		}
 		name, value := rest[0], rest[1]
 		p := &value
@@ -267,13 +265,8 @@ func cmdConfig(args []string) error {
 			cleared := ""
 			p = &cleared
 		}
-		return withApp(func(a *app.App) error {
-			if sub == "set-distro" {
-				return a.UpdateConfigMeta(name, p, nil)
-			}
-			return a.UpdateConfigMeta(name, nil, p)
-		})
-	case "show", "edit", "delete", "sync", "resync":
+		return withApp(func(a *app.App) error { return a.UpdateConfigMeta(name, p) })
+	case "show", "edit", "delete", "sync", "resync", "reset":
 		if len(rest) != 1 {
 			return fmt.Errorf("config %s: need exactly one name", sub)
 		}
@@ -293,6 +286,8 @@ func cmdConfig(args []string) error {
 				return a.Sync(name)
 			case "resync":
 				return a.Resync(name)
+			case "reset":
+				return a.Reset(name)
 			default:
 				if !state.ValidBackendName(name) {
 					return fmt.Errorf("invalid config name %q", name)
@@ -342,32 +337,32 @@ func listConfigs(a *app.App) error {
 		if c.Modified {
 			prov += ", modified"
 		}
-		fmt.Fprintf(w, "%s %s\t%s\t%s\n", mark, c.Name, prov, c.Meta.ActiveSet)
+		fmt.Fprintf(w, "%s %s\t%s\t%s\n", mark, c.Name, prov, c.Meta.ActivePreset)
 	}
 	return w.Flush()
 }
 
 // printVars renders the configuration's variables as a table: one row per
-// variable, one column per variable set.
+// variable, one column per preset.
 func printVars(a *app.App, name string) error {
 	info, _, err := a.Config(name)
 	if err != nil {
 		return err
 	}
-	sets := make([]string, 0, len(info.Meta.VariableSets))
-	for set := range info.Meta.VariableSets {
-		sets = append(sets, set)
+	presets := make([]string, 0, len(info.Meta.Presets))
+	for preset := range info.Meta.Presets {
+		presets = append(presets, preset)
 	}
-	slices.Sort(sets)
+	slices.Sort(presets)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprint(w, "VARIABLE\tDEFAULT\tDESCRIPTION")
-	for _, set := range sets {
+	for _, preset := range presets {
 		mark := ""
-		if set == info.Meta.ActiveSet {
+		if preset == info.Meta.ActivePreset {
 			mark = "*"
 		}
-		fmt.Fprintf(w, "\t%s%s", set, mark)
+		fmt.Fprintf(w, "\t%s%s", preset, mark)
 	}
 	fmt.Fprintln(w)
 	for _, v := range info.Vars {
@@ -376,31 +371,44 @@ func printVars(a *app.App, name string) error {
 			def = "-"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s", v.Name, def, v.Description)
-		for _, set := range sets {
-			fmt.Fprintf(w, "\t%s", info.Meta.VariableSets[set][v.Name])
+		for _, preset := range presets {
+			fmt.Fprintf(w, "\t%s", info.Meta.Presets[preset][v.Name])
 		}
 		fmt.Fprintln(w)
 	}
 	return w.Flush()
 }
 
-func cmdSets(args []string) error {
-	if len(args) == 4 && args[0] == "rename" {
-		name, from, to := args[1], args[2], args[3]
-		return withApp(func(a *app.App) error { return a.RenameSet(name, from, to) })
+// cmdPresets is `compy presets set|use|delete <config> <preset> [KEY=VALUE]`
+// and `compy presets rename <config> <from> <to>`.
+func cmdPresets(args []string) error {
+	if len(args) == 4 {
+		switch args[0] {
+		case "rename":
+			return withApp(func(a *app.App) error { return a.RenamePreset(args[1], args[2], args[3]) })
+		case "set":
+			key, value, ok := strings.Cut(args[3], "=")
+			if !ok {
+				return errors.New("presets set: need KEY=VALUE")
+			}
+			return withApp(func(a *app.App) error { return a.SetVar(args[1], args[2], key, value) })
+		}
 	}
 	if len(args) != 3 {
-		return errors.New("sets: need use|delete <config> <set>, or rename <config> <from> <to>")
+		return errors.New("presets: need use|delete <config> <preset>, set <config> <preset> KEY=VALUE, or rename <config> <from> <to>")
 	}
-	sub, name, set := args[0], args[1], args[2]
+	sub, name, preset := args[0], args[1], args[2]
 	return withApp(func(a *app.App) error {
 		switch sub {
 		case "use":
-			return a.UseSet(name, set)
+			return a.UsePreset(name, preset)
 		case "delete":
-			return a.DeleteSet(name, set)
+			return a.DeletePreset(name, preset)
+		case "set":
+			// Three args reached "set" only by leaving the value off.
+			return errors.New("presets set: need <config> <preset> KEY=VALUE")
 		default:
-			return fmt.Errorf("sets: unknown subcommand %q", sub)
+			return fmt.Errorf("presets: unknown subcommand %q", sub)
 		}
 	})
 }
@@ -414,12 +422,7 @@ func cmdSettings(args []string) error {
 			if err != nil {
 				return err
 			}
-			swap := "off"
-			if s.MenuDistroSwap {
-				swap = "on"
-			}
-			fmt.Printf("grpc-port:        %d\nhttp-port:        %d\nmenu-distro-swap: %s\n",
-				s.GRPCPort, s.HTTPPort, swap)
+			fmt.Printf("grpc-port: %d\nhttp-port: %d\n", s.GRPCPort, s.HTTPPort)
 			return nil
 		})
 	}
@@ -428,39 +431,21 @@ func cmdSettings(args []string) error {
 	}
 	fs := flag.NewFlagSet("settings set", flag.ContinueOnError)
 	var grpcPort, httpPort int
-	var menuSwap string
 	fs.IntVar(&grpcPort, "grpc-port", 0, "gRPC port")
 	fs.IntVar(&httpPort, "http-port", 0, "HTTP port")
-	fs.StringVar(&menuSwap, "menu-distro-swap", "", "on|off")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	var grpcP, httpP *int
-	var swapP *bool
-	var setErr error
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "grpc-port":
 			grpcP = &grpcPort
 		case "http-port":
 			httpP = &httpPort
-		case "menu-distro-swap":
-			switch menuSwap {
-			case "on":
-				v := true
-				swapP = &v
-			case "off":
-				v := false
-				swapP = &v
-			default:
-				setErr = fmt.Errorf("settings set: --menu-distro-swap must be on|off, got %q", menuSwap)
-			}
 		}
 	})
-	if setErr != nil {
-		return setErr
-	}
-	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, swapP) })
+	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP) })
 }
 
 func cmdDistro(args []string) error {
@@ -540,7 +525,22 @@ func cmdDistro(args []string) error {
 			return errors.New("distro fetch: need <name>")
 		}
 		return withApp(func(a *app.App) error {
-			path, err := a.EnsureDistro(args[1])
+			// The CLI stays blocking (the REST fetch is the async one): a
+			// percentage on stderr, redrawn only when it changes, so piping
+			// the printed path stays clean.
+			last := -1
+			path, err := a.EnsureDistro(args[1], func(done, total int64) {
+				if total <= 0 {
+					return
+				}
+				if pct := int(done * 100 / total); pct != last {
+					last = pct
+					fmt.Fprintf(os.Stderr, "\rdownloading %s… %d%%", args[1], pct)
+				}
+			})
+			if last >= 0 {
+				fmt.Fprintln(os.Stderr)
+			}
 			if err != nil {
 				return err
 			}

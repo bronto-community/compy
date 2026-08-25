@@ -3,6 +3,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -16,7 +17,10 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 	s.ActiveConfig = "debug"
 	s.Distro = "core"
-	s.MenuDistroSwap = true
+	if err := SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	s.Recent = Remember(nil, "debug")
 	if err := SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +28,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s2 != s {
+	if !reflect.DeepEqual(s2, s) {
 		t.Fatalf("round trip: got %+v, want %+v", s2, s)
 	}
 }
@@ -48,7 +52,7 @@ func TestLoadSettingsAcceptsV1File(t *testing.T) {
 	if s.GRPCPort != 14317 || s.Distro != "core" || !s.OSEnv {
 		t.Errorf("known fields lost: %+v", s)
 	}
-	if s.ActiveConfig != "" || s.MenuDistroSwap {
+	if s.ActiveConfig != "" {
 		t.Errorf("new fields not defaulted: %+v", s)
 	}
 }

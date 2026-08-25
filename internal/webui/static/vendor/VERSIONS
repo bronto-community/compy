@@ -22,28 +22,54 @@ Verify with:
 
 ---
 
-Fonts (direction-B "Dense utility" UI restyle), latin subset woff2 only,
-via fontsource on jsdelivr (pinned to the exact package version in the URL):
+Lucide icons 1.34.0 (v3 handoff: "Lucide (ISC), stroke 1.9, 12–14px,
+currentColor, round caps").
+Source: https://cdn.jsdelivr.net/npm/lucide-static@1.34.0/icons/<name>.svg
+License: ISC, see LICENSE-lucide (verbatim from
+  https://cdn.jsdelivr.net/npm/lucide-static@1.34.0/LICENSE)
 
-fonts/space-grotesk-latin-500.woff2
-  https://cdn.jsdelivr.net/npm/@fontsource/space-grotesk@5.3.0/files/space-grotesk-latin-500-normal.woff2
-  sha256: 1b1a8131d9edf975d9decee81e2f2bf504812f7a4f498e5500f28a613e22e64c
+lucide-icons.js
+  sha256: 69101776deb5c73f15d5bde29e4d12c5486ce09652c3f61b0310f80dbee43271
 
-fonts/space-grotesk-latin-600.woff2
-  https://cdn.jsdelivr.net/npm/@fontsource/space-grotesk@5.3.0/files/space-grotesk-latin-600-normal.woff2
-  sha256: 685bbbf69fa616df1ef81847c85fc76be097ddfb3468ff2257be54511ab3130f
+Not a redistributed upstream file: the 22 icons the design uses (circle,
+circle-dot, package, user, link, play, pencil, copy, refresh-cw, undo,
+trash-2, plus, chevron-down, chevron-right, check, download, folder, ban,
+search, list, activity, sliders-vertical) transcribed from those pinned SVGs
+into a `{ name: [[svgTag, attrs], ...] }` map, so app.js can build them with
+createElementNS and never touch innerHTML. Two deliberate edits to the
+upstream path data: circle-dot's inner circle is r=3.2 filled (the design's
+"circle-dot amber = running" needs a visible dot at 13px), and nothing else.
+Regenerate by re-downloading the icons above and re-running the same
+transcription.
 
-fonts/ibm-plex-mono-latin-400.woff2
-  https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-400-normal.woff2
-  sha256: 08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7
+---
 
-fonts/ibm-plex-mono-latin-500.woff2
-  https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-500-normal.woff2
-  sha256: 01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22
+Fonts (v3 handoff type ramp: JetBrains Mono throughout, IBM Plex Sans only
+for explanatory sentences), latin subset woff2 only, via fontsource on
+jsdelivr (pinned to the exact package version in the URL):
 
-License: SIL Open Font License 1.1, see fonts/LICENSE-space-grotesk
-  (Space Grotesk, copied from the fontsource package's LICENSE) and
-  fonts/LICENSE-ibm-plex-mono (IBM Plex Mono, ditto).
+fonts/jetbrains-mono-latin-400.woff2
+  https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono@5.3.0/files/jetbrains-mono-latin-400-normal.woff2
+  sha256: 14425ba9c695763c1547f48a206b7aa60350a33ae23de09f0407877f3fcd89eb
+
+fonts/jetbrains-mono-latin-500.woff2
+  https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono@5.3.0/files/jetbrains-mono-latin-500-normal.woff2
+  sha256: cb182feeed4d798ff6961d3c79f7026279448fca0676438aaecb21f3fc39553a
+
+fonts/jetbrains-mono-latin-700.woff2
+  https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono@5.3.0/files/jetbrains-mono-latin-700-normal.woff2
+  sha256: d0d4e818808f2a0ba39b2b09d1989366f63494e295f003c7ef436697378507e8
+
+fonts/ibm-plex-sans-latin-400.woff2
+  https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-latin-400-normal.woff2
+  sha256: 3b646991d30055a93a4ecc499713d4347953a74a947ecab435ab72070cbdab0e
+
+License: SIL Open Font License 1.1, see fonts/LICENSE-jetbrains-mono
+  (JetBrains Mono, copied from the fontsource package's LICENSE) and
+  fonts/LICENSE-ibm-plex-sans (IBM Plex Sans, ditto).
 
 Verify with:
   shasum -a 256 fonts/*.woff2
+
+The v2 direction-B fonts (Space Grotesk, IBM Plex Mono) were removed with
+the design that used them.
