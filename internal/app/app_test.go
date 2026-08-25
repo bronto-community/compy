@@ -1810,16 +1810,29 @@ func TestUseDistroStartupFailureRestoresTheBinary(t *testing.T) {
 	}
 
 	closeListener(t, port)
-	if err := a.UseDistro("other"); err == nil {
+	err = a.UseDistro("other")
+	if err == nil {
 		t.Fatal("UseDistro onto a collector that won't start = nil, want an error")
 	}
 
-	s, err := state.LoadSettings()
-	if err != nil {
-		t.Fatal(err)
+	s, lerr := state.LoadSettings()
+	if lerr != nil {
+		t.Fatal(lerr)
 	}
 	if s.Distro != "fake" {
 		t.Errorf("settings.Distro = %q after a failed switch, want the working %q back", s.Distro, "fake")
+	}
+	// The message has to match what actually happened: the switch did NOT
+	// stick, so it must not claim the default "is now other", and the
+	// collector's own diagnostic stays wrapped.
+	if strings.Contains(err.Error(), "default collector is now") {
+		t.Errorf("error = %q, but the switch was reverted", err)
+	}
+	if !strings.Contains(err.Error(), "other") || !strings.Contains(err.Error(), "fake") {
+		t.Errorf("error = %q, want it to name both the collector that failed and the one still in use", err)
+	}
+	if !strings.Contains(err.Error(), "did not come up") {
+		t.Errorf("error = %q, want the collector diagnostic kept", err)
 	}
 }
 
