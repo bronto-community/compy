@@ -5,769 +5,125 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>compy</title>
 <style>
-  /* Brand-aligned tokens (bronto.io look): cream ground, white cards,
-     dino-amber accent, serif display. Fonts are referenced as stacks only —
-     no font or image assets ship in this OSS repo; everything falls back to
-     system faces. Layout follows standard settings-app anatomy: sidebar
-     sections, grouped cards, label-left/control-right rows. */
+  /* Stopgap UI for the v2 core: status + configuration picker. P3 rebuilds
+     this properly (four views, CodeMirror editor). Brand tokens only —
+     no font or image assets ship in this repo. */
   :root {
-    --bg: #F7F4EC;
-    --panel: #FFFFFF;
-    --line: #E5E0D3;
-    --ink: #1E1E1C;
-    --muted: #6E6A60;
-    --accent: #DE9200;
-    --accent-soft: #F9C338;
-    --dark: #1E1E1C;
-    --ok: #3E9B6E;
-    --bad: #C4452F;
-    --serif: "Source Serif 4", "Source Serif Pro", Georgia, serif;
-    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --bg: #F7F4EC; --panel: #FFFFFF; --line: #E5E0D3; --ink: #1E1E1C;
+    --muted: #6E6A60; --accent: #DE9200; --ok: #3E9B6E; --bad: #C4452F;
+    --serif: "Source Serif 4", Georgia, serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
     --sans: Inter, system-ui, -apple-system, sans-serif;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; }
-  body {
-    background: var(--bg);
-    color: var(--ink);
-    font-family: var(--sans);
-    font-size: 13.5px;
-    line-height: 1.5;
-    display: flex;
-  }
-  button { cursor: pointer; font: inherit; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font-family: var(--sans); font-size: 13.5px; line-height: 1.5; }
+  main { max-width: 720px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-family: var(--serif); font-size: 22px; margin: 0 0 14px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--muted); margin: 26px 0 8px; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: 10px; padding: 14px 16px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 9px 0;
+         border-top: 1px solid var(--line); }
+  .row:first-child { border-top: 0; }
+  .grow { flex: 1; min-width: 0; }
+  .name { font-weight: 600; }
+  .meta, .status { color: var(--muted); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+         background: var(--bad); margin-right: 6px; }
+  .dot.on { background: var(--ok); }
+  button { cursor: pointer; font: inherit; border: 1px solid var(--line);
+           background: var(--panel); border-radius: 7px; padding: 4px 12px; }
+  button:hover { border-color: var(--accent); }
+  button[disabled] { cursor: default; color: var(--muted); border-color: var(--line); }
+  .active { color: var(--accent); font-weight: 600; }
+  pre { font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+        max-height: 240px; overflow: auto; margin: 0; color: var(--muted); }
+  #error { color: var(--bad); min-height: 20px; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  code { font-family: var(--mono); font-size: 0.95em; }
-
-  /* ── sidebar ────────────────────────────────────────────── */
-  nav {
-    width: 190px;
-    flex: none;
-    border-right: 1px solid var(--line);
-    padding: 18px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .wordmark {
-    font-family: var(--serif);
-    font-weight: 700;
-    font-size: 20px;
-    padding: 0 10px 6px;
-  }
-  .nav-status {
-    display: flex; align-items: center; gap: 7px;
-    padding: 0 10px 14px;
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .led { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); flex: none; }
-  .led.on { background: var(--ok); }
-  nav button {
-    text-align: left;
-    background: none;
-    border: none;
-    border-radius: 7px;
-    padding: 7px 10px;
-    color: var(--ink);
-    font-size: 13.5px;
-  }
-  nav button:hover { background: rgba(30, 30, 28, 0.05); }
-  nav button[aria-current="true"] {
-    background: var(--panel);
-    box-shadow: inset 0 0 0 1px var(--line);
-    font-weight: 600;
-  }
-
-  /* ── content ────────────────────────────────────────────── */
-  main {
-    flex: 1;
-    overflow-y: auto;
-    padding: 26px 34px 40px;
-    max-width: 720px;
-  }
-  h1 {
-    font-family: var(--serif);
-    font-size: 22px;
-    font-weight: 700;
-    margin: 0 0 4px;
-  }
-  .page-desc { color: var(--muted); margin: 0 0 20px; }
-  .page { display: none; }
-  .page.current { display: block; }
-
-  /* error console */
-  #error {
-    display: none;
-    margin-bottom: 18px;
-    border-left: 3px solid var(--bad);
-    border-radius: 8px;
-    background: var(--dark);
-    color: #F2EFE7;
-    padding: 12px 16px;
-    font-family: var(--mono);
-    font-size: 12px;
-    white-space: pre-wrap;
-    overflow: auto;
-    max-height: 200px;
-  }
-
-  /* grouped settings card */
-  .group { margin-bottom: 22px; }
-  .group > .group-title {
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    color: var(--muted);
-    text-transform: uppercase;
-    margin: 0 0 6px 2px;
-  }
-  .card {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    box-shadow: 0 1px 3px rgba(30, 30, 28, 0.05);
-    overflow: hidden;
-  }
-  .srow {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 12px 16px;
-  }
-  .srow + .srow, .card > * + .srow, .srow + .card-extra { border-top: 1px solid var(--line); }
-  .srow .grow { flex: 1; min-width: 0; }
-  .srow .title { font-weight: 500; }
-  .srow .desc { color: var(--muted); font-size: 12.5px; }
-  .srow .desc code { word-break: break-all; }
-  .card-extra { padding: 12px 16px; }
-
-  .pill-btn {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    color: var(--ink);
-    font-size: 12.5px;
-    font-weight: 500;
-    padding: 5px 14px;
-    flex: none;
-  }
-  .pill-btn:hover { border-color: var(--muted); }
-  .solid-btn {
-    background: var(--dark);
-    color: #fff;
-    border: none;
-    border-radius: 999px;
-    font-size: 12.5px;
-    font-weight: 600;
-    padding: 6px 16px;
-  }
-  .solid-btn:hover { background: #35342F; }
-  .danger-link {
-    background: none; border: none;
-    color: var(--bad);
-    font-size: 12.5px;
-    padding: 2px 4px;
-  }
-  .danger-link:hover { text-decoration: underline; }
-  .kind-chip {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    color: var(--muted);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 0 7px;
-    flex: none;
-  }
-
-  /* switch */
-  .switch { position: relative; width: 36px; height: 21px; flex: none; }
-  .switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
-  .switch .track {
-    position: absolute; inset: 0;
-    border-radius: 11px;
-    background: #D9D4C7;
-    transition: background 0.15s;
-  }
-  .switch .track::after {
-    content: "";
-    position: absolute;
-    top: 2px; left: 2px;
-    width: 17px; height: 17px;
-    border-radius: 50%;
-    background: var(--panel);
-    box-shadow: 0 1px 2px rgba(30, 30, 28, 0.3);
-    transition: transform 0.15s;
-  }
-  .switch input:checked + .track { background: var(--accent-soft); }
-  .switch input:checked + .track::after { transform: translateX(15px); }
-  .switch input:disabled + .track { opacity: 0.5; }
-
-  /* radio rows (distro) */
-  .srow input[type="radio"] { accent-color: var(--accent); width: 15px; height: 15px; flex: none; }
-
-  /* forms */
-  .form-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-  .form-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
-  .form-grid input, .form-grid select, .form-grid label > span + * {
-    background: var(--bg);
-    color: var(--ink);
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    font-family: var(--mono);
-    font-size: 12.5px;
-    padding: 7px 9px;
-  }
-  .form-actions { grid-column: 1 / -1; display: flex; gap: 10px; }
-  .hidden { display: none !important; }
-
-  textarea {
-    width: 100%;
-    min-height: 12rem;
-    background: var(--dark);
-    color: #F2EFE7;
-    border: 1px solid var(--dark);
-    border-radius: 8px;
-    font-family: var(--mono);
-    font-size: 12px;
-    padding: 10px;
-    resize: vertical;
-  }
-  select {
-    background: var(--panel);
-    color: var(--ink);
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    font: inherit;
-    padding: 5px 8px;
-  }
-  pre.log {
-    background: var(--dark);
-    color: #F2EFE7;
-    border-radius: 8px;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    padding: 10px 12px;
-    overflow: auto;
-    max-height: 240px;
-    margin: 0;
-  }
-
-  @media (max-width: 640px) {
-    body { flex-direction: column; }
-    nav { width: auto; flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--line); }
-    .wordmark, .nav-status { padding-bottom: 0; }
-    .form-grid { grid-template-columns: 1fr; }
-  }
 </style>
 </head>
 <body>
-
-<nav>
-  <div class="wordmark">compy</div>
-  <div class="nav-status"><span class="led" id="led"></span><span id="nav-status-text">…</span></div>
-  <button data-page="destinations" aria-current="true">Destinations</button>
-  <button data-page="wiring">Wiring</button>
-  <button data-page="collector">Collector</button>
-  <button data-page="advanced">Advanced</button>
-</nav>
-
 <main>
-  <div id="error" role="alert"></div>
+  <h1>compy</h1>
+  <div class="card" id="status">…</div>
+  <div id="error"></div>
 
-  <!-- ── Destinations ─────────────────────────────────────── -->
-  <section class="page current" id="page-destinations">
-    <h1>Destinations</h1>
-    <p class="page-desc">Where your telemetry goes. Flip a switch to start or stop sending — apps keep pointing at the same local endpoint either way.</p>
+  <h2>Configurations</h2>
+  <div class="card" id="configs">…</div>
 
-    <div class="group">
-      <div class="card" id="dest-card"></div>
-    </div>
-
-    <div class="group">
-      <button class="pill-btn" id="show-add">+ Add destination</button>
-      <div class="card hidden" id="add-card">
-        <div class="card-extra">
-          <form class="form-grid" id="add-form">
-            <label><span>Type</span>
-              <select name="kind" id="add-kind">
-                <option value="otlp-http">OTLP over HTTP</option>
-                <option value="otlp-grpc">OTLP over gRPC</option>
-                <option value="bronto">Bronto</option>
-                <option value="debug">Debug (collector log only)</option>
-              </select>
-            </label>
-            <label><span>Name</span>
-              <input name="name" placeholder="honeycomb-dev" required pattern="[a-z0-9][a-z0-9-]*" title="lowercase letters, digits, dashes">
-            </label>
-            <label id="add-endpoint-label"><span>Endpoint</span>
-              <input name="endpoint" placeholder="https://api.vendor.com:443">
-            </label>
-            <label id="add-key-label"><span>API key</span>
-              <input name="api_key" type="password" autocomplete="off">
-            </label>
-            <div class="form-actions">
-              <button type="submit" class="solid-btn">Add destination</button>
-              <button type="button" class="pill-btn" id="cancel-add">Cancel</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Wiring ───────────────────────────────────────────── -->
-  <section class="page" id="page-wiring">
-    <h1>Wiring</h1>
-    <p class="page-desc">Point your applications at compy once; changing destinations never touches them again.</p>
-
-    <div class="group">
-      <div class="group-title">Local endpoint</div>
-      <div class="card">
-        <div class="srow">
-          <div class="grow">
-            <div class="title">OTLP over HTTP</div>
-            <div class="desc"><code id="ep-http">…</code></div>
-          </div>
-          <button class="pill-btn copy-btn" data-copy-from="ep-http">Copy</button>
-        </div>
-        <div class="srow">
-          <div class="grow">
-            <div class="title">OTLP over gRPC</div>
-            <div class="desc"><code id="ep-grpc">…</code></div>
-          </div>
-          <button class="pill-btn copy-btn" data-copy-from="ep-grpc">Copy</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="group">
-      <div class="group-title">Shell setup</div>
-      <div class="card">
-        <div class="srow">
-          <div class="grow">
-            <div class="title">Current shell</div>
-            <div class="desc">Sets <code>OTEL_*</code> variables for this shell only: <code id="env-line">eval "$(compy env)"</code></div>
-          </div>
-          <button class="pill-btn copy-btn" data-copy-from="env-line">Copy</button>
-        </div>
-        <div class="srow">
-          <div class="grow">
-            <div class="title">Single command</div>
-            <div class="desc">Runs one program with the variables set: <code id="run-line">compy run -- &lt;command&gt;</code></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="group">
-      <div class="group-title">Automatic</div>
-      <div class="card">
-        <div class="srow">
-          <div class="grow">
-            <div class="title">Set variables system-wide</div>
-            <div class="desc">Injects <code>OTEL_*</code> into the login session so newly started apps pick them up without any shell setup. Already-running apps are unaffected.</div>
-          </div>
-          <span class="switch"><input type="checkbox" id="os-env-toggle" aria-label="Set variables system-wide"><span class="track"></span></span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Collector ────────────────────────────────────────── -->
-  <section class="page" id="page-collector">
-    <h1>Collector</h1>
-    <p class="page-desc">The OpenTelemetry Collector that compy runs for you as a background service.</p>
-
-    <div class="group">
-      <div class="group-title">Distribution</div>
-      <div class="card" id="distro-card"></div>
-      <p class="desc" style="color: var(--muted); font-size: 12.5px; margin: 6px 2px 0;">
-        Register more with <code>compy distro add &lt;name&gt; &lt;path&gt;</code>.
-      </p>
-    </div>
-
-    <div class="group">
-      <div class="group-title">Service</div>
-      <div class="card">
-        <div class="srow">
-          <div class="grow">
-            <div class="title" id="svc-title">…</div>
-            <div class="desc" id="svc-desc"></div>
-          </div>
-          <button class="pill-btn" id="restart-btn">Restart</button>
-          <button class="pill-btn" id="rollback-btn" title="Restore the last config that ran successfully">Roll back</button>
-        </div>
-        <div class="card-extra">
-          <div class="desc" style="margin-bottom:6px;">Recent collector log</div>
-          <pre class="log" id="log-view">…</pre>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Advanced ─────────────────────────────────────────── -->
-  <section class="page" id="page-advanced">
-    <h1>Advanced</h1>
-    <p class="page-desc">Full control over the collector configuration. Everything here is plain collector YAML.</p>
-
-    <div class="group">
-      <div class="group-title">Destination YAML</div>
-      <div class="card">
-        <div class="srow">
-          <div class="grow">
-            <div class="title">Edit a destination's config fragment</div>
-            <div class="desc">Each destination is one YAML fragment merged into the collector config.</div>
-          </div>
-          <select id="frag-select" aria-label="Destination to edit"></select>
-        </div>
-        <div class="card-extra hidden" id="frag-editor">
-          <textarea id="frag-textarea" spellcheck="false"></textarea>
-          <div class="srow" style="padding: 10px 0 0;">
-            <button class="solid-btn" id="save-frag">Save</button>
-            <a id="otelbin-link" target="_blank">Open in OTelBin</a>
-            <!-- ponytail: otelbin fragment param unverified -->
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="group">
-      <div class="group-title">Raw mode</div>
-      <div class="card">
-        <div class="srow">
-          <div class="grow">
-            <div class="title">Run a hand-written config</div>
-            <div class="desc">Bypasses everything compy generates and runs <code>config/custom.yaml</code> exactly as written.</div>
-          </div>
-          <span class="switch"><input type="checkbox" id="raw-mode-checkbox" aria-label="Raw mode"><span class="track"></span></span>
-        </div>
-        <div class="card-extra hidden" id="raw-body">
-          <textarea id="raw-textarea" placeholder="custom.yaml" spellcheck="false"></textarea>
-          <div class="srow" style="padding: 10px 0 0;">
-            <button class="solid-btn" id="save-raw">Save custom.yaml</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+  <h2>Collector log</h2>
+  <div class="card"><pre id="log"></pre></div>
 </main>
-
 <script>
-/* ── plumbing ─────────────────────────────────────────────── */
+const $ = (id) => document.getElementById(id);
+let active = "";
+
 async function api(path, opts) {
-  const res = await fetch(path, opts || {});
-  if (!res.ok) {
-    let msg = res.statusText;
-    try {
-      const body = await res.clone().json();
-      if (body.error) msg = body.error;
-    } catch (e) {}
-    await showError(msg);
-    throw new Error(msg);
+  const r = await fetch(path, opts);
+  const body = r.headers.get("content-type")?.includes("json") ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(body.error || r.statusText);
+  return body;
+}
+
+function renderStatus(s) {
+  active = s.config || "";
+  $("status").innerHTML = "";
+  const line = document.createElement("div");
+  line.innerHTML =
+    `<span class="dot ${s.running ? "on" : ""}"></span>` +
+    `<strong>${s.running ? "running" : "stopped"}</strong>` +
+    ` — ${s.config ? `config <span class="active">${s.config}</span>` : "no configuration active"}` +
+    `${s.set ? ` (set ${s.set})` : ""}`;
+  const ports = document.createElement("div");
+  ports.className = "meta";
+  ports.textContent = `distro ${s.distro || "(none)"} · OTLP ${s.endpoint} · grpc ${s.grpc_port}`;
+  $("status").append(line, ports);
+}
+
+function renderConfigs(list) {
+  $("configs").innerHTML = "";
+  for (const c of list || []) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const info = document.createElement("div");
+    info.className = "grow";
+    info.innerHTML = `<div class="name ${c.name === active ? "active" : ""}">${c.name}</div>` +
+      `<div class="meta">${c.provenance}${c.modified ? " · locally modified" : ""}` +
+      `${c.meta?.active_set ? " · set " + c.meta.active_set : ""}</div>`;
+    const btn = document.createElement("button");
+    btn.textContent = c.name === active ? "active" : "Use";
+    btn.disabled = c.name === active;
+    btn.onclick = () => act(btn, `/api/configs/${encodeURIComponent(c.name)}/activate`);
+    row.append(info, btn);
+    $("configs").append(row);
   }
-  hideError();
-  return res;
 }
 
-async function showError(msg) {
-  const box = document.getElementById('error');
-  let tail = '';
+async function act(btn, path) {
+  btn.disabled = true;
+  $("error").textContent = "";
   try {
-    const r = await fetch('/api/log');
-    if (r.ok) tail = (await r.json()).log || '';
-  } catch (e) {}
-  box.textContent = msg + (tail ? '\n\n--- collector log ---\n' + tail : '');
-  box.style.display = 'block';
-}
-function hideError() { document.getElementById('error').style.display = 'none'; }
-
-/* ── sidebar navigation ───────────────────────────────────── */
-function showPage(name) {
-  const btn = document.querySelector('nav button[data-page="' + name + '"]');
-  if (!btn) return;
-  for (const b of document.querySelectorAll('nav button[data-page]')) b.removeAttribute('aria-current');
-  btn.setAttribute('aria-current', 'true');
-  for (const p of document.querySelectorAll('.page')) p.classList.remove('current');
-  document.getElementById('page-' + name).classList.add('current');
-  if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+    await api(path, { method: "POST" });
+  } catch (e) {
+    $("error").textContent = e.message;
+  }
   refresh();
 }
-for (const btn of document.querySelectorAll('nav button[data-page]')) {
-  btn.addEventListener('click', () => showPage(btn.dataset.page));
-}
-window.addEventListener('hashchange', () => showPage(location.hash.slice(1)));
-if (location.hash.length > 1) showPage(location.hash.slice(1));
 
-/* ── status (nav + wiring + service) ──────────────────────── */
-async function loadStatus() {
-  const s = await (await api('/api/status')).json();
-  document.getElementById('led').classList.toggle('on', !!s.running);
-  document.getElementById('nav-status-text').textContent = s.running ? 'running' : 'stopped';
-  document.getElementById('ep-http').textContent = 'http://127.0.0.1:' + s.http_port;
-  document.getElementById('ep-grpc').textContent = 'http://127.0.0.1:' + s.grpc_port;
-  document.getElementById('os-env-toggle').checked = !!s.os_env;
-  document.getElementById('svc-title').textContent =
-    (s.running ? 'Running' : 'Stopped') + (s.raw_mode ? ' · raw mode' : '');
-  document.getElementById('svc-desc').textContent =
-    s.enabled.length ? 'Sending to: ' + s.enabled.join(', ') : 'No destinations enabled.';
-  document.getElementById('raw-mode-checkbox').checked = !!s.raw_mode;
-  document.getElementById('raw-body').classList.toggle('hidden', !s.raw_mode);
-}
-
-/* ── destinations ─────────────────────────────────────────── */
-const KIND_LABELS = { 'otlp-http': 'OTLP/HTTP', 'otlp-grpc': 'OTLP/gRPC', bronto: 'Bronto', debug: 'debug' };
-
-async function loadDestinations() {
-  const list = await (await api('/api/backends')).json();
-  const card = document.getElementById('dest-card');
-  card.innerHTML = '';
-  if (!list.length) {
-    const row = document.createElement('div');
-    row.className = 'srow';
-    const grow = document.createElement('div');
-    grow.className = 'grow desc';
-    grow.textContent = 'No destinations yet. Add one to route telemetry somewhere.';
-    row.appendChild(grow);
-    card.appendChild(row);
-  }
-  for (const b of list) card.appendChild(destRow(b));
-  // Advanced page's fragment picker shares the list.
-  const sel = document.getElementById('frag-select');
-  const prev = sel.value;
-  sel.innerHTML = '<option value="">Choose…</option>';
-  for (const b of list) {
-    const o = document.createElement('option');
-    o.value = o.textContent = b.name;
-    sel.appendChild(o);
-  }
-  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
-  else document.getElementById('frag-editor').classList.add('hidden');
-}
-
-function destRow(b) {
-  const row = document.createElement('div');
-  row.className = 'srow';
-
-  const sw = document.createElement('span');
-  sw.className = 'switch';
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.checked = !!b.enabled;
-  cb.setAttribute('aria-label', 'Send telemetry to ' + b.name);
-  cb.addEventListener('change', async () => {
-    cb.disabled = true;
-    try {
-      await api('/api/backends/' + encodeURIComponent(b.name) + '/enabled', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: cb.checked }),
-      });
-    } finally { await refresh(); }
-  });
-  const track = document.createElement('span');
-  track.className = 'track';
-  sw.append(cb, track);
-
-  const grow = document.createElement('div');
-  grow.className = 'grow';
-  const title = document.createElement('div');
-  title.className = 'title';
-  title.textContent = b.name;
-  const desc = document.createElement('div');
-  desc.className = 'desc';
-  desc.textContent = b.enabled ? 'Receiving your telemetry' : 'Off';
-  grow.append(title, desc);
-
-  const chip = document.createElement('span');
-  chip.className = 'kind-chip';
-  chip.textContent = KIND_LABELS[b.kind] || 'custom';
-
-  const rm = document.createElement('button');
-  rm.className = 'danger-link';
-  rm.textContent = 'Remove';
-  rm.addEventListener('click', async () => {
-    if (!confirm('Remove destination "' + b.name + '"? Its YAML fragment is deleted.')) return;
-    await api('/api/backends/' + encodeURIComponent(b.name), { method: 'DELETE' });
-    await refresh();
-  });
-
-  row.append(sw, grow, chip, rm);
-  return row;
-}
-
-/* add form: only show fields the chosen type uses */
-const addCard = document.getElementById('add-card');
-document.getElementById('show-add').addEventListener('click', () => {
-  addCard.classList.toggle('hidden');
-});
-document.getElementById('cancel-add').addEventListener('click', () => {
-  addCard.classList.add('hidden');
-});
-function syncAddFields() {
-  const kind = document.getElementById('add-kind').value;
-  document.getElementById('add-endpoint-label').classList.toggle('hidden', kind === 'debug');
-  document.getElementById('add-key-label').classList.toggle('hidden', kind === 'debug');
-}
-document.getElementById('add-kind').addEventListener('change', syncAddFields);
-syncAddFields();
-
-document.getElementById('add-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const f = e.target;
-  await api('/api/backends', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: f.name.value, kind: f.kind.value,
-      endpoint: f.endpoint.value, api_key: f.api_key.value,
-    }),
-  });
-  f.reset();
-  syncAddFields();
-  addCard.classList.add('hidden');
-  await refresh();
-});
-
-/* ── wiring ───────────────────────────────────────────────── */
-for (const btn of document.querySelectorAll('.copy-btn')) {
-  btn.addEventListener('click', () => {
-    navigator.clipboard.writeText(document.getElementById(btn.dataset.copyFrom).textContent);
-    btn.textContent = 'Copied';
-    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-  });
-}
-document.getElementById('os-env-toggle').addEventListener('change', async (e) => {
-  await api('/api/os-env', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ on: e.target.checked }),
-  });
-  await refresh();
-});
-
-/* ── collector ────────────────────────────────────────────── */
-async function loadDistros() {
-  const list = await (await api('/api/distros')).json();
-  const card = document.getElementById('distro-card');
-  card.innerHTML = '';
-  if (!list.length) {
-    const row = document.createElement('div');
-    row.className = 'srow';
-    const grow = document.createElement('div');
-    grow.className = 'grow desc';
-    grow.textContent = 'No distributions registered yet.';
-    row.appendChild(grow);
-    card.appendChild(row);
-  }
-  for (const d of list) {
-    const row = document.createElement('div');
-    row.className = 'srow';
-    const radio = document.createElement('input');
-    radio.type = 'radio';
-    radio.name = 'distro';
-    radio.checked = !!d.selected;
-    radio.setAttribute('aria-label', 'Use ' + d.name);
-    radio.addEventListener('change', async () => {
-      radio.disabled = true;
-      try {
-        await api('/api/distros/' + encodeURIComponent(d.name) + '/use', { method: 'POST' });
-      } finally { await refresh(); }
-    });
-    const grow = document.createElement('div');
-    grow.className = 'grow';
-    const title = document.createElement('div');
-    title.className = 'title';
-    title.textContent = d.name;
-    const desc = document.createElement('div');
-    desc.className = 'desc';
-    desc.textContent = d.path;
-    grow.append(title, desc);
-    row.append(radio, grow);
-    card.appendChild(row);
-  }
-}
-
-async function loadLog() {
-  try {
-    const j = await (await fetch('/api/log')).json();
-    document.getElementById('log-view').textContent = j.log || '(empty)';
-  } catch (e) {}
-}
-
-document.getElementById('restart-btn').addEventListener('click', async (e) => {
-  e.target.disabled = true;
-  try { await api('/api/apply', { method: 'POST' }); }
-  finally { e.target.disabled = false; await refresh(); }
-});
-document.getElementById('rollback-btn').addEventListener('click', async (e) => {
-  e.target.disabled = true;
-  try { await api('/api/rollback', { method: 'POST' }); }
-  finally { e.target.disabled = false; await refresh(); }
-});
-
-/* ── advanced ─────────────────────────────────────────────── */
-const fragSel = document.getElementById('frag-select');
-const fragTa = document.getElementById('frag-textarea');
-fragSel.addEventListener('change', async () => {
-  if (!fragSel.value) {
-    document.getElementById('frag-editor').classList.add('hidden');
-    return;
-  }
-  const text = await (await api('/api/backends/' + encodeURIComponent(fragSel.value) + '/fragment')).text();
-  fragTa.value = text;
-  updateOtelbin();
-  document.getElementById('frag-editor').classList.remove('hidden');
-});
-function updateOtelbin() {
-  document.getElementById('otelbin-link').href =
-    'https://www.otelbin.io/#config=' + encodeURIComponent(fragTa.value);
-}
-fragTa.addEventListener('input', updateOtelbin);
-document.getElementById('save-frag').addEventListener('click', async () => {
-  if (!fragSel.value) return;
-  await api('/api/backends/' + encodeURIComponent(fragSel.value) + '/fragment', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/plain' },
-    body: fragTa.value,
-  });
-  await refresh();
-});
-
-document.getElementById('raw-mode-checkbox').addEventListener('change', async (e) => {
-  await api('/api/raw-mode', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ on: e.target.checked }),
-  });
-  await refresh();
-});
-async function loadRaw() {
-  document.getElementById('raw-textarea').value = await (await api('/api/raw')).text();
-}
-document.getElementById('save-raw').addEventListener('click', async () => {
-  await api('/api/raw', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'text/plain' },
-    body: document.getElementById('raw-textarea').value,
-  });
-  await refresh();
-});
-
-/* ── refresh: only reload what the visible page needs, and never
-   clobber an editor the user is typing in ─────────────────── */
 async function refresh() {
-  await loadStatus();
-  const page = document.querySelector('nav button[aria-current]').dataset.page;
-  if (page === 'destinations' || page === 'advanced') await loadDestinations();
-  if (page === 'collector') { await loadDistros(); await loadLog(); }
-  if (page === 'advanced' && document.activeElement !== document.getElementById('raw-textarea')) await loadRaw();
+  try {
+    renderStatus(await api("/api/status"));
+    renderConfigs(await api("/api/configs"));
+    $("log").textContent = (await api("/api/log")).log || "(empty)";
+  } catch (e) {
+    $("error").textContent = e.message;
+  }
 }
+
 refresh();
+setInterval(refresh, 5000);
 </script>
 </body>
 </html>

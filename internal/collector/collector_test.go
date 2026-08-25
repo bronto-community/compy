@@ -19,14 +19,14 @@ func fakeBin(t *testing.T, script string) string {
 
 func TestValidateFailureCarriesOutput(t *testing.T) {
 	bin := fakeBin(t, `echo "error decoding 'exporters': unknown type" >&2; exit 1`)
-	err := collector.Validate(bin, []string{"--config", "x.yaml"})
+	err := collector.Validate(bin, []string{"--config", "x.yaml"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "unknown type") {
 		t.Fatalf("got %v", err)
 	}
 }
 
 func TestValidateOK(t *testing.T) {
-	if err := collector.Validate(fakeBin(t, "exit 0"), nil); err != nil {
+	if err := collector.Validate(fakeBin(t, "exit 0"), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -68,5 +68,12 @@ func TestTailLogMissingFile(t *testing.T) {
 	}
 	if got != "" {
 		t.Fatalf("got %q, want empty", got)
+	}
+}
+
+func TestValidatePassesEnvToCollector(t *testing.T) {
+	bin := fakeBin(t, `[ "$API_KEY" = secret ] || { echo "API_KEY not set"; exit 1; }`)
+	if err := collector.Validate(bin, nil, map[string]string{"API_KEY": "secret"}); err != nil {
+		t.Fatalf("Validate did not pass env through: %v", err)
 	}
 }

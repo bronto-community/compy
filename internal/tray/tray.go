@@ -1,9 +1,9 @@
 //go:build darwin
 
-// Package tray implements compy's macOS menu-bar item. The menu is the
-// switchboard's front line: per-backend enable/disable toggles, distro
-// switching, and rollback live directly in it; "Open compy" spawns the
-// standalone window for everything else.
+// Package tray implements compy's macOS menu-bar item: the service status,
+// a picker for the active configuration, an optional distro switcher, and
+// rollback; "Open compy" spawns the standalone window for everything else.
+// (The full menu-bar rework is P4.)
 package tray
 
 import (
@@ -33,14 +33,14 @@ func Run(a *app.App) error {
 }
 
 type menu struct {
-	a        *app.App
-	mu       sync.Mutex // serializes apply-triggering actions
-	status   *systray.MenuItem
-	backends *systray.MenuItem
-	distros  *systray.MenuItem
+	a       *app.App
+	mu      sync.Mutex // serializes apply-triggering actions
+	status  *systray.MenuItem
+	configs *systray.MenuItem
+	distros *systray.MenuItem
 
-	backendItems map[string]*systray.MenuItem
-	distroItems  map[string]*systray.MenuItem
+	configItems map[string]*systray.MenuItem
+	distroItems map[string]*systray.MenuItem
 }
 
 func onReady(a *app.App) {
@@ -48,16 +48,17 @@ func onReady(a *app.App) {
 	systray.SetTooltip("compy — local OpenTelemetry Collector manager")
 
 	m := &menu{
-		a:            a,
-		backendItems: map[string]*systray.MenuItem{},
-		distroItems:  map[string]*systray.MenuItem{},
+		a:           a,
+		configItems: map[string]*systray.MenuItem{},
+		distroItems: map[string]*systray.MenuItem{},
 	}
 
 	m.status = systray.AddMenuItem("...", "service status")
 	m.status.Disable()
 	systray.AddSeparator()
-	m.backends = systray.AddMenuItem("Backends", "enable or disable telemetry backends")
+	m.configs = systray.AddMenuItem("Configurations", "pick the active configuration")
 	m.distros = systray.AddMenuItem("Distro", "switch the collector distribution")
+	m.distros.Hide() // shown by sync() only when settings.MenuDistroSwap is on
 	rollback := systray.AddMenuItem("Rollback", "restore the last known-good config")
 	systray.AddSeparator()
 	openApp := systray.AddMenuItem("Open compy", "open the compy window")
@@ -87,7 +88,7 @@ func onReady(a *app.App) {
 	}()
 }
 
-// sync reconciles the status line, the backend toggles, and the distro
+// sync reconciles the status line, the configuration picker, and the distro
 // radio items with what is on disk right now.
 func (m *menu) sync() {
 	st, err := m.a.Status()
@@ -105,36 +106,41 @@ func (m *menu) sync() {
 	}
 	m.status.SetTitle(fmt.Sprintf("%s — %s (grpc %d, http %d)", running, distro, st.GRPCPort, st.HTTPPort))
 
-	backends, err := m.a.Backends()
+	configs, err := m.a.Configs()
 	if err == nil {
 		seen := map[string]bool{}
-		for _, b := range backends {
-			name, _ := b["name"].(string)
-			enabled, _ := b["enabled"].(bool)
-			seen[name] = true
-			item, ok := m.backendItems[name]
+		for _, c := range configs {
+			seen[c.Name] = true
+			item, ok := m.configItems[c.Name]
 			if !ok {
-				item = m.backends.AddSubMenuItemCheckbox(name, "toggle "+name, enabled)
-				m.backendItems[name] = item
-				go m.handleBackendClicks(name, item)
+				item = m.configs.AddSubMenuItemCheckbox(c.Name, "activate "+c.Name, false)
+				m.configItems[c.Name] = item
+				go m.handleConfigClicks(c.Name, item)
 			}
-			setChecked(item, enabled)
+			setChecked(item, c.Name == st.Config)
 		}
-		removeStale(m.backendItems, seen)
+		removeStale(m.configItems, seen)
 	}
 
-	distros, err := state.LoadDistros()
+	s, err := state.LoadSettings()
+	if err != nil || !s.MenuDistroSwap {
+		m.distros.Hide()
+		return
+	}
+	m.distros.Show()
+	distros, err := m.a.Distros()
 	if err == nil {
 		seen := map[string]bool{}
 		for _, d := range distros {
-			seen[d.Name] = true
-			item, ok := m.distroItems[d.Name]
+			name, _ := d["name"].(string)
+			seen[name] = true
+			item, ok := m.distroItems[name]
 			if !ok {
-				item = m.distros.AddSubMenuItemCheckbox(d.Name, "switch to "+d.Name, false)
-				m.distroItems[d.Name] = item
-				go m.handleDistroClicks(d.Name, item)
+				item = m.distros.AddSubMenuItemCheckbox(name, "switch to "+name, false)
+				m.distroItems[name] = item
+				go m.handleDistroClicks(name, item)
 			}
-			setChecked(item, d.Name == st.Distro)
+			setChecked(item, name == st.Distro)
 		}
 		removeStale(m.distroItems, seen)
 	}
@@ -157,23 +163,10 @@ func removeStale(items map[string]*systray.MenuItem, seen map[string]bool) {
 	}
 }
 
-func (m *menu) handleBackendClicks(name string, item *systray.MenuItem) {
+func (m *menu) handleConfigClicks(name string, item *systray.MenuItem) {
 	for range item.ClickedCh {
-		m.act("applying…", func() error {
-			// Toggle from current on-disk state, not the checkbox: the CLI
-			// or window may have flipped it since the menu was drawn.
-			s, err := state.LoadSettings()
-			if err != nil {
-				return err
-			}
-			enabled := false
-			for _, n := range s.Enabled {
-				if n == name {
-					enabled = true
-				}
-			}
-			return m.a.SetEnabled(name, !enabled)
-		})
+		// Activate with the configuration's own active set ("" keeps it).
+		m.act("activating "+name+"…", func() error { return m.a.Activate(name, "") })
 	}
 }
 

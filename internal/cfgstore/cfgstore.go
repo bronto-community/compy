@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -437,6 +438,87 @@ func UseSet(root, name, set string) error {
 	}
 	m.ActiveSet = set
 	return writeMeta(root, name, m)
+}
+
+// SnapshotActive copies configs/<name>/ and settings.json into last-good/,
+// replacing any prior snapshot. Callers take it only once a configuration is
+// proven to start, so it is the rollback target.
+func SnapshotActive(root, name string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	dst := filepath.Join(root, "last-good")
+	if err := os.RemoveAll(dst); err != nil {
+		return err
+	}
+	if err := copyTree(configDir(root, name), filepath.Join(dst, "config")); err != nil {
+		return err
+	}
+	return copyFile(filepath.Join(root, "settings.json"), filepath.Join(dst, "settings.json"), 0o600)
+}
+
+// RestoreActive copies the last-good snapshot back over settings.json and
+// the configuration it was taken from (the active_config recorded in the
+// snapshot's settings.json). It errors if no snapshot exists.
+func RestoreActive(root string) error {
+	src := filepath.Join(root, "last-good")
+	// state.Dir() pre-creates last-good/ empty, so its mere existence proves
+	// nothing; settings.json only lands there via SnapshotActive.
+	data, err := os.ReadFile(filepath.Join(src, "settings.json"))
+	if err != nil {
+		return errors.New("no last-good snapshot to restore")
+	}
+	var s state.Settings
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if err := validateName(s.ActiveConfig); err != nil {
+		return err
+	}
+	dir := configDir(root, s.ActiveConfig)
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	if err := copyTree(filepath.Join(src, "config"), dir); err != nil {
+		return err
+	}
+	return copyFile(filepath.Join(src, "settings.json"), filepath.Join(root, "settings.json"), 0o600)
+}
+
+// copyTree recursively copies src to dst. A missing src is a no-op.
+func copyTree(src, dst string) error {
+	if _, err := os.Stat(src); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		return copyFile(path, target, 0o600)
+	})
+}
+
+// copyFile copies src to dst atomically. A missing src is a no-op.
+func copyFile(src, dst string, perm os.FileMode) error {
+	data, err := os.ReadFile(src)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return state.WriteFileAtomic(dst, data, perm)
 }
 
 // MaterializeDefaults creates or upgrades shipped default configurations

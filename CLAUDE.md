@@ -24,15 +24,19 @@ out on other GOOS in `internal/tray`).
 
 ## Module layout (`internal/*`)
 
-- `app` — orchestrates everything else: turns settings + backend fragments
-  into a validated, installed, running collector; the one API the CLI, web
-  UI, and tray all call into.
+- `app` — orchestrates everything else: turns the active configuration + its
+  variable set into a validated, installed, running collector; the one API
+  the CLI, web UI, and tray all call into.
 - `collector` — runs and probes a local OpenTelemetry Collector binary
   (validate, health probe, log tail); starting it is `launchd`'s job, via
   `app.Apply`.
-- `config` — collector configuration: base template, per-backend fragments,
-  presets, collector arg construction (`--config` per enabled backend),
-  last-good snapshot/restore.
+- `cfgstore` — configurations: `configs/<name>/` (config.yaml + meta.json),
+  CRUD/copy, variable sets, provenance hashing, shipped defaults, remote
+  sync, last-good snapshot/restore.
+- `vars` — extracts `${VAR}` / `${env:VAR:-default}` references (and their
+  trailing-comment descriptions) from collector YAML.
+- `distro` — pinned collector-distribution definitions, checksum-verified
+  on-demand download, and the distro registry.
 - `envvars` — computes the `OTEL_*` vars compy exposes; emits them as shell
   scripts (`compy env`), subprocess environments (`compy run`), or OS-level
   (`launchctl setenv`) settings.
@@ -51,7 +55,7 @@ out on other GOOS in `internal/tray`).
 State directory defaults to `~/Library/Application Support/compy` on
 macOS (`$XDG_DATA_HOME/compy` or `~/.local/share/compy` elsewhere), overridable
 via the `COMPY_HOME` env var. `internal/state.Dir()` resolves and creates it
-(`config/backends/`, `logs/`, `last-good/`). Tests set `COMPY_HOME` to
+(`configs/`, `logs/`, `last-good/`). Tests set `COMPY_HOME` to
 `t.TempDir()` rather than touching the real state dir.
 
 ## Ports

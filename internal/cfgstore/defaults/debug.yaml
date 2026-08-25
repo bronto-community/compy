@@ -2,12 +2,12 @@ receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 127.0.0.1:${COMPY_GRPC_PORT:-14317}  # compy's local gRPC port
+        endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}  # compy's local gRPC port
       http:
-        endpoint: 127.0.0.1:${COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
+        endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
 exporters:
   debug:
-    verbosity: ${DEBUG_VERBOSITY:-normal}  # basic | normal | detailed
+    verbosity: ${env:DEBUG_VERBOSITY:-normal}  # basic | normal | detailed
 service:
   pipelines:
     traces: {receivers: [otlp], exporters: [debug]}

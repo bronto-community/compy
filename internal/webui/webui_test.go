@@ -1,79 +1,67 @@
 package webui
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
 // fakeAPI builds an API with no-op closures, overridable per test.
 func fakeAPI() API {
 	return API{
-		Status:   func() (map[string]any, error) { return map[string]any{"running": true}, nil },
-		Backends: func() ([]map[string]any, error) { return []map[string]any{}, nil },
-		AddBackend: func(name, kind, endpoint, apiKey string) error {
-			return nil
-		},
-		RemoveBackend: func(name string) error { return nil },
-		SetEnabled:    func(name string, enabled bool) error { return nil },
-		Apply:         func() error { return nil },
-		Rollback:      func() error { return nil },
-		ReadFragment:  func(name string) (string, error) { return "", nil },
-		WriteFragment: func(name, content string) error { return nil },
-		SetRawMode:    func(on bool) error { return nil },
-		ReadRaw:       func() (string, error) { return "", nil },
-		WriteRaw:      func(content string) error { return nil },
-		LastError:     func() (string, error) { return "", nil },
-		Distros:       func() ([]map[string]any, error) { return []map[string]any{}, nil },
-		UseDistro:     func(name string) error { return nil },
-		SetOSEnv:      func(on bool) error { return nil },
+		Status:    func() (map[string]any, error) { return map[string]any{"running": true}, nil },
+		Configs:   func() (any, error) { return []map[string]any{}, nil },
+		Activate:  func(name string) error { return nil },
+		LastError: func() (string, error) { return "", nil },
 	}
 }
 
-func TestDistrosRoutes(t *testing.T) {
+func TestConfigsRoutes(t *testing.T) {
 	api := fakeAPI()
-	api.Distros = func() ([]map[string]any, error) {
-		return []map[string]any{{"name": "core", "selected": true}}, nil
+	api.Configs = func() (any, error) {
+		return []map[string]any{{"name": "debug", "provenance": "shipped"}}, nil
 	}
-	var used string
-	api.UseDistro = func(name string) error { used = name; return nil }
+	var activated string
+	api.Activate = func(name string) error { activated = name; return nil }
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/distros")
+	resp, err := http.Get(srv.URL + "/api/configs")
 	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET distros: %v %v", resp.StatusCode, err)
+		t.Fatalf("GET configs: %v %v", resp.StatusCode, err)
 	}
 	var list []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil || len(list) != 1 || list[0]["name"] != "core" {
-		t.Fatalf("distros body wrong: %v %v", list, err)
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil || len(list) != 1 || list[0]["name"] != "debug" {
+		t.Fatalf("configs body wrong: %v %v", list, err)
 	}
 
-	resp, err = http.Post(srv.URL+"/api/distros/contrib/use", "application/json", nil)
+	resp, err = http.Post(srv.URL+"/api/configs/otlp/activate", "application/json", nil)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST use: %v %v", resp.StatusCode, err)
+		t.Fatalf("POST activate: %v %v", resp.StatusCode, err)
 	}
-	if used != "contrib" {
-		t.Fatalf("UseDistro got %q, want contrib", used)
+	if activated != "otlp" {
+		t.Fatalf("Activate got %q, want otlp", activated)
 	}
 }
 
-func TestOSEnvRoute(t *testing.T) {
+func TestLogRoute(t *testing.T) {
 	api := fakeAPI()
-	var gotOn bool
-	api.SetOSEnv = func(on bool) error { gotOn = on; return nil }
+	api.LastError = func() (string, error) { return "boom\n", nil }
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/api/os-env", "application/json", strings.NewReader(`{"on":true}`))
-	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST os-env: %v %v", resp.StatusCode, err)
+	resp, err := http.Get(srv.URL + "/api/log")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !gotOn {
-		t.Fatal("SetOSEnv got on=false, want true")
+	defer resp.Body.Close()
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["log"] != "boom\n" {
+		t.Fatalf("body = %v, want the log tail", body)
 	}
 }
 
@@ -102,61 +90,6 @@ func TestStatusRoute(t *testing.T) {
 	}
 }
 
-func TestAddBackendParsesJSON(t *testing.T) {
-	api := fakeAPI()
-	var gotName, gotKind, gotEndpoint, gotKey string
-	api.AddBackend = func(name, kind, endpoint, apiKey string) error {
-		gotName, gotKind, gotEndpoint, gotKey = name, kind, endpoint, apiKey
-		return nil
-	}
-	srv := httptest.NewServer(Handler(api))
-	defer srv.Close()
-
-	payload := `{"name":"my-backend","kind":"otlp-grpc","endpoint":"localhost:4317","api_key":"secret"}`
-	resp, err := http.Post(srv.URL+"/api/backends", "application/json", strings.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if gotName != "my-backend" || gotKind != "otlp-grpc" || gotEndpoint != "localhost:4317" || gotKey != "secret" {
-		t.Fatalf("AddBackend got (%q,%q,%q,%q)", gotName, gotKind, gotEndpoint, gotKey)
-	}
-}
-
-func TestEnableTogglesAndAppliesViaClosure(t *testing.T) {
-	api := fakeAPI()
-	var gotName string
-	var gotEnabled bool
-	applyCalled := false
-	api.SetEnabled = func(name string, enabled bool) error {
-		gotName, gotEnabled = name, enabled
-		applyCalled = true // SetEnabled implies apply per spec; closure itself handles the apply
-		return nil
-	}
-	srv := httptest.NewServer(Handler(api))
-	defer srv.Close()
-
-	payload := `{"enabled":true}`
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/backends/my-backend/enabled", strings.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := srv.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if gotName != "my-backend" || !gotEnabled || !applyCalled {
-		t.Fatalf("SetEnabled got (%q,%v), applyCalled=%v", gotName, gotEnabled, applyCalled)
-	}
-}
-
 func TestHostCheckRejectsEvilHost(t *testing.T) {
 	api := fakeAPI()
 	handler := Handler(api)
@@ -174,7 +107,7 @@ func TestCSRFRejectsCrossOriginOrigin(t *testing.T) {
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/apply", nil)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/configs/debug/activate", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +127,7 @@ func TestCSRFRejectsCrossSiteSecFetchSite(t *testing.T) {
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/apply", nil)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/configs/debug/activate", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +147,7 @@ func TestCSRFAllowsLocalhostOriginWithAnyPort(t *testing.T) {
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/apply", nil)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/configs/debug/activate", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +167,7 @@ func TestCSRFAllowsRequestsWithoutOriginOrSecFetchSite(t *testing.T) {
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/api/apply", "application/json", nil)
+	resp, err := http.Post(srv.URL+"/api/configs/debug/activate", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,11 +179,11 @@ func TestCSRFAllowsRequestsWithoutOriginOrSecFetchSite(t *testing.T) {
 
 func TestErrorPassthrough(t *testing.T) {
 	api := fakeAPI()
-	api.Apply = func() error { return errWithMessage("collector said no") }
+	api.Activate = func(name string) error { return errWithMessage("collector said no") }
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/api/apply", "application/json", nil)
+	resp, err := http.Post(srv.URL+"/api/configs/debug/activate", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,68 +200,7 @@ func TestErrorPassthrough(t *testing.T) {
 	}
 }
 
-func TestRawModeToggle(t *testing.T) {
-	api := fakeAPI()
-	var gotOn bool
-	var writtenRaw, readRaw string
-	api.SetRawMode = func(on bool) error {
-		gotOn = on
-		return nil
-	}
-	api.WriteRaw = func(content string) error {
-		writtenRaw = content
-		return nil
-	}
-	api.ReadRaw = func() (string, error) { return readRaw, nil }
-	// All closures are wired before the server starts: Handler(api) closes
-	// over a copy of api, so later reassignment of api's fields would not
-	// reach the running handlers.
-	srv := httptest.NewServer(Handler(api))
-	defer srv.Close()
-
-	payload := `{"on":true}`
-	resp, err := http.Post(srv.URL+"/api/raw-mode", "application/json", strings.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if !gotOn {
-		t.Fatalf("SetRawMode got on=%v, want true", gotOn)
-	}
-
-	putReq, err := http.NewRequest(http.MethodPut, srv.URL+"/api/raw", bytes.NewBufferString("receivers: {}"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	putResp, err := srv.Client().Do(putReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer putResp.Body.Close()
-	if putResp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT /api/raw status = %d, want 200", putResp.StatusCode)
-	}
-	if writtenRaw != "receivers: {}" {
-		t.Fatalf("WriteRaw got %q", writtenRaw)
-	}
-
-	readRaw = "receivers: {}"
-	getResp, err := http.Get(srv.URL + "/api/raw")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer getResp.Body.Close()
-	buf := new(bytes.Buffer)
-	buf.ReadFrom(getResp.Body)
-	if buf.String() != "receivers: {}" {
-		t.Fatalf("GET /api/raw body = %q", buf.String())
-	}
-}
-
-// errWithMessage returns an error whose Error() is exactly msg, for testing
+// simpleErr is an error whose Error() is exactly its text, for testing
 // verbatim error passthrough.
 type simpleErr string
 
