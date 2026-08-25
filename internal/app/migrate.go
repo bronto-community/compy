@@ -10,6 +10,7 @@ import (
 
 	"github.com/bronto-io/compy/internal/cfgstore"
 	"github.com/bronto-io/compy/internal/distro"
+	"github.com/bronto-io/compy/internal/launchd"
 	"github.com/bronto-io/compy/internal/state"
 )
 
@@ -42,8 +43,8 @@ func (a *App) migrateLegacy() error {
 		}
 	}
 
-	active := ""
-	if len(old.Enabled) > 0 || old.RawMode {
+	activated := len(old.Enabled) > 0 || old.RawMode
+	if activated {
 		s, err := state.LoadSettings()
 		if err != nil {
 			return err
@@ -52,7 +53,6 @@ func (a *App) migrateLegacy() error {
 		if err := state.SaveSettings(s); err != nil {
 			return err
 		}
-		active = " and made it active"
 	}
 
 	archive := filepath.Join(a.Dir, "legacy-v1")
@@ -62,8 +62,22 @@ func (a *App) migrateLegacy() error {
 	if err := os.Rename(legacy, archive); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "compy: migrated v1 backends into configuration %q (%s)%s; old files archived in %s\n",
-		"migrated", how, active, archive)
+
+	// The v1 LaunchAgent still points at the files just archived, with
+	// KeepAlive on: left alone it crash-loops on a missing config and
+	// telemetry stops silently. Repoint it at the migrated configuration —
+	// or stop it outright when nothing was enabled.
+	note := "the collector job was stopped (nothing was enabled)"
+	if activated {
+		note = "made it active and restarted the collector"
+		if err := a.Apply(); err != nil {
+			note = fmt.Sprintf("made it active, but restarting the collector failed (%v) — run `compy apply`", err)
+		}
+	} else if err := launchd.Uninstall(); err != nil {
+		note = fmt.Sprintf("could not stop the old collector job (%v) — run `compy service uninstall`", err)
+	}
+	fmt.Fprintf(os.Stderr, "compy: migrated v1 backends into configuration %q (%s); %s; old files archived in %s\n",
+		"migrated", how, note, archive)
 	return nil
 }
 

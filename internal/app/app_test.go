@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -387,7 +388,7 @@ func TestNewMaterializesDefaults(t *testing.T) {
 
 // writeLegacyTree fabricates a v1 state dir: config/base.yaml, one enabled
 // backend fragment, and a v1 settings.json.
-func writeLegacyTree(t *testing.T, dir string, binPath string) {
+func writeLegacyTree(t *testing.T, dir, binPath string, enabled []string, grpcPort int) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, "config", "backends"), 0o755); err != nil {
 		t.Fatal(err)
@@ -398,7 +399,11 @@ func writeLegacyTree(t *testing.T, dir string, binPath string) {
 	if err := os.WriteFile(filepath.Join(dir, "config", "backends", "sink.yaml"), []byte("exporters:\n  debug/sink:\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	settings := `{"grpc_port":14317,"http_port":14318,"distro":"fake","enabled":["sink"],"raw_mode":false}`
+	on, err := json.Marshal(enabled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := fmt.Sprintf(`{"grpc_port":%d,"http_port":14318,"distro":"fake","enabled":%s,"raw_mode":false}`, grpcPort, on)
 	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(settings), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -412,15 +417,23 @@ func writeLegacyTree(t *testing.T, dir string, binPath string) {
 }
 
 func TestMigrationLegacyBackends(t *testing.T) {
-	setup(t, "")
+	calls := setup(t, "state = running")
 	dir := os.Getenv("COMPY_HOME")
+
+	// The migrated config has to actually come up: give the probe a port
+	// that answers.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
 
 	bin := filepath.Join(t.TempDir(), "otelcol")
 	script := "#!/bin/sh\nif [ \"$1\" = print-initial-config ]; then echo 'merged: rendered'; fi\nexit 0\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeLegacyTree(t, dir, bin)
+	writeLegacyTree(t, dir, bin, []string{"sink"}, ln.Addr().(*net.TCPAddr).Port)
 
 	if _, err := app.New(); err != nil {
 		t.Fatalf("New() = %v, want nil", err)
@@ -449,6 +462,11 @@ func TestMigrationLegacyBackends(t *testing.T) {
 	if _, _, err := cfgstore.Get(dir, "debug"); err != nil {
 		t.Errorf("shipped defaults not materialized after migration: %v", err)
 	}
+	// The v1 LaunchAgent pointed at the now-archived tree: migration must
+	// have repointed it at the migrated configuration.
+	if !called(*calls, "bootstrap") || !called(*calls, "kickstart") {
+		t.Errorf("migration did not re-apply the collector: %v", *calls)
+	}
 
 	// Second run: nothing left to migrate, and nothing blows up.
 	if _, err := app.New(); err != nil {
@@ -459,7 +477,7 @@ func TestMigrationLegacyBackends(t *testing.T) {
 func TestMigrationFallsBackToBaseYAML(t *testing.T) {
 	setup(t, "")
 	dir := os.Getenv("COMPY_HOME")
-	writeLegacyTree(t, dir, filepath.Join(t.TempDir(), "does-not-exist"))
+	writeLegacyTree(t, dir, filepath.Join(t.TempDir(), "does-not-exist"), []string{"sink"}, 1)
 
 	if _, err := app.New(); err != nil {
 		t.Fatalf("New() = %v, want nil", err)
@@ -470,5 +488,63 @@ func TestMigrationFallsBackToBaseYAML(t *testing.T) {
 	}
 	if !strings.Contains(yaml, "otlp") {
 		t.Errorf("migrated yaml = %q, want a copy of the old base.yaml", yaml)
+	}
+}
+
+func TestMigrationWithoutEnabledBackendsStopsTheJob(t *testing.T) {
+	calls := setup(t, "")
+	dir := os.Getenv("COMPY_HOME")
+	writeLegacyTree(t, dir, filepath.Join(t.TempDir(), "unused"), nil, 1)
+
+	if _, err := app.New(); err != nil {
+		t.Fatalf("New() = %v, want nil", err)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ActiveConfig != "" {
+		t.Errorf("ActiveConfig = %q, want empty (nothing was enabled)", s.ActiveConfig)
+	}
+	// Nothing to run: the v1 job must be unloaded, not left crash-looping
+	// against the archived config.
+	if !called(*calls, "bootout") {
+		t.Errorf("stale collector job not stopped: %v", *calls)
+	}
+	if called(*calls, "bootstrap") {
+		t.Errorf("nothing was enabled, yet a job was installed: %v", *calls)
+	}
+}
+
+// A configuration may bind ports of its own: launchd, not compy's probe
+// port, is the authority on whether the collector came up.
+func TestActivateProbeFallsBackToLaunchdRunning(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close() // nothing listens on compy's configured gRPC port
+
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.GRPCPort = port
+	if err := state.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatalf("Activate() = %v, want nil (launchd reports the job running)", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.Dir, "last-good", "settings.json")); err != nil {
+		t.Errorf("no last-good snapshot after a launchd-confirmed start: %v", err)
 	}
 }

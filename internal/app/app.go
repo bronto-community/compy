@@ -160,8 +160,13 @@ func (a *App) Activate(name, set string) error {
 		return err
 	}
 	if err := collector.Probe(s.GRPCPort, probeTimeout); err != nil {
-		tail, _ := collector.TailLog(a.LogPath(), 20)
-		return fmt.Errorf("collector did not come up: %w\n%s\nrun: compy rollback", err, tail)
+		// v2 configurations own their receivers and may bind nowhere near
+		// compy's ports, so a failed probe only means "not listening
+		// there" — launchd is the authority on whether the job is up.
+		if running, rerr := launchd.Running(); rerr != nil || !running {
+			tail, _ := collector.TailLog(a.LogPath(), 20)
+			return fmt.Errorf("collector did not come up: %w\n%s\nrun: compy rollback", err, tail)
+		}
 	}
 	// Snapshot only now, with the configuration proven to actually start.
 	return cfgstore.SnapshotActive(a.Dir, name)
