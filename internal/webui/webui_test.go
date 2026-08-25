@@ -814,4 +814,10 @@ func TestServesAppShellStaticFiles(t *testing.T) {
 	if !strings.Contains(body, `href="app.css"`) || !strings.Contains(body, `src="app.js"`) {
 		t.Fatalf("index.html doesn't reference app.css/app.js, got: %s", body)
 	}
+	// T4's editor needs the vendored CodeMirror loaded locally (no CDN).
+	for _, ref := range []string{"vendor/codemirror.min.css", "vendor/codemirror.min.js", "vendor/yaml.min.js"} {
+		if !strings.Contains(body, ref) {
+			t.Fatalf("index.html doesn't reference %s, got: %s", ref, body)
+		}
+	}
 }
