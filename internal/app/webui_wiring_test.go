@@ -120,4 +120,52 @@ func TestWebUIWiring(t *testing.T) {
 	if !vresult["ok"] {
 		t.Fatalf("validate result = %v, want ok:true", vresult)
 	}
+
+	// PUT a set, POST its rename, then GET config and assert the renamed set
+	// is present with its values intact (and the old name is gone).
+	req, err = http.NewRequest(http.MethodPut, srv.URL+"/api/configs/debug/sets/stage",
+		strings.NewReader(`{"values":{"HOST":"stage.example.com"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT sets/stage = %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(srv.URL+"/api/configs/debug/sets/stage/rename", "application/json",
+		strings.NewReader(`{"to":"staging"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST sets/stage/rename = %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Get(srv.URL + "/api/configs/debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/configs/debug = %d, want 200", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	info, _ = detail["info"].(map[string]any)
+	meta, _ = info["meta"].(map[string]any)
+	sets, _ = meta["variable_sets"].(map[string]any)
+	if _, stillThere := sets["stage"]; stillThere {
+		t.Fatalf("config detail = %v, \"stage\" should be gone after rename", detail)
+	}
+	staging, _ := sets["staging"].(map[string]any)
+	if staging["HOST"] != "stage.example.com" {
+		t.Fatalf("config detail = %v, want variable set \"staging\" with HOST intact after rename", detail)
+	}
 }

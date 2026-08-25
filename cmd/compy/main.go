@@ -39,11 +39,15 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy config create <name> [--from-url URL]
   compy config copy <src> <dst>
   compy config sync-all
+  compy config set-distro <config> <distro|-->
+  compy config set-url <config> <url|-->
   compy use <config> [<set>]
   compy vars <config>
   compy set <config> <set> KEY=VALUE
   compy sets use|delete <config> <set>
   compy sets rename <config> <from> <to>
+  compy settings
+  compy settings set [--grpc-port N] [--http-port N] [--menu-distro-swap on|off]
   compy distro list
   compy distro add <name> <path>
   compy distro set-path <name> <path>
@@ -117,6 +121,8 @@ func run(args []string) error {
 		return withApp(func(a *app.App) error { return a.SetVar(rest[0], rest[1], key, value) })
 	case "sets":
 		return cmdSets(rest)
+	case "settings":
+		return cmdSettings(rest)
 	case "distro":
 		return cmdDistro(rest)
 	case "service":
@@ -251,6 +257,22 @@ func cmdConfig(args []string) error {
 			return errors.New("config copy: need <src> <dst>")
 		}
 		return withApp(func(a *app.App) error { return a.CopyConfig(rest[0], rest[1]) })
+	case "set-distro", "set-url":
+		if len(rest) != 2 {
+			return fmt.Errorf("config %s: need <config> <value|-->", sub)
+		}
+		name, value := rest[0], rest[1]
+		p := &value
+		if value == "--" {
+			cleared := ""
+			p = &cleared
+		}
+		return withApp(func(a *app.App) error {
+			if sub == "set-distro" {
+				return a.UpdateConfigMeta(name, p, nil)
+			}
+			return a.UpdateConfigMeta(name, nil, p)
+		})
 	case "show", "edit", "delete", "sync", "resync":
 		if len(rest) != 1 {
 			return fmt.Errorf("config %s: need exactly one name", sub)
@@ -381,6 +403,64 @@ func cmdSets(args []string) error {
 			return fmt.Errorf("sets: unknown subcommand %q", sub)
 		}
 	})
+}
+
+// cmdSettings prints compy's global settings (no args), or partially updates
+// them via `settings set` (only the flags given are changed).
+func cmdSettings(args []string) error {
+	if len(args) == 0 {
+		return withApp(func(a *app.App) error {
+			s, err := a.GetSettings()
+			if err != nil {
+				return err
+			}
+			swap := "off"
+			if s.MenuDistroSwap {
+				swap = "on"
+			}
+			fmt.Printf("grpc-port:        %d\nhttp-port:        %d\nmenu-distro-swap: %s\n",
+				s.GRPCPort, s.HTTPPort, swap)
+			return nil
+		})
+	}
+	if args[0] != "set" {
+		return fmt.Errorf("settings: unknown subcommand %q", args[0])
+	}
+	fs := flag.NewFlagSet("settings set", flag.ContinueOnError)
+	var grpcPort, httpPort int
+	var menuSwap string
+	fs.IntVar(&grpcPort, "grpc-port", 0, "gRPC port")
+	fs.IntVar(&httpPort, "http-port", 0, "HTTP port")
+	fs.StringVar(&menuSwap, "menu-distro-swap", "", "on|off")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	var grpcP, httpP *int
+	var swapP *bool
+	var setErr error
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "grpc-port":
+			grpcP = &grpcPort
+		case "http-port":
+			httpP = &httpPort
+		case "menu-distro-swap":
+			switch menuSwap {
+			case "on":
+				v := true
+				swapP = &v
+			case "off":
+				v := false
+				swapP = &v
+			default:
+				setErr = fmt.Errorf("settings set: --menu-distro-swap must be on|off, got %q", menuSwap)
+			}
+		}
+	})
+	if setErr != nil {
+		return setErr
+	}
+	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, swapP) })
 }
 
 func cmdDistro(args []string) error {
