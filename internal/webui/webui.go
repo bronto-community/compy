@@ -7,11 +7,13 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -24,7 +26,7 @@ var staticFiles embed.FS
 // frozen P1 stopgap shapes the embedded static page already calls.
 type API struct {
 	Status   func() (map[string]any, error)            // service state, distro, ports, active config
-	Log      func() (string, error)                    // tail of collector log
+	Log      func(lines int) (string, error)           // tail of collector log
 	Env      func() (map[string]string, string, error) // OTEL_* vars, shell script
 	SetOSEnv func(on bool) error
 
@@ -52,11 +54,32 @@ type API struct {
 	PutSet    func(name, set string, values map[string]string) error // create/replace whole set
 	DeleteSet func(name, set string) error
 	UseSet    func(name, set string) error
+	RenameSet func(name, from, to string) error
 
-	Distros     func() (any, error)
-	AddDistro   func(name, path string) (string, error) // returns the override warning, "" if none
-	UseDistro   func(name string) error
-	FetchDistro func(name string) error
+	Distros       func() (any, error)
+	AddDistro     func(name, path string) (string, error) // returns the override warning, "" if none
+	SetDistroPath func(name, path string) (string, error) // returns the override warning, "" if none
+	RemoveDistro  func(name string) (bool, error)         // returns whether removing it reverted to a shipped definition
+	UseDistro     func(name string) error
+	FetchDistro   func(name string) error
+}
+
+// badRequestErr marks a closure error as the client's fault (400) rather
+// than a server failure (500 — the default for every other closure error).
+// BadRequest and IsBadRequest are its only public surface: webui has no
+// internal dependencies, so a caller like internal/app (which does import
+// webui) flags specific errors this way instead of webui importing app's
+// own error types back.
+type badRequestErr struct{ error }
+
+// BadRequest marks err to be reported as 400 Bad Request instead of the
+// default 500, keeping err's message untouched.
+func BadRequest(err error) error { return badRequestErr{err} }
+
+// IsBadRequest reports whether err was marked with BadRequest.
+func IsBadRequest(err error) bool {
+	_, ok := err.(badRequestErr)
+	return ok
 }
 
 // route is one API endpoint: the drift test (TestOpenAPIDriftAgainstRoutes)
@@ -100,9 +123,12 @@ func routes() []route {
 		{"PUT", "/api/configs/{name}/sets/{set}", handlePutSet},
 		{"DELETE", "/api/configs/{name}/sets/{set}", handleDeleteSet},
 		{"POST", "/api/configs/{name}/sets/{set}/use", handleUseSet},
+		{"POST", "/api/configs/{name}/sets/{set}/rename", handleRenameSet},
 
 		{"GET", "/api/distros", handleDistros},
 		{"POST", "/api/distros", handleAddDistro},
+		{"PUT", "/api/distros/{name}", handleSetDistroPath},
+		{"DELETE", "/api/distros/{name}", handleRemoveDistro},
 		{"POST", "/api/distros/{name}/use", handleUseDistro},
 		{"POST", "/api/distros/{name}/fetch", handleFetchDistro},
 	}
@@ -257,9 +283,27 @@ func handleValidateConfig(api API) http.HandlerFunc {
 	}
 }
 
+// defaultLogLines and maxLogLines bound GET /api/log's "lines" query param:
+// no param keeps the stopgap page's existing 50-line behavior, and any
+// value above the cap is silently clamped (not an error — only an
+// unparseable or non-positive value is).
+const (
+	defaultLogLines = 50
+	maxLogLines     = 2000
+)
+
 func handleLog(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tail, err := api.Log()
+		n := defaultLogLines
+		if q := r.URL.Query().Get("lines"); q != "" {
+			v, err := strconv.Atoi(q)
+			if err != nil || v <= 0 {
+				writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid lines %q", q))
+				return
+			}
+			n = min(v, maxLogLines)
+		}
+		tail, err := api.Log(n)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
@@ -565,6 +609,30 @@ func handleUseSet(api API) http.HandlerFunc {
 	}
 }
 
+// handleRenameSet's body is {"to"}; renaming the active set follows it (the
+// closure's job, not this handler's).
+func handleRenameSet(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		set := r.PathValue("set")
+		if set == "" {
+			writeErr(w, http.StatusBadRequest, errors.New("set name required"))
+			return
+		}
+		var body struct {
+			To string `json:"to"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeBodyErr(w, err)
+			return
+		}
+		if err := api.RenameSet(r.PathValue("name"), set, body.To); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
 func handleDistros(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		distros, err := api.Distros()
@@ -592,6 +660,42 @@ func handleAddDistro(api API) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"warning": warning})
+	}
+}
+
+func handleSetDistroPath(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Path string `json:"path"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeBodyErr(w, err)
+			return
+		}
+		warning, err := api.SetDistroPath(r.PathValue("name"), body.Path)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"warning": warning})
+	}
+}
+
+// handleRemoveDistro reports a webui.BadRequest-marked closure error as 400
+// (the selected distro, or a pure definition name with no user entry);
+// every other error is the usual 500.
+func handleRemoveDistro(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		reverted, err := api.RemoveDistro(r.PathValue("name"))
+		if err != nil {
+			status := http.StatusInternalServerError
+			if IsBadRequest(err) {
+				status = http.StatusBadRequest
+			}
+			writeErr(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"reverted": reverted})
 	}
 }
 

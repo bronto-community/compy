@@ -433,6 +433,15 @@ func (a *App) UseSet(name, set string) error {
 // DeleteSet removes a variable set (never the active one).
 func (a *App) DeleteSet(name, set string) error { return cfgstore.DeleteSet(a.Dir, name, set) }
 
+// RenameSet renames a variable set (the active set follows the rename
+// automatically, in cfgstore).
+func (a *App) RenameSet(name, from, to string) error {
+	return cfgstore.RenameSet(a.Dir, name, from, to)
+}
+
+// Log returns the last n lines of the collector log.
+func (a *App) Log(n int) (string, error) { return collector.TailLog(a.LogPath(), n) }
+
 // httpFetch is distro.Fetch over plain HTTP(S); the caller closes the body.
 func httpFetch(url string) (io.ReadCloser, error) {
 	resp, err := http.Get(url)
@@ -528,21 +537,45 @@ func distroOverrideWarning(name string) string {
 // a stderr line.
 func (a *App) AddDistroWarning(name string) string { return distroOverrideWarning(name) }
 
+// validateDistroBinary resolves path to an absolute path and checks it
+// exists and is executable.
+func validateDistroBinary(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	fi, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if fi.IsDir() || fi.Mode()&0o111 == 0 {
+		return "", fmt.Errorf("%s is not an executable file", abs)
+	}
+	return abs, nil
+}
+
+// selectDistroIfNone makes name the global default distro if none is set
+// yet (first registration).
+func selectDistroIfNone(name string) error {
+	s, err := state.LoadSettings()
+	if err != nil {
+		return err
+	}
+	if s.Distro != "" {
+		return nil
+	}
+	s.Distro = name
+	return state.SaveSettings(s)
+}
+
 // AddDistro registers a collector binary, selecting it if it is the first.
 func (a *App) AddDistro(name, path string) error {
 	if !state.ValidBackendName(name) {
 		return fmt.Errorf("invalid distro name %q", name)
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := validateDistroBinary(path)
 	if err != nil {
 		return err
-	}
-	fi, err := os.Stat(abs)
-	if err != nil {
-		return err
-	}
-	if fi.IsDir() || fi.Mode()&0o111 == 0 {
-		return fmt.Errorf("%s is not an executable file", abs)
 	}
 	distros, err := state.LoadDistros()
 	if err != nil {
@@ -557,15 +590,65 @@ func (a *App) AddDistro(name, path string) error {
 	if err := state.SaveDistros(append(distros, state.Distro{Name: name, Path: abs})); err != nil {
 		return err
 	}
+	return selectDistroIfNone(name)
+}
+
+// SetDistroPath registers or updates a user distro registry entry's binary
+// path (must exist and be executable), selecting it as the default if none
+// is set yet. Overriding a shipped definition's name returns the same
+// warning AddDistro's stderr line carries, as a response field instead.
+func (a *App) SetDistroPath(name, path string) (string, error) {
+	if !state.ValidBackendName(name) {
+		return "", fmt.Errorf("invalid distro name %q", name)
+	}
+	abs, err := validateDistroBinary(path)
+	if err != nil {
+		return "", err
+	}
+	distros, err := state.LoadDistros()
+	if err != nil {
+		return "", err
+	}
+	warning := distroOverrideWarning(name)
+	if i := slices.IndexFunc(distros, func(d state.Distro) bool { return d.Name == name }); i >= 0 {
+		distros[i].Path = abs
+		return warning, state.SaveDistros(distros)
+	}
+	if err := state.SaveDistros(append(distros, state.Distro{Name: name, Path: abs})); err != nil {
+		return "", err
+	}
+	return warning, selectDistroIfNone(name)
+}
+
+// RemoveDistro removes a user registry entry. Removing a definition-name
+// override "reverts" to the shipped definition (still selectable, and
+// downloads on next use); removing an entry with no shipped definition
+// drops it from the registry entirely — the response's "reverted" field
+// says which happened. It returns a webui.BadRequest-marked error (400) for
+// a pure definition name with no user entry (nothing to remove) or for the
+// selected distro (pick another default first).
+func (a *App) RemoveDistro(name string) (bool, error) {
 	s, err := state.LoadSettings()
 	if err != nil {
-		return err
+		return false, err
 	}
-	if s.Distro == "" {
-		s.Distro = name
-		return state.SaveSettings(s)
+	if s.Distro == name {
+		return false, webui.BadRequest(fmt.Errorf("distro %q is the selected default; select another distro first", name))
 	}
-	return nil
+	distros, err := state.LoadDistros()
+	if err != nil {
+		return false, err
+	}
+	i := slices.IndexFunc(distros, func(d state.Distro) bool { return d.Name == name })
+	if i < 0 {
+		return false, webui.BadRequest(fmt.Errorf("no user distro entry named %q", name))
+	}
+	distros = slices.Delete(distros, i, i+1)
+	if err := state.SaveDistros(distros); err != nil {
+		return false, err
+	}
+	reverted := slices.ContainsFunc(distro.Defs(), func(d distro.Def) bool { return d.Name == name })
+	return reverted, nil
 }
 
 // UseDistro selects the global default distro, re-applying if a
@@ -700,7 +783,7 @@ func (a *App) statusMap() (map[string]any, error) {
 func (a *App) WebUIAPI() webui.API {
 	return webui.API{
 		Status:   a.statusMap,
-		Log:      func() (string, error) { return collector.TailLog(a.LogPath(), 50) },
+		Log:      a.Log,
 		Env:      a.EnvInfo,
 		SetOSEnv: a.SetOSEnv,
 
@@ -728,6 +811,7 @@ func (a *App) WebUIAPI() webui.API {
 		PutSet:    a.ReplaceSet,
 		DeleteSet: a.DeleteSet,
 		UseSet:    a.UseSet,
+		RenameSet: a.RenameSet,
 
 		Distros: func() (any, error) { return a.Distros() },
 		AddDistro: func(name, path string) (string, error) {
@@ -737,7 +821,9 @@ func (a *App) WebUIAPI() webui.API {
 			}
 			return warning, nil
 		},
-		UseDistro:   a.UseDistro,
-		FetchDistro: a.FetchDistro,
+		SetDistroPath: a.SetDistroPath,
+		RemoveDistro:  a.RemoveDistro,
+		UseDistro:     a.UseDistro,
+		FetchDistro:   a.FetchDistro,
 	}
 }
