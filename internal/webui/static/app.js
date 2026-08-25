@@ -280,18 +280,37 @@ async function renderConfigsView() {
   }));
 }
 
+// pendingActivate is the configuration whose activation is in flight, or
+// null. It lives here rather than on the clicked button because the 5s
+// background refresh re-renders the whole table: a `disabled` flag set on
+// the DOM node is gone within five seconds, so an activation that takes a
+// while (validate + launchctl + a probe that waits up to 5s for the
+// collector to listen) looked like a dot that simply does nothing.
+let pendingActivate = null;
+
 // activateConfig posts to the same endpoint the old "use" action called.
 async function activateConfig(name) {
+  if (pendingActivate) return; // one at a time; a second click must not re-fire
+  pendingActivate = name;
+  await renderConfigsView(); // show the pending marker before we start waiting
   try {
     await api("/api/configs/" + encodeURIComponent(name) + "/activate", { method: "POST" });
   } catch (err) {
     showError(err);
+  } finally {
+    pendingActivate = null;
   }
   await renderConfigsView();
   await refreshNavStatus();
 }
 
 function buildActivationCell(c, isActive) {
+  if (c.name === pendingActivate) {
+    return el("span", {
+      class: "activate-dot pending", text: "◌",
+      attrs: { "aria-label": "Activating " + c.name, title: "Activating…" },
+    });
+  }
   if (isActive) {
     return el("span", {
       class: "activate-dot on", text: "●",
@@ -301,12 +320,7 @@ function buildActivationCell(c, isActive) {
   return el("button", {
     class: "activate-dot", text: "○",
     attrs: { "aria-label": "Activate " + c.name, title: "Activate" },
-    on: {
-      click: async (e) => {
-        e.target.disabled = true;
-        await activateConfig(c.name);
-      },
-    },
+    on: { click: () => activateConfig(c.name) },
   });
 }
 

@@ -299,9 +299,20 @@ span.act, .act[disabled] { color: var(--muted); }
   color: var(--muted);
   cursor: default;
 }
-button.activate-dot { cursor: pointer; }
+/* The button is the whole first column of its row, not just the glyph: a
+   14px-tall target in a 42px row left most of the row a dead click. */
+button.activate-dot {
+  cursor: pointer;
+  align-self: stretch;
+  width: 100%;
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 button.activate-dot:hover { color: var(--ink); }
 .activate-dot.on { color: var(--accent); }
+.activate-dot.pending { color: var(--accent); }
 .distros-table .dtable-head, .distros-table .dtable-row {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 0.9fr) minmax(0, 1.6fr);
 }
