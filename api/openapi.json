@@ -13,7 +13,11 @@
       "Error": {
         "type": "object",
         "properties": {
-          "error": { "type": "string" }
+          "error": { "type": "string" },
+          "still_running": {
+            "type": "string",
+            "description": "Present when an activation failed and the previous configuration was put back, e.g. \"otlp-to-bronto · staging\"."
+          }
         },
         "required": ["error"]
       },
@@ -254,6 +258,40 @@
           },
           "500": {
             "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/service/stop": {
+      "post": {
+        "summary": "Stop the collector (the active configuration stays named)",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/service/start": {
+      "post": {
+        "summary": "Run the active configuration again",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request \u2014 no active configuration, or one the collector rejects",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error \u2014 the collector did not come up; \"still_running\" names what was put back",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           }
         }

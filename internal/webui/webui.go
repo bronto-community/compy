@@ -34,6 +34,8 @@ type API struct {
 	PutSettings func(grpcPort, httpPort *int) error // partial: nil = unchanged
 
 	Apply    func() error
+	Stop     func() error // stop the collector; the active configuration stays named
+	Start    func() error // run the active configuration again
 	Validate func() error
 
 	Configs        func() (any, error) // configurations, JSON-marshalable
@@ -70,6 +72,12 @@ type API struct {
 // keeps this package free of internal dependencies in both directions.
 type badRequester interface{ BadRequest() bool }
 
+// stillRunner is how a closure error says what kept running when it failed:
+// the error body gains a "still_running" field naming it. state.StillRunning
+// marks them; webui matches the behaviour rather than the type, as with
+// badRequester.
+type stillRunner interface{ StillRunning() string }
+
 // isBadRequest reports whether err, or anything it wraps, is marked. It
 // unwraps rather than type-asserting: callers routinely add context with
 // fmt.Errorf("...: %w", err), and a marker that a single %w silently drops
@@ -101,6 +109,8 @@ func routes() []route {
 		{"PUT", "/api/settings", handlePutSettings},
 
 		{"POST", "/api/service/apply", handleApply},
+		{"POST", "/api/service/stop", handleStop},
+		{"POST", "/api/service/start", handleStart},
 		{"POST", "/api/service/validate", handleValidate},
 
 		{"GET", "/api/configs", handleConfigs},
@@ -210,8 +220,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// writeErr renders an error body. A state.StillRunning-marked error (an
+// activation that failed and left the previous configuration running) also
+// carries "still_running", so the failure panel can name what survived
+// without parsing the message.
 func writeErr(w http.ResponseWriter, status int, err error) {
-	writeJSON(w, status, map[string]string{"error": err.Error()})
+	body := map[string]string{"error": err.Error()}
+	var sr stillRunner
+	if errors.As(err, &sr) && sr.StillRunning() != "" {
+		body["still_running"] = sr.StillRunning()
+	}
+	writeJSON(w, status, body)
 }
 
 // writeClosureErr reports an error returned by an App closure: a
@@ -389,6 +408,26 @@ func handlePutSettings(api API) http.HandlerFunc {
 func handleApply(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.Apply(); err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleStop(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Stop(); err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleStart(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Start(); err != nil {
 			writeClosureErr(w, err)
 			return
 		}

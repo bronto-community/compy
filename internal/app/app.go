@@ -121,11 +121,57 @@ func activationEnv(values map[string]string, s state.Settings) map[string]string
 	return env
 }
 
-// Activate makes name the running configuration: it resolves the distro
-// (downloading a shipped definition on first use), validates, installs and
-// restarts the LaunchAgent with the preset's variables in its environment,
-// waits for the collector to answer, and snapshots the result as last-good.
-// An empty preset keeps the configuration's current active_preset.
+// launch (re)installs the collector LaunchAgent for configuration name with
+// preset's variables in its environment, and kickstarts it. It is the part
+// of Activate that actually changes what runs, and the part restorePrevious
+// replays.
+func (a *App) launch(name, preset string) error {
+	info, _, err := cfgstore.Get(a.Dir, name)
+	if err != nil {
+		return err
+	}
+	bin, err := a.EnsureDistro("")
+	if err != nil {
+		return err
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		return err
+	}
+	env := activationEnv(info.Meta.Presets[preset], s)
+	if err := launchd.Install(bin, []string{"--config", a.ConfigPath(name)}, a.LogPath(), env); err != nil {
+		return err
+	}
+	return launchd.Kickstart()
+}
+
+// restorePrevious puts back the configuration the last-good snapshot was
+// taken from — its YAML, its preset, and the settings that named it — and
+// starts it again. It deliberately does not re-probe: that configuration was
+// up seconds ago, and a second probe timeout on the failure path only delays
+// the diagnostic the user is waiting for.
+func (a *App) restorePrevious() error {
+	if err := cfgstore.RestoreActive(a.Dir); err != nil {
+		return err
+	}
+	name, preset, err := a.ActiveConfig()
+	if err != nil {
+		return err
+	}
+	return a.launch(name, preset)
+}
+
+// Activate makes name the running configuration: it resolves the collector
+// binary (downloading a shipped definition on first use), validates,
+// installs and restarts the LaunchAgent with the preset's variables in its
+// environment, and waits for the collector to answer. An empty preset keeps
+// the configuration's current active_preset.
+//
+// A configuration the collector rejects changes nothing. A configuration it
+// accepts but cannot start puts the previous configuration and preset back
+// and says so, per the design's guarantee that "on failure the previously
+// active configuration keeps running": the snapshot is taken before anything
+// moves, and restored if the collector never comes up.
 func (a *App) Activate(name, preset string) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
@@ -157,6 +203,16 @@ func (a *App) Activate(name, preset string) error {
 		return state.BadRequest(err)
 	}
 
+	// Past this line the running setup changes, so snapshot the one that is
+	// running now — it is the thing a failed start has to come back to.
+	prevName, prevPreset, prevErr := a.ActiveConfig()
+	restorable := prevErr == nil && prevName != ""
+	if restorable {
+		if err := cfgstore.SnapshotActive(a.Dir, prevName); err != nil {
+			return err
+		}
+	}
+
 	if preset != "" && preset != info.Meta.ActivePreset {
 		if err := cfgstore.UsePreset(a.Dir, name, preset); err != nil {
 			return err
@@ -166,24 +222,43 @@ func (a *App) Activate(name, preset string) error {
 	if err := state.SaveSettings(s); err != nil {
 		return err
 	}
-	if err := launchd.Install(bin, args, a.LogPath(), env); err != nil {
-		return err
-	}
-	if err := launchd.Kickstart(); err != nil {
+	if err := a.launch(name, preset); err != nil {
 		return err
 	}
 	if err := collector.Probe(s.GRPCPort, probeTimeout); err != nil {
-		// v2 configurations own their receivers and may bind nowhere near
+		// Configurations own their receivers and may bind nowhere near
 		// compy's ports, so a failed probe only means "not listening
 		// there" — launchd is the authority on whether the job is up.
 		if running, rerr := launchd.Running(); rerr != nil || !running {
 			tail, _ := collector.TailLog(a.LogPath(), 20)
-			return fmt.Errorf("collector did not come up: %w\n%s", err, tail)
+			failure := fmt.Errorf("collector did not come up: %w\n%s", err, tail)
+			if !restorable {
+				return failure
+			}
+			if rerr := a.restorePrevious(); rerr != nil {
+				return fmt.Errorf("%w\nand putting %q back failed too: %v", failure, prevName, rerr)
+			}
+			still := prevName
+			if prevPreset != "" {
+				still += " · " + prevPreset
+			}
+			return state.StillRunning(failure, still)
 		}
 	}
-	// Snapshot only now, with the configuration proven to actually start.
-	return cfgstore.SnapshotActive(a.Dir, name)
+	return nil
 }
+
+// Stop stops the collector. Nothing is recorded: a stopped collector is
+// simply one whose launchd job is absent, and the active configuration stays
+// named so the window can show it dimmed rather than forget it.
+func (a *App) Stop() error {
+	launchd.Bootout()
+	return nil
+}
+
+// Start runs the active configuration again — the same operation as Apply,
+// under the word the UI and CLI use for it.
+func (a *App) Start() error { return a.Apply() }
 
 // Apply re-activates the current configuration and preset.
 func (a *App) Apply() error {
@@ -814,6 +889,8 @@ func (a *App) WebUIAPI() webui.API {
 		PutSettings: a.PutSettings,
 
 		Apply:    a.Apply,
+		Stop:     a.Stop,
+		Start:    a.Start,
 		Validate: a.Validate,
 
 		Configs:        func() (any, error) { return a.Configs() },
