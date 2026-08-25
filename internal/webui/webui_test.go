@@ -797,12 +797,17 @@ func errWithMessage(msg string) error { return simpleErr(msg) }
 
 // TestServesVendoredCodeMirror confirms the go:embed directive on "static"
 // picks up the static/vendor subdirectory too, and Handler serves its
-// contents as plain static files (embed wiring for Task 2's vendored JS).
-// Also covers the vendored OFL fonts (direction-B restyle) under the same
-// go:embed directive.
+// contents as plain static files (embed wiring for the editor's JS).
+// Also covers the vendored Lucide icon map and the OFL fonts of the v3
+// handoff type ramp, under the same go:embed directive.
 func TestServesVendoredCodeMirror(t *testing.T) {
 	api := fakeAPI()
-	for _, path := range []string{"/vendor/codemirror.min.js", "/vendor/fonts/space-grotesk-latin-600.woff2"} {
+	for _, path := range []string{
+		"/vendor/codemirror.min.js",
+		"/vendor/lucide-icons.js",
+		"/vendor/fonts/jetbrains-mono-latin-400.woff2",
+		"/vendor/fonts/ibm-plex-sans-latin-400.woff2",
+	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Host = "localhost"
 		rec := httptest.NewRecorder()
