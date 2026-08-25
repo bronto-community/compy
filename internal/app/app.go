@@ -508,6 +508,48 @@ func (a *App) Resync(name string) error {
 	return a.reactivateIf(name)
 }
 
+// Reset restores a modified built-in configuration to its shipped version,
+// re-activating it if it is the running one (the builtin twin of Resync).
+func (a *App) Reset(name string) error {
+	if err := cfgstore.Reset(a.Dir, name); err != nil {
+		return err
+	}
+	return a.reactivateIf(name)
+}
+
+// RenameConfig moves a configuration to a new name. The active configuration
+// follows the rename in settings (Recent included); if it is also running,
+// the LaunchAgent is re-applied so its plist tracks the new config path. A
+// stopped collector is left stopped — its plist is already gone, and
+// re-applying would kickstart it.
+func (a *App) RenameConfig(from, to string) error {
+	if err := cfgstore.Rename(a.Dir, from, to); err != nil {
+		return err
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		return err
+	}
+	active := s.ActiveConfig == from
+	if active {
+		s.ActiveConfig = to
+	}
+	for i, n := range s.Recent {
+		if n == from {
+			s.Recent[i] = to
+		}
+	}
+	if err := state.SaveSettings(s); err != nil {
+		return err
+	}
+	if active {
+		if running, _ := launchd.Running(); running {
+			return a.Activate(to, "")
+		}
+	}
+	return nil
+}
+
 // SyncAll syncs every unmodified remote configuration, reporting the names
 // it synced.
 func (a *App) SyncAll() ([]string, error) {
@@ -1039,6 +1081,8 @@ func (a *App) WebUIAPI() webui.API {
 		ValidateConfig: a.ValidateConfig,
 		Sync:           a.Sync,
 		Resync:         a.Resync,
+		Reset:          a.Reset,
+		RenameConfig:   a.RenameConfig,
 		SyncAll:        a.SyncAll,
 
 		PutPreset:    a.ReplacePreset,

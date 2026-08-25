@@ -355,6 +355,128 @@ func TestWriteYAMLReactivatesWhenActive(t *testing.T) {
 	}
 }
 
+func TestResetReactivatesWhenActive(t *testing.T) {
+	calls := setup(t, "")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, shipped, err := cfgstore.Get(a.Dir, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A modified builtin that is NOT active resets without touching launchd.
+	if err := a.WriteConfigYAML("otlp", "receivers: {}\n# edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	*calls = nil
+	if err := a.Reset("otlp"); err != nil {
+		t.Fatalf("Reset inactive builtin: %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("resetting an inactive config re-applied: %v", *calls)
+	}
+
+	// The active one resets AND re-activates, like Resync does.
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.WriteConfigYAML("debug", "receivers: {}\n# edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	*calls = nil
+	if err := a.Reset("debug"); err != nil {
+		t.Fatalf("Reset active builtin: %v", err)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("resetting the active config did not re-activate: %v", *calls)
+	}
+	info, yaml, err := cfgstore.Get(a.Dir, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if yaml != shipped || info.Modified {
+		t.Errorf("after Reset: modified=%v yaml=%q, want the shipped default back", info.Modified, yaml)
+	}
+}
+
+func TestRenameConfigUpdatesSettingsAndRecent(t *testing.T) {
+	calls := setup(t, "") // launchd reports not running: no re-apply expected
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("mine", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	if err := a.RenameConfig("mine", "renamed"); err != nil {
+		t.Fatalf("RenameConfig: %v", err)
+	}
+	// Running() itself calls `launchctl print`; what must NOT happen is a
+	// re-apply (bootstrap/kickstart) while the collector is stopped.
+	if called(*calls, "bootstrap") || called(*calls, "kickstart") {
+		t.Errorf("renaming while the collector is stopped re-applied: %v", *calls)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ActiveConfig != "renamed" {
+		t.Errorf("ActiveConfig = %q, want renamed", s.ActiveConfig)
+	}
+	if slices.Contains(s.Recent, "mine") || !slices.Contains(s.Recent, "renamed") {
+		t.Errorf("Recent = %v, want the rename followed", s.Recent)
+	}
+	if _, _, err := cfgstore.Get(a.Dir, "renamed"); err != nil {
+		t.Errorf("renamed config missing: %v", err)
+	}
+	if _, _, err := cfgstore.Get(a.Dir, "mine"); err == nil {
+		t.Error("old name still resolves after rename")
+	}
+}
+
+func TestRenameRunningConfigReapplies(t *testing.T) {
+	calls := setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("mine", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	if err := a.RenameConfig("mine", "renamed"); err != nil {
+		t.Fatalf("RenameConfig: %v", err)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("renaming the running config did not re-apply: %v", *calls)
+	}
+	plist := readPlist(t)
+	want := filepath.Join(a.Dir, "configs", "renamed", "config.yaml")
+	if !strings.Contains(plist, "<string>"+want+"</string>") {
+		t.Errorf("plist still points at the old path:\n%s", plist)
+	}
+}
+
 func TestReplacePresetReactivatesWhenActivePreset(t *testing.T) {
 	calls := setup(t, "")
 	fakeDistro(t, "exit 0")
@@ -1265,6 +1387,11 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 		{"ValidateConfig unknown config", func() error { return a.ValidateConfig(nosuch) }},
 		{"Sync non-remote", func() error { return a.Sync("mine") }},
 		{"Resync non-remote", func() error { return a.Resync("mine") }},
+		{"Reset non-builtin", func() error { return a.Reset("mine") }},
+		{"Reset unmodified builtin", func() error { return a.Reset("debug") }},
+		{"RenameConfig unknown", func() error { return a.RenameConfig(nosuch, "fresh") }},
+		{"RenameConfig existing target", func() error { return a.RenameConfig("mine", "other") }},
+		{"RenameConfig invalid target", func() error { return a.RenameConfig("mine", "Bad Name") }},
 		{"ReplaceSet unknown config", func() error { return a.ReplacePreset(nosuch, "dev", nil) }},
 		{"ReplaceSet invalid set name", func() error { return a.ReplacePreset("mine", "Bad Preset", nil) }},
 		{"UseSet unknown set", func() error { return a.UsePreset("other", nosuch) }},

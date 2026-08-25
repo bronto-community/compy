@@ -51,6 +51,8 @@ type API struct {
 	ValidateConfig func(name string) error         // validate this config (any config, not just the active one) against its own distro
 	Sync           func(name string) error
 	Resync         func(name string) error
+	Reset          func(name string) error // restore a modified built-in config to its shipped version
+	RenameConfig   func(from, to string) error
 	SyncAll        func() ([]string, error)
 
 	PutPreset    func(name, preset string, values map[string]string) error // create/replace a whole preset
@@ -129,6 +131,8 @@ func routes() []route {
 		{"POST", "/api/configs/{name}/validate", handleValidateConfig},
 		{"POST", "/api/configs/{name}/sync", handleSync},
 		{"POST", "/api/configs/{name}/resync", handleResync},
+		{"POST", "/api/configs/{name}/reset", handleReset},
+		{"POST", "/api/configs/{name}/rename", handleRenameConfig},
 		{"POST", "/api/configs/sync-all", handleSyncAll},
 		{"PUT", "/api/configs/{name}/presets/{preset}", handlePutPreset},
 		{"DELETE", "/api/configs/{name}/presets/{preset}", handleDeletePreset},
@@ -586,6 +590,38 @@ func handleSync(api API) http.HandlerFunc {
 func handleResync(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.Resync(r.PathValue("name")); err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// handleReset restores a modified built-in configuration to its shipped
+// version (the builtin twin of resync).
+func handleReset(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Reset(r.PathValue("name")); err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// handleRenameConfig's body is {"to"}; the active configuration follows the
+// rename, and a running one is re-applied (the closure's job, not this
+// handler's).
+func handleRenameConfig(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			To string `json:"to"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeBodyErr(w, err)
+			return
+		}
+		if err := api.RenameConfig(r.PathValue("name"), body.To); err != nil {
 			writeClosureErr(w, err)
 			return
 		}

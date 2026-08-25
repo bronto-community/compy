@@ -820,10 +820,9 @@ async function runConfirm() {
       await loadCore();
       note(name + " re-synced from " + hostOf(byName(name) || { meta: {} }));
     } else if (kind === "reset") {
-      // BACKEND GAP: nothing restores a modified built-in to its shipped
-      // content. MaterializeDefaults only rewrites unmodified configs and
-      // runs at startup, and the embedded YAML is not exposed by any route.
-      throw new Error("resetting a built-in to its shipped version needs a route compy does not have yet (POST /api/configs/{name}/reset)");
+      await api(cfgURL(name) + "/reset", { method: "POST" });
+      await loadCore();
+      note(name + " reset to the version that ships with compy");
     }
   } catch (e) { showError(e); }
   render();
@@ -1135,11 +1134,12 @@ async function renameConfig(info, raw) {
   const next = slug(raw);
   if (!next || next === info.name) { render(); return; }
   if (byName(next)) { S.renameNote = next + " already exists. name not changed."; render(); return; }
-  // BACKEND GAP: no rename route. Copy+delete would lose provenance (a copy
-  // is always user-owned) and cannot touch the active config, so it is not
-  // a rename — it is a different config wearing the name.
   S.renameNote = null;
-  showError(new Error("renaming a configuration needs a route compy does not have yet (POST /api/configs/{name}/rename)"));
+  try {
+    await apiJSON(cfgURL(info.name) + "/rename", "POST", { to: next });
+    await loadCore();
+    go("#/configs/" + enc(next)); // enterRoute reloads the editor under the new name
+  } catch (e) { showError(e); }
   render();
 }
 async function setRemoteURL(info, url) {
