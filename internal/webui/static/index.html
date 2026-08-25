@@ -71,11 +71,17 @@ function renderStatus(s) {
   active = s.config || "";
   $("status").innerHTML = "";
   const line = document.createElement("div");
-  line.innerHTML =
-    `<span class="dot ${s.running ? "on" : ""}"></span>` +
-    `<strong>${s.running ? "running" : "stopped"}</strong>` +
-    ` — ${s.config ? `config <span class="active">${s.config}</span>` : "no configuration active"}` +
-    `${s.set ? ` (set ${s.set})` : ""}`;
+  const dot = document.createElement("span");
+  dot.className = s.running ? "dot on" : "dot";
+  const state = document.createElement("strong");
+  state.textContent = s.running ? "running" : "stopped";
+  const which = document.createElement("span");
+  // textContent, not innerHTML: variable-set names are not charset-checked.
+  which.textContent = s.config
+    ? ` — config ${s.config}${s.set ? ` (set ${s.set})` : ""}`
+    : " — no configuration active";
+  which.className = s.config ? "active" : "meta";
+  line.append(dot, state, which);
   const ports = document.createElement("div");
   ports.className = "meta";
   ports.textContent = `distro ${s.distro || "(none)"} · OTLP ${s.endpoint} · grpc ${s.grpc_port}`;
@@ -89,9 +95,14 @@ function renderConfigs(list) {
     row.className = "row";
     const info = document.createElement("div");
     info.className = "grow";
-    info.innerHTML = `<div class="name ${c.name === active ? "active" : ""}">${c.name}</div>` +
-      `<div class="meta">${c.provenance}${c.modified ? " · locally modified" : ""}` +
-      `${c.meta?.active_set ? " · set " + c.meta.active_set : ""}</div>`;
+    const title = document.createElement("div");
+    title.className = c.name === active ? "name active" : "name";
+    title.textContent = c.name;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = c.provenance + (c.modified ? " · locally modified" : "") +
+      (c.meta?.active_set ? " · set " + c.meta.active_set : "");
+    info.append(title, meta);
     const btn = document.createElement("button");
     btn.textContent = c.name === active ? "active" : "Use";
     btn.disabled = c.name === active;
