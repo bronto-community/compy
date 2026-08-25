@@ -272,3 +272,4 @@ Webui stopgap (P3 rebuilds it): replace API struct with `Status`, `Configs`, `Ac
 - T5 sequential (opus), then T6.
 - OTELCOL_BIN for validation/e2e: /private/tmp/claude-501/-Users-severin-Projects-local-collector/05e1307f-c061-4fa0-aa7f-31358b0cef49/scratchpad/otelcol
 - The machine's live tray/collector must keep working: after T5+T6 merge, rebuild ./compy, `launchctl kickstart` the tray agent, and re-activate a config live.
+- Residual (final re-review): a configs/<name>/ dir lacking config.yaml (e.g. disk-full mid-create from causes other than the fixed CreateFromURL path) is skipped by List AND refused by Delete — no CLI cleanup path; manual rm needed. Candidate P2 fix: let Delete remove such dirs.
