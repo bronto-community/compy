@@ -657,3 +657,28 @@ func TestMigrationIgnoresStaleLegacyRecreation(t *testing.T) {
 		t.Errorf("stale leftovers not archived to unique dir: %q %v", data, err)
 	}
 }
+
+// Variant of the stale-recreation guard: ActiveConfig may be "" after a
+// nothing-was-enabled migration; the existing migrated config is the second
+// staleness signal.
+func TestMigrationStaleGuardFiresWithoutActiveConfig(t *testing.T) {
+	calls := setup(t, "state = running")
+	dir := os.Getenv("COMPY_HOME")
+
+	if err := cfgstore.Create(dir, "migrated", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "config", "backends"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.New(); err != nil {
+		t.Fatalf("New() = %v, want nil", err)
+	}
+	for _, c := range *calls {
+		t.Errorf("launchctl must not be called, got %v", c)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config")); !os.IsNotExist(err) {
+		t.Errorf("stale tree not archived: %v", err)
+	}
+}
