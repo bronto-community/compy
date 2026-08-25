@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -41,8 +42,35 @@ var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.
   <key>KeepAlive</key>{{if .KeepAlive}}<true/>{{else}}<false/>{{end}}
   <key>StandardErrorPath</key><string>{{.LogPath}}</string>
   <key>StandardOutPath</key><string>{{.LogPath}}</string>
-</dict></plist>
+  {{if .Env}}<key>EnvironmentVariables</key><dict>
+    {{range .Env}}<key>{{.Key}}</key><string>{{.Value}}</string>
+    {{end}}</dict>
+  {{end}}</dict></plist>
 `))
+
+// envPair is a single sorted, XML-escaped EnvironmentVariables entry.
+type envPair struct {
+	Key   string
+	Value string
+}
+
+// sortedEnvPairs returns env's entries sorted by key, XML-escaped, or nil if
+// env is empty (so the plist omits EnvironmentVariables entirely).
+func sortedEnvPairs(env map[string]string) []envPair {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]envPair, len(keys))
+	for i, k := range keys {
+		pairs[i] = envPair{Key: xmlEscape(k), Value: xmlEscape(env[k])}
+	}
+	return pairs
+}
 
 // PlistPath returns ~/Library/LaunchAgents/<Label>.plist.
 func PlistPath() (string, error) {
@@ -64,12 +92,13 @@ func xmlEscape(s string) string {
 }
 
 // RenderPlist renders the collector LaunchAgent plist for bin run with args,
-// logging to logPath. Argv entries and logPath are XML-escaped.
-func RenderPlist(bin string, args []string, logPath string) []byte {
-	return renderPlist(Label, bin, args, logPath, true)
+// logging to logPath, with env set as EnvironmentVariables (nil/empty omits
+// the key entirely). Argv entries, logPath, and env are XML-escaped.
+func RenderPlist(bin string, args []string, logPath string, env map[string]string) []byte {
+	return renderPlist(Label, bin, args, logPath, true, env)
 }
 
-func renderPlist(label, bin string, args []string, logPath string, keepAlive bool) []byte {
+func renderPlist(label, bin string, args []string, logPath string, keepAlive bool, env map[string]string) []byte {
 	argv := make([]string, 0, len(args)+1)
 	argv = append(argv, xmlEscape(bin))
 	for _, a := range args {
@@ -82,11 +111,13 @@ func renderPlist(label, bin string, args []string, logPath string, keepAlive boo
 		Argv      []string
 		LogPath   string
 		KeepAlive bool
+		Env       []envPair
 	}{
 		Label:     label,
 		Argv:      argv,
 		LogPath:   xmlEscape(logPath),
 		KeepAlive: keepAlive,
+		Env:       sortedEnvPairs(env),
 	})
 	return buf.Bytes()
 }
@@ -96,14 +127,14 @@ func guiTarget() string {
 }
 
 // Install writes the collector plist and (re)loads it via launchctl.
-func Install(bin string, args []string, logPath string) error {
-	return InstallAgent(Label, bin, args, logPath, true)
+func Install(bin string, args []string, logPath string, env map[string]string) error {
+	return InstallAgent(Label, bin, args, logPath, true, env)
 }
 
 // InstallAgent writes the plist for label and (re)loads it via launchctl:
 // bootout any existing job (ignoring errors, since it may not be loaded),
 // then bootstrap.
-func InstallAgent(label, bin string, args []string, logPath string, keepAlive bool) error {
+func InstallAgent(label, bin string, args []string, logPath string, keepAlive bool, env map[string]string) error {
 	path, err := agentPlistPath(label)
 	if err != nil {
 		return err
@@ -111,7 +142,7 @@ func InstallAgent(label, bin string, args []string, logPath string, keepAlive bo
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := state.WriteFileAtomic(path, renderPlist(label, bin, args, logPath, keepAlive), 0o644); err != nil {
+	if err := state.WriteFileAtomic(path, renderPlist(label, bin, args, logPath, keepAlive, env), 0o644); err != nil {
 		return err
 	}
 
