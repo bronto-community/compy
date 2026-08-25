@@ -62,16 +62,17 @@ func TestEnsureDownloadsVerifiesExtracts(t *testing.T) {
 	}
 
 	calls := 0
-	fetch := func(url string) (io.ReadCloser, error) {
+	fetch := func(url string) (io.ReadCloser, int64, error) {
 		calls++
 		if url != d.URLs[plat] {
 			t.Fatalf("fetch called with unexpected url %q", url)
 		}
-		return io.NopCloser(bytes.NewReader(tarGz)), nil
+		return io.NopCloser(bytes.NewReader(tarGz)), int64(len(tarGz)), nil
 	}
 
 	root := t.TempDir()
-	path, err := Ensure(root, d, fetch)
+	var lastDone, lastTotal int64
+	path, err := Ensure(root, d, fetch, func(done, total int64) { lastDone, lastTotal = done, total })
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -89,9 +90,12 @@ func TestEnsureDownloadsVerifiesExtracts(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("fetch called %d times, want 1", calls)
 	}
+	if lastDone != int64(len(tarGz)) || lastTotal != int64(len(tarGz)) {
+		t.Fatalf("progress ended at %d/%d, want %d/%d", lastDone, lastTotal, len(tarGz), len(tarGz))
+	}
 
-	// Second call: idempotent, no fetch.
-	path2, err := Ensure(root, d, fetch)
+	// Second call: idempotent, no fetch — and no progress to report.
+	path2, err := Ensure(root, d, fetch, nil)
 	if err != nil {
 		t.Fatalf("Ensure (2nd): %v", err)
 	}
@@ -113,12 +117,12 @@ func TestEnsureChecksumMismatch(t *testing.T) {
 		URLs:    map[string]string{plat: "https://example.invalid/fake.tar.gz"},
 		SHA256:  map[string]string{plat: strings.Repeat("0", 64)},
 	}
-	fetch := func(url string) (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(tarGz)), nil
+	fetch := func(url string) (io.ReadCloser, int64, error) {
+		return io.NopCloser(bytes.NewReader(tarGz)), int64(len(tarGz)), nil
 	}
 
 	root := t.TempDir()
-	_, err := Ensure(root, d, fetch)
+	_, err := Ensure(root, d, fetch, nil)
 	if err == nil {
 		t.Fatal("expected checksum mismatch error, got nil")
 	}

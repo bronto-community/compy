@@ -44,15 +44,34 @@ func Available(d Def) bool {
 	return ok
 }
 
-// Fetch retrieves the content at url (e.g. an http.Get wrapper).
-type Fetch func(url string) (io.ReadCloser, error)
+// Fetch retrieves the content at url (e.g. an http.Get wrapper), with the
+// total size in bytes when the server declares one and -1 when it does not.
+type Fetch func(url string) (io.ReadCloser, int64, error)
+
+// Progress is called as a download proceeds, with the bytes read so far and
+// the total (-1 when unknown). A nil Progress reports nothing.
+type Progress func(done, total int64)
+
+// counter turns writes into Progress calls; it is the write half of a
+// TeeReader wrapped around the download.
+type counter struct {
+	done, total int64
+	report      Progress
+}
+
+func (c *counter) Write(p []byte) (int, error) {
+	c.done += int64(len(p))
+	c.report(c.done, c.total)
+	return len(p), nil
+}
 
 // Ensure makes sure d's binary is installed under root, returning its path.
 // Idempotent: if distros/<name>-<version>/<binary> already exists, it's
-// returned without invoking fetch. Otherwise the tar.gz is downloaded via
-// fetch, its sha256 verified against d.SHA256, the binary extracted and
-// chmod 0755. On checksum mismatch, no partial files are left on disk.
-func Ensure(root string, d Def, fetch Fetch) (string, error) {
+// returned without invoking fetch (and without reporting progress).
+// Otherwise the tar.gz is downloaded via fetch — reporting bytes to progress
+// as it arrives — its sha256 verified against d.SHA256, the binary extracted
+// and chmod 0755. On checksum mismatch, no partial files are left on disk.
+func Ensure(root string, d Def, fetch Fetch, progress Progress) (string, error) {
 	dir := filepath.Join(root, "distros", d.Name+"-"+d.Version)
 	binPath := filepath.Join(dir, d.Binary)
 	if _, err := os.Stat(binPath); err == nil {
@@ -69,13 +88,17 @@ func Ensure(root string, d Def, fetch Fetch) (string, error) {
 		return "", fmt.Errorf("distro %s: no sha256 for platform %s", d.Name, plat)
 	}
 
-	rc, err := fetch(url)
+	rc, total, err := fetch(url)
 	if err != nil {
 		return "", fmt.Errorf("distro %s: fetch: %w", d.Name, err)
 	}
 	defer rc.Close()
 
-	data, err := io.ReadAll(rc)
+	var body io.Reader = rc
+	if progress != nil {
+		body = io.TeeReader(rc, &counter{total: total, report: progress})
+	}
+	data, err := io.ReadAll(body)
 	if err != nil {
 		return "", fmt.Errorf("distro %s: read: %w", d.Name, err)
 	}

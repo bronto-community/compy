@@ -58,12 +58,13 @@ type API struct {
 	UsePreset    func(name, preset string) error
 	RenamePreset func(name, from, to string) error
 
-	Distros       func() (any, error)
-	AddDistro     func(name, path string) (string, error) // returns the override warning, "" if none
-	SetDistroPath func(name, path string) (string, error) // returns the override warning, "" if none
-	RemoveDistro  func(name string) (bool, error)         // returns whether removing it reverted to a shipped definition
-	UseDistro     func(name string) error
-	FetchDistro   func(name string) error
+	Distros          func() (any, error)
+	AddDistro        func(name, path string) (string, error) // returns the override warning, "" if none
+	SetDistroPath    func(name, path string) (string, error) // returns the override warning, "" if none
+	RemoveDistro     func(name string) (bool, error)         // returns whether removing it reverted to a shipped definition
+	UseDistro        func(name string) error
+	FetchDistro      func(name string) error // starts the download and returns; poll DownloadProgress
+	DownloadProgress func(name string) (any, error)
 }
 
 // badRequester is how a closure error asks to be reported as 400 Bad
@@ -140,6 +141,7 @@ func routes() []route {
 		{"DELETE", "/api/distros/{name}", handleRemoveDistro},
 		{"POST", "/api/distros/{name}/use", handleUseDistro},
 		{"POST", "/api/distros/{name}/fetch", handleFetchDistro},
+		{"GET", "/api/distros/{name}/progress", handleDownloadProgress},
 	}
 }
 
@@ -763,6 +765,18 @@ func handleFetchDistro(api API) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// handleDownloadProgress answers the poll that follows POST .../fetch.
+func handleDownloadProgress(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		progress, err := api.DownloadProgress(r.PathValue("name"))
+		if err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, progress)
 	}
 }
 
