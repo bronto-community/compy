@@ -1,0 +1,17 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}  # compy's local gRPC port
+      http:
+        endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
+exporters:
+  otlp:
+    endpoint: ${env:OTLP_ENDPOINT:-127.0.0.1:4317}  # where to send (host:port)
+    headers:
+      x-api-key: ${env:API_KEY:-}  # optional API key
+service:
+  pipelines:
+    traces: {receivers: [otlp], exporters: [otlp]}
+    metrics: {receivers: [otlp], exporters: [otlp]}
+    logs: {receivers: [otlp], exporters: [otlp]}

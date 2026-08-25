@@ -4,8 +4,11 @@ Local OpenTelemetry Collector manager: CLI + web UI + tray around a
 launchd-supervised `otelcol` process. See README.md for what it does and the
 non-goals.
 
-- Spec: `docs/superpowers/specs/2026-08-24-local-collector-design.md`
-- Plan: `.superpowers/sdd/2026-08-24-compy-v1/`
+- Specs: `docs/superpowers/specs/2026-08-24-local-collector-design.md` (v1,
+  still authoritative for launchd/no-daemon/state-dir/tray/brand rules),
+  `docs/superpowers/specs/2026-08-25-compy-v2-configs-design.md` (v2,
+  supersedes the v1 backend-fragment model with configurations)
+- Plan: `.superpowers/sdd/2026-08-25-compy-v2-p1-core/`
 
 ## Build / test
 
@@ -20,7 +23,9 @@ go test -tags=integration ./integration/         # needs OTELCOL_BIN=/path/to/ot
 ## Dependencies
 
 Stdlib only, except `fyne.io/systray` (tray icon; darwin-only build, stubbed
-out on other GOOS in `internal/tray`).
+out on other GOOS in `internal/tray`) and `github.com/webview/webview_go`
+(native window; darwin-only build, stubbed out on other GOOS in
+`internal/window`).
 
 ## Module layout (`internal/*`)
 
@@ -49,6 +54,25 @@ out on other GOOS in `internal/tray`).
 - `webui` — localhost-only web UI: JSON API plus an embedded (`go:embed`)
   single-page app; no internal dependencies, the caller wires behavior in
   via a closure struct.
+- `window` — the native window wrapper `compy window` runs.
+
+## Configurations
+
+A configuration (`internal/cfgstore`) is a whole collector `config.yaml` +
+`meta.json` (provenance, variable sets) under `configs/<name>/`. Exactly one
+configuration, and one of its variable sets, is active at a time;
+activating (`app.Activate`) puts that set's values into the LaunchAgent's
+environment so the collector expands its own `${VAR}` / `${env:VAR:-def}`
+references — no text substitution in compy. Three shipped defaults
+(`debug`, `otlp`, `bronto`, embedded via `internal/cfgstore/defaults/*.yaml`)
+are materialized into `configs/` on first run. Edit-protection and sync
+share one mechanism: a config's current YAML hash vs. its recorded
+`pristine_sha256` — matching means "unmodified" (shipped configs upgrade in
+place, remote configs may `sync`), differing means "locally modified"
+(upgrades/`sync` leave it alone; `resync` force-discards local edits). On
+first v2 run, a v1 state dir's rendered effective config becomes a new
+`migrated` configuration (activated if anything was enabled) and the old
+`config/` tree is archived to `legacy-v1/` — one-way, logged to stderr.
 
 ## COMPY_HOME
 

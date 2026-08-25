@@ -2,8 +2,8 @@ package cfgstore
 
 import "embed"
 
-// embeddedDefaults holds the shipped default configurations (debug.yaml for
-// now; T6 adds otlp.yaml and bronto.yaml).
+// embeddedDefaults holds the shipped default configurations: debug, otlp,
+// bronto.
 //
 //go:embed defaults/*.yaml
 var embeddedDefaults embed.FS
