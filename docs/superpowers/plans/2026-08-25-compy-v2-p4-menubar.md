@@ -23,11 +23,15 @@ Same as P1–P3: gofmt/vet/gofix clean; full `go test ./...` green; drift test g
 - Variable-set picker: a "Variable set" submenu directly under the config slots, visible ONLY when the active config has ≥2 sets; items radio-checked (active set), click → Activate(activeConfig, thatSet) via act(). Reuse the add/Remove/setChecked item-map pattern.
 - [ ] Pure helpers (e.g. statusLines(status, stats) (string, string)) unit-tested; build + `compy tray` process smoke; commit `feat: menu bar v3 (stats block, variable-set picker)`.
 
-### Task 3: UI polish backlog
-**Files:** internal/webui/static/app.js only.
-- Ports form: blank/non-numeric input → inline error via showMessage (400-style copy), never a silent no-op.
-- Remote edit-confirm wording: replace the circular "until you discard them" sentence with: "Editing detaches this configuration from its remote source. Sync will stop; 'Discard local edits & re-sync' brings it back."
-- [ ] Screenshot the ports error state (throwaway serve, read-only); commit `fix: ports feedback + remote confirm copy`.
+### Task 3: user-feedback UI round (rescoped 2026-08-25 after live feedback)
+**Files:** internal/webui/static/{app.js,app.css}, internal/app/app.go (+test, error copy/marker only), internal/webui/webui.go (only if the status code isn't already exposed to JS).
+- Configurations: leading ACTIVATION column at the FRONT of the table — mono ○ (muted) / ● (amber #DE9200) per row; click ○ activates (same POST as `use`); remove `use` from the actions column. Header for the column: empty. Active row keeps its bar/bg.
+- Settings: REMOVE the "Default ports" and "Wiring" cards entirely (values remain CLI/file-managed; T1's `compy settings` is the management surface). Delete dead JS/CSS for them.
+- Editor de-bloat: properties become ONE horizontal top bar directly under the page title (source text, remote-URL input, distro select, sync/resync actions inline; name NOT repeated — title only). Tighten section paddings (rows ~11px vertical like the tables); variables + YAML dominate the viewport.
+- Error strip: attach the collector-log tail ONLY when the failed response status is ≥ 500; 4xx shows the message alone. (api() must pass the status through to showError.)
+- Go (small): distro/config name-validation error copy names the rule — e.g. `invalid distro name "My Collector": use lowercase letters, digits, dashes` — and AddDistro/SetDistroPath name errors carry webui.BadRequest so they arrive as 400 (tail-gating then applies). Test the message + status.
+- Remote edit-confirm wording: "Editing detaches this configuration from its remote source. Sync will stop; 'Discard local edits & re-sync' brings it back."
+- [ ] Screenshot: configs with front activation column, slim editor, settings without ports/wiring, a 400 error without log tail. Commit `feat: feedback round (front activation, slim editor, ports/wiring removal, 4xx errors)`.
 
 ## Execution notes
 T1 first (T2 consumes LogStats). T2 // T3 parallel after (disjoint files; T3 worktree). Reviews per task (T3 may take haiku). Final: no whole-branch fable pass needed at this scale — one sonnet branch review, fix wave if needed, merge, rebuild, tray reinstall (codesigning), live check incl. menu-bar screenshot impossible headlessly — verify via `launchctl print` + process + user's own eyes.
