@@ -422,7 +422,9 @@ function renderSidebar() {
     span("", word),
   ]));
   box.appendChild(span("name", activeName()));
-  box.appendChild(span("preset", "preset · " + ((S.status && S.status.preset) || "—")));
+  // Stopped, the card already says "nothing active"; naming the preset that
+  // is not running next to it just contradicts the line above.
+  box.appendChild(span("preset", "preset · " + ((!stopped && S.status && S.status.preset) || "—")));
   box.appendChild(span("ports", ((S.status && S.status.distro) || "no collector") + " · " + (stopped ? "not listening" : ports)));
 }
 
