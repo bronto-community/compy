@@ -99,7 +99,11 @@
           "selected": { "type": "boolean" },
           "definition": { "type": "boolean" },
           "available": { "type": "boolean" },
-          "downloaded": { "type": "boolean" }
+          "downloaded": { "type": "boolean" },
+          "user_entry": {
+            "type": "boolean",
+            "description": "True iff this name has an actual entry in the user distro registry (distros.json) — a custom distro, or an override of a shipped definition's path. False for a shipped definition that's merely been downloaded to its default path: there's no registry entry for DELETE /api/distros/{name} to remove."
+          }
         }
       },
       "Ok": {

@@ -47,14 +47,18 @@ document.getElementById("error-dismiss").addEventListener("click", () => {
   errorStrip.classList.add("hidden");
 });
 
-// showMessage displays msg (an error or a surfaced API warning) in the dark
-// console strip, verbatim; on an actual error it also appends a short log
-// tail for context.
-async function showMessage(msg, withLogTail) {
+// showMessage displays msg in the console strip, verbatim. severity
+// "error" (default) colors the strip's border red and appends a short log
+// tail for context; "info" (a surfaced API warning, a distro-remove
+// "reverted" notice — nothing actually went wrong) colors it amber and
+// skips the log tail.
+async function showMessage(msg, severity) {
+  const isError = severity !== "info";
   errorMessage.textContent = msg;
   errorLog.textContent = "";
   errorStrip.classList.remove("hidden");
-  if (withLogTail) {
+  errorStrip.classList.toggle("info", !isError);
+  if (isError) {
     try {
       const j = await api("/api/log?lines=20");
       if (j.log) errorLog.textContent = "recent log:\n" + j.log;
@@ -64,7 +68,7 @@ async function showMessage(msg, withLogTail) {
   }
 }
 function showError(err) {
-  showMessage(err && err.message ? err.message : String(err), true);
+  showMessage(err && err.message ? err.message : String(err));
 }
 
 /* ── shared state ─────────────────────────────────────────────────── */
@@ -523,7 +527,7 @@ function buildDistroRow(d) {
     if (newPath === (d.path || "")) return;
     try {
       const res = await apiJSON("/api/distros/" + encodeURIComponent(d.name), "PUT", { path: newPath });
-      if (res && res.warning) showMessage(res.warning, false);
+      if (res && res.warning) showMessage(res.warning, "info");
     } catch (err) {
       showError(err);
       pathInput.value = d.path || "";
@@ -549,10 +553,11 @@ function buildDistroRow(d) {
       },
     }));
   }
-  // Remove only makes sense for an actual registry entry (a custom distro,
-  // or a shipped definition whose path was overridden) — a not-yet-fetched
-  // shipped definition has no entry to remove (the API would 400 on it).
-  if (d.path) {
+  // Remove only makes sense for an actual distros.json entry (a custom
+  // distro, or a shipped definition whose path was overridden) —
+  // user_entry is false for a shipped definition merely downloaded to its
+  // default path, which has no registry entry to remove (the API 400s).
+  if (d.user_entry) {
     actions.appendChild(buildRemoveButton(d));
   }
 
@@ -573,7 +578,7 @@ function buildRemoveButton(d) {
       if (!window.confirm('Remove distro "' + d.name + '"?')) return;
       try {
         const res = await api("/api/distros/" + encodeURIComponent(d.name), { method: "DELETE" });
-        if (res && res.reverted) showMessage('"' + d.name + '" reverted to its shipped definition.', false);
+        if (res && res.reverted) showMessage('"' + d.name + '" reverted to its shipped definition.', "info");
       } catch (err) {
         showError(err);
       }
@@ -673,10 +678,14 @@ function copyButton(sourceId) {
   return el("button", {
     class: "pill-btn", text: "Copy",
     on: {
-      click: (e) => {
+      click: async (e) => {
         const text = document.getElementById(sourceId).textContent;
-        navigator.clipboard.writeText(text).catch(() => {});
-        e.target.textContent = "Copied";
+        try {
+          await navigator.clipboard.writeText(text);
+          e.target.textContent = "Copied";
+        } catch (err) {
+          e.target.textContent = "Copy failed";
+        }
         setTimeout(() => { e.target.textContent = "Copy"; }, 1500);
       },
     },
