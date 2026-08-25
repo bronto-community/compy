@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bronto-io/compy/internal/app"
 	"github.com/bronto-io/compy/internal/cfgstore"
@@ -542,18 +543,18 @@ func TestEnvInfo(t *testing.T) {
 	}
 }
 
-func TestFetchDistro(t *testing.T) {
+func TestEnsureDistro(t *testing.T) {
 	setup(t, "")
 	fakeDistro(t, "exit 0")
 	a, err := app.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.FetchDistro("fake"); err != nil {
-		t.Fatalf("FetchDistro(fake): %v", err)
+	if _, err := a.EnsureDistro("fake", nil); err != nil {
+		t.Fatalf("EnsureDistro(fake): %v", err)
 	}
-	if err := a.FetchDistro("no-such-distro"); err == nil {
-		t.Fatal("FetchDistro(no-such-distro): want error, got nil")
+	if _, err := a.EnsureDistro("no-such-distro", nil); err == nil {
+		t.Fatal("EnsureDistro(no-such-distro): want error, got nil")
 	}
 }
 
@@ -1274,7 +1275,7 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 		{"AddDistro duplicate", func() error { return a.AddDistro("fake", missing) }},
 		{"AddDistro missing binary", func() error { return a.AddDistro("fresh", missing) }},
 		{"UseDistro unknown", func() error { return a.UseDistro(nosuch) }},
-		{"FetchDistro unknown", func() error { return a.FetchDistro(nosuch) }},
+		{"EnsureDistro unknown", func() error { _, err := a.EnsureDistro(nosuch, nil); return err }},
 		{"PutSettings port out of range", func() error { p := 99999; return a.PutSettings(&p, nil) }},
 	}
 	for _, tc := range cases {
@@ -1595,5 +1596,131 @@ func TestStopAndStart(t *testing.T) {
 	}
 	if !called(*calls, "bootstrap") {
 		t.Errorf("Start did not bring the job back: %v", *calls)
+	}
+}
+
+// TestDownloadProgressTracksAFetch: the Settings screen POSTs a fetch and
+// then polls, so the fetch must return immediately and the progress route
+// must go idle → downloading → done (or failed) on its own.
+func TestDownloadProgressTracksAFetch(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := progressStatus(t, a, "core"); got != "idle" {
+		t.Errorf("status before any fetch = %q, want idle", got)
+	}
+
+	// A distro nobody has heard of: the failure has to surface through the
+	// progress route, since the POST that started it is long gone.
+	if err := a.StartFetchDistro("no-such-distro"); err != nil {
+		t.Fatalf("StartFetchDistro returned an error instead of starting: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var status string
+	for time.Now().Before(deadline) {
+		if status = progressStatus(t, a, "no-such-distro"); status == "failed" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if status != "failed" {
+		t.Fatalf("status = %q, want failed", status)
+	}
+	p := progressOf(t, a, "no-such-distro")
+	if msg, _ := p["error"].(string); !strings.Contains(msg, "no-such-distro") {
+		t.Errorf("progress = %v, want an error naming the distro", p)
+	}
+
+	// A user-registered binary is already there: fetching it is instantly done.
+	fakeDistro(t, "exit 0")
+	if err := a.StartFetchDistro("fake"); err != nil {
+		t.Fatal(err)
+	}
+	for time.Now().Before(deadline) {
+		if status = progressStatus(t, a, "fake"); status == "done" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if status != "done" {
+		t.Fatalf("status for an already-present binary = %q, want done", status)
+	}
+	if pct := progressOf(t, a, "fake")["pct"]; pct != 100 {
+		t.Errorf("pct = %v when done, want 100", pct)
+	}
+}
+
+func progressOf(t *testing.T, a *app.App, name string) map[string]any {
+	t.Helper()
+	p, err := a.DownloadProgress(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := p.(map[string]any)
+	if !ok {
+		t.Fatalf("DownloadProgress(%q) = %T, want a map", name, p)
+	}
+	return m
+}
+
+func progressStatus(t *testing.T, a *app.App, name string) string {
+	t.Helper()
+	s, _ := progressOf(t, a, name)["status"].(string)
+	return s
+}
+
+// TestRecencyFollowsActivations: the menu bar orders configurations by when
+// they last ran, most recent first, and only successful activations count.
+func TestRecencyFollowsActivations(t *testing.T) {
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"debug", "otlp", "bronto", "debug"} {
+		if err := a.Activate(name, ""); err != nil {
+			t.Fatalf("Activate(%s): %v", name, err)
+		}
+	}
+
+	st, err := a.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"debug", "bronto", "otlp"}
+	if !slices.Equal(st.Recent, want) {
+		t.Errorf("Recent = %v, want %v (most recent first, each config once)", st.Recent, want)
+	}
+
+	// A failed activation does not enter the list.
+	if err := a.Activate("no-such-config", ""); err == nil {
+		t.Fatal("Activate(no-such-config) = nil, want an error")
+	}
+	st, _ = a.Status()
+	if !slices.Equal(st.Recent, want) {
+		t.Errorf("Recent = %v after a failed activation, want it unchanged %v", st.Recent, want)
+	}
+}
+
+func TestRecencyIsCapped(t *testing.T) {
+	setup(t, "")
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 25; i++ {
+		s.Recent = state.Remember(s.Recent, fmt.Sprintf("cfg-%d", i))
+	}
+	if len(s.Recent) != 20 {
+		t.Fatalf("len(Recent) = %d, want it capped at 20", len(s.Recent))
+	}
+	if s.Recent[0] != "cfg-24" || s.Recent[19] != "cfg-5" {
+		t.Errorf("Recent = %v, want cfg-24 first and cfg-5 last", s.Recent)
 	}
 }

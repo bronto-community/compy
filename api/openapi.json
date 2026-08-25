@@ -31,7 +31,12 @@
           "endpoint": { "type": "string" },
           "config": { "type": "string" },
           "preset": { "type": "string" },
-          "os_env": { "type": "boolean" }
+          "os_env": { "type": "boolean" },
+          "recent": {
+            "type": "array",
+            "description": "Configurations that have run, most recent first (the menu bar's ordering).",
+            "items": { "type": "string" }
+          }
         }
       },
       "Settings": {
@@ -117,6 +122,15 @@
           "dropped": { "type": "integer" }
         },
         "required": ["available"]
+      },
+      "DownloadProgress": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["idle", "downloading", "done", "failed"] },
+          "pct": { "type": "integer" },
+          "error": { "type": "string" }
+        },
+        "required": ["status", "pct"]
       },
       "Ok": {
         "type": "object",
@@ -980,9 +994,28 @@
         }
       }
     },
+    "/api/distros/{name}/progress": {
+      "get": {
+        "summary": "How this collector binary's download is going",
+        "description": "Poll after POST .../fetch, which returns immediately. status is idle | downloading | done | failed; pct is 0-100 (and stays put when the server declares no Content-Length); error is present only when status is failed. Progress is per-process and in memory: a name nobody has fetched since this process started reads idle, whether or not the binary is on disk.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DownloadProgress" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
     "/api/distros/{name}/fetch": {
       "post": {
-        "summary": "Download a shipped distro definition's binary on demand",
+        "summary": "Start downloading a shipped distro definition's binary (returns at once; poll .../progress)",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],

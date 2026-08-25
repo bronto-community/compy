@@ -45,12 +45,13 @@ func fakeAPI() API {
 		UsePreset:    func(name, preset string) error { return nil },
 		RenamePreset: func(name, from, to string) error { return nil },
 
-		Distros:       func() (any, error) { return []map[string]any{}, nil },
-		AddDistro:     func(name, path string) (string, error) { return "", nil },
-		SetDistroPath: func(name, path string) (string, error) { return "", nil },
-		RemoveDistro:  func(name string) (bool, error) { return false, nil },
-		UseDistro:     func(name string) error { return nil },
-		FetchDistro:   func(name string) error { return nil },
+		Distros:          func() (any, error) { return []map[string]any{}, nil },
+		AddDistro:        func(name, path string) (string, error) { return "", nil },
+		SetDistroPath:    func(name, path string) (string, error) { return "", nil },
+		RemoveDistro:     func(name string) (bool, error) { return false, nil },
+		UseDistro:        func(name string) error { return nil },
+		FetchDistro:      func(name string) error { return nil },
+		DownloadProgress: func(name string) (any, error) { return map[string]any{"status": "idle", "pct": 0}, nil },
 	}
 }
 
@@ -967,5 +968,34 @@ func TestStopAndStartRoutes(t *testing.T) {
 		if !*tc.done {
 			t.Errorf("POST %s did not reach its closure", tc.path)
 		}
+	}
+}
+
+// TestDownloadProgressRoute: the Settings screen POSTs a fetch, which
+// returns at once, and follows it here.
+func TestDownloadProgressRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotName string
+	api.DownloadProgress = func(name string) (any, error) {
+		gotName = name
+		return map[string]any{"status": "downloading", "pct": 51}, nil
+	}
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/distros/otelcol-k8s/progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if gotName != "otelcol-k8s" || body["status"] != "downloading" || body["pct"] != float64(51) {
+		t.Fatalf("progress for %q = %v", gotName, body)
 	}
 }

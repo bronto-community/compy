@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bronto-io/compy/internal/cfgstore"
@@ -32,20 +33,90 @@ const probeTimeout = 5 * time.Second
 
 // App holds the resolved state directory. Settings are re-read per
 // operation so concurrent editors (CLI and web UI) never fight over a
-// cached copy.
+// cached copy. Download progress is the one thing App does keep: it belongs
+// to the process doing the downloading and is meaningless to anyone else.
 type App struct {
 	Dir string
+
+	mu        sync.Mutex
+	downloads map[string]download
+}
+
+// download is one collector binary's in-flight (or finished) fetch, as the
+// Settings screen renders it: a progress bar while it runs, "download
+// failed · <reason>" when it does not.
+type download struct {
+	status string // "downloading" | "done" | "failed"
+	pct    int
+	err    string
+}
+
+// beginDownload marks name as downloading, reporting false if a fetch for it
+// is already in flight (two extracts into one directory is nobody's idea of
+// a good time).
+func (a *App) beginDownload(name string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.downloads == nil {
+		a.downloads = map[string]download{}
+	}
+	if a.downloads[name].status == "downloading" {
+		return false
+	}
+	a.downloads[name] = download{status: "downloading"}
+	return true
+}
+
+// setDownloadProgress records bytes-so-far as a percentage. A server that
+// declares no length leaves the bar where it is — an indeterminate strip is
+// the UI's problem, not a made-up number's.
+func (a *App) setDownloadProgress(name string, done, total int64) {
+	if total <= 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.downloads[name] = download{status: "downloading", pct: int(done * 100 / total)}
+}
+
+// endDownload records how the fetch finished.
+func (a *App) endDownload(name string, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil {
+		a.downloads[name] = download{status: "failed", err: err.Error()}
+		return
+	}
+	a.downloads[name] = download{status: "done", pct: 100}
+}
+
+// DownloadProgress reports how name's fetch is going. A name nobody has
+// fetched in this process is "idle" — including one that is already on disk,
+// which the distro list says separately.
+func (a *App) DownloadProgress(name string) (any, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	d, ok := a.downloads[name]
+	if !ok {
+		d = download{status: "idle"}
+	}
+	out := map[string]any{"status": d.status, "pct": d.pct}
+	if d.err != "" {
+		out["error"] = d.err
+	}
+	return out, nil
 }
 
 // Status is the machine-readable service summary (`compy status --json`).
 type Status struct {
-	Running  bool   `json:"running"`
-	Distro   string `json:"distro"`
-	GRPCPort int    `json:"grpc_port"`
-	HTTPPort int    `json:"http_port"`
-	Config   string `json:"config"`
-	Preset   string `json:"preset"`
-	OSEnv    bool   `json:"os_env"`
+	Running  bool     `json:"running"`
+	Distro   string   `json:"distro"`
+	GRPCPort int      `json:"grpc_port"`
+	HTTPPort int      `json:"http_port"`
+	Config   string   `json:"config"`
+	Preset   string   `json:"preset"`
+	OSEnv    bool     `json:"os_env"`
+	Recent   []string `json:"recent"`
 }
 
 // New resolves the state dir, migrates a v1 layout if one is found, and
@@ -130,7 +201,7 @@ func (a *App) launch(name, preset string) error {
 	if err != nil {
 		return err
 	}
-	bin, err := a.EnsureDistro("")
+	bin, err := a.EnsureDistro("", nil)
 	if err != nil {
 		return err
 	}
@@ -185,7 +256,7 @@ func (a *App) Activate(name, preset string) error {
 			return state.BadRequest(fmt.Errorf("config %q has no preset %q", name, preset))
 		}
 	}
-	bin, err := a.EnsureDistro("")
+	bin, err := a.EnsureDistro("", nil)
 	if err != nil {
 		return err
 	}
@@ -245,7 +316,18 @@ func (a *App) Activate(name, preset string) error {
 			return state.StillRunning(failure, still)
 		}
 	}
-	return nil
+	return a.remember(name)
+}
+
+// remember moves name to the front of the recency list. It runs only after
+// a successful activation — the menu bar orders by what has actually run.
+func (a *App) remember(name string) error {
+	s, err := state.LoadSettings()
+	if err != nil {
+		return err
+	}
+	s.Recent = state.Remember(s.Recent, name)
+	return state.SaveSettings(s)
 }
 
 // Stop stops the collector. Nothing is recorded: a stopped collector is
@@ -299,7 +381,7 @@ func (a *App) ValidateConfig(name string) error {
 	if err != nil {
 		return err
 	}
-	bin, err := a.EnsureDistro("")
+	bin, err := a.EnsureDistro("", nil)
 	if err != nil {
 		return err
 	}
@@ -336,6 +418,7 @@ func (a *App) Status() (Status, error) {
 		Config:   s.ActiveConfig,
 		Preset:   preset,
 		OSEnv:    s.OSEnv,
+		Recent:   s.Recent,
 	}, nil
 }
 
@@ -521,23 +604,25 @@ func (a *App) LogStats(lines int) (errors, warnings int, err error) {
 	return errors, warnings, nil
 }
 
-// httpFetch is distro.Fetch over plain HTTP(S); the caller closes the body.
-func httpFetch(url string) (io.ReadCloser, error) {
+// httpFetch is distro.Fetch over plain HTTP(S), reporting Content-Length as
+// the total (-1 when the server declares none); the caller closes the body.
+func httpFetch(url string) (io.ReadCloser, int64, error) {
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return nil, fmt.Errorf("fetch %s: HTTP %d", url, resp.StatusCode)
+		return nil, 0, fmt.Errorf("fetch %s: HTTP %d", url, resp.StatusCode)
 	}
-	return resp.Body, nil
+	return resp.Body, resp.ContentLength, nil
 }
 
 // EnsureDistro resolves a distro name to a collector binary path: "" means
 // the global default from settings, a user-registered entry is used as-is,
-// and a shipped definition is downloaded (checksum-verified) on first use.
-func (a *App) EnsureDistro(name string) (string, error) {
+// and a shipped definition is downloaded (checksum-verified) on first use,
+// reporting bytes to progress (nil = don't report) as it arrives.
+func (a *App) EnsureDistro(name string, progress distro.Progress) (string, error) {
 	if name == "" {
 		s, err := state.LoadSettings()
 		if err != nil {
@@ -560,18 +645,29 @@ func (a *App) EnsureDistro(name string) (string, error) {
 			if !distro.Available(d) {
 				return "", state.BadRequest(fmt.Errorf("distro %q has no build for this platform", name))
 			}
-			return distro.Ensure(a.Dir, d, httpFetch)
+			return distro.Ensure(a.Dir, d, httpFetch, progress)
 		}
 	}
 	return "", state.BadRequest(fmt.Errorf("no such distro %q", name))
 }
 
-// FetchDistro ensures name's collector binary is present locally,
-// downloading a shipped definition on first use; a no-op for an
-// already-downloaded or user-registered distro.
-func (a *App) FetchDistro(name string) error {
-	_, err := a.EnsureDistro(name)
-	return err
+// StartFetchDistro begins downloading name's collector binary and returns
+// at once: a download takes seconds and the Settings screen follows it with
+// DownloadProgress rather than holding a request open. A fetch already in
+// flight for the same name is left alone. Everything that can go wrong —
+// including an unknown name — surfaces through the progress, since the
+// request that started it is gone by then.
+func (a *App) StartFetchDistro(name string) error {
+	if !a.beginDownload(name) {
+		return nil
+	}
+	go func() {
+		_, err := a.EnsureDistro(name, func(done, total int64) {
+			a.setDownloadProgress(name, done, total)
+		})
+		a.endDownload(name, err)
+	}()
+	return nil
 }
 
 // Distros lists the distro registry: shipped definitions (flagged available
@@ -749,7 +845,7 @@ func (a *App) RemoveDistro(name string) (bool, error) {
 // UseDistro selects the global default distro, re-applying if a
 // configuration is active.
 func (a *App) UseDistro(name string) error {
-	if _, err := a.EnsureDistro(name); err != nil {
+	if _, err := a.EnsureDistro(name, nil); err != nil {
 		return err
 	}
 	s, err := state.LoadSettings()
@@ -879,6 +975,7 @@ func (a *App) statusMap() (map[string]any, error) {
 		"config":    st.Config,
 		"preset":    st.Preset,
 		"os_env":    st.OSEnv,
+		"recent":    st.Recent,
 	}, nil
 }
 
@@ -927,9 +1024,10 @@ func (a *App) WebUIAPI() webui.API {
 			}
 			return warning, nil
 		},
-		SetDistroPath: a.SetDistroPath,
-		RemoveDistro:  a.RemoveDistro,
-		UseDistro:     a.UseDistro,
-		FetchDistro:   a.FetchDistro,
+		SetDistroPath:    a.SetDistroPath,
+		RemoveDistro:     a.RemoveDistro,
+		UseDistro:        a.UseDistro,
+		FetchDistro:      a.StartFetchDistro,
+		DownloadProgress: a.DownloadProgress,
 	}
 }

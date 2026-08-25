@@ -20,6 +20,31 @@ type Settings struct {
 	Distro       string `json:"distro"`        // global default distro, "" = none
 	ActiveConfig string `json:"active_config"` // active configuration, "" = none
 	OSEnv        bool   `json:"os_env"`        // OS-level env injection active
+
+	// Recent is the configurations that have run, most recent first. The
+	// menu bar orders by it (the window sorts alphabetically everywhere).
+	Recent []string `json:"recent,omitempty"`
+}
+
+// recentCap is how many configurations Recent keeps. The menu shows ten and
+// overflows the rest into More…; twice that is plenty of history for an
+// ordering nobody scrolls.
+const recentCap = 20
+
+// Remember returns recent with name moved to the front, keeping every other
+// entry's order and dropping the oldest past the cap.
+func Remember(recent []string, name string) []string {
+	out := make([]string, 0, len(recent)+1)
+	out = append(out, name)
+	for _, n := range recent {
+		if n != name {
+			out = append(out, n)
+		}
+	}
+	if len(out) > recentCap {
+		out = out[:recentCap]
+	}
+	return out
 }
 
 // Distro describes a selectable collector distribution.

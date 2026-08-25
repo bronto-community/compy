@@ -514,7 +514,22 @@ func cmdDistro(args []string) error {
 			return errors.New("distro fetch: need <name>")
 		}
 		return withApp(func(a *app.App) error {
-			path, err := a.EnsureDistro(args[1])
+			// The CLI stays blocking (the REST fetch is the async one): a
+			// percentage on stderr, redrawn only when it changes, so piping
+			// the printed path stays clean.
+			last := -1
+			path, err := a.EnsureDistro(args[1], func(done, total int64) {
+				if total <= 0 {
+					return
+				}
+				if pct := int(done * 100 / total); pct != last {
+					last = pct
+					fmt.Fprintf(os.Stderr, "\rdownloading %s… %d%%", args[1], pct)
+				}
+			})
+			if last >= 0 {
+				fmt.Fprintln(os.Stderr)
+			}
 			if err != nil {
 				return err
 			}

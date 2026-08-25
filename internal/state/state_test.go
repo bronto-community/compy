@@ -3,6 +3,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -19,11 +20,15 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if err := SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
+	s.Recent = Remember(nil, "debug")
+	if err := SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
 	s2, err := LoadSettings()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s2 != s {
+	if !reflect.DeepEqual(s2, s) {
 		t.Fatalf("round trip: got %+v, want %+v", s2, s)
 	}
 }
