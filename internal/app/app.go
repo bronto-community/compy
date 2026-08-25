@@ -136,7 +136,7 @@ func (a *App) Activate(name, set string) error {
 	}
 	if set != "" {
 		if _, ok := info.Meta.VariableSets[set]; !ok {
-			return webui.BadRequest(fmt.Errorf("config %q has no variable set %q", name, set))
+			return state.BadRequest(fmt.Errorf("config %q has no variable set %q", name, set))
 		}
 	}
 	bin, err := a.EnsureDistro(info.Meta.Distro)
@@ -154,7 +154,7 @@ func (a *App) Activate(name, set string) error {
 	// fault of ours: 400, and the collector's own diagnostics are the whole
 	// answer (a log tail from the previous run would only bury them).
 	if err := collector.Validate(bin, args, env); err != nil {
-		return webui.BadRequest(err)
+		return state.BadRequest(err)
 	}
 
 	if set != "" && set != info.Meta.ActiveSet {
@@ -201,7 +201,7 @@ func (a *App) activeName() (string, state.Settings, error) {
 		return "", s, err
 	}
 	if s.ActiveConfig == "" {
-		return "", s, webui.BadRequest(errors.New("no active configuration: run `compy use <config>`"))
+		return "", s, state.BadRequest(errors.New("no active configuration: run `compy use <config>`"))
 	}
 	return s.ActiveConfig, s, nil
 }
@@ -243,7 +243,7 @@ func (a *App) ValidateConfig(name string) error {
 	}
 	env := activationEnv(info.Meta.VariableSets[info.Meta.ActiveSet], s)
 	if err := collector.Validate(bin, []string{"--config", a.ConfigPath(name)}, env); err != nil {
-		return webui.BadRequest(err)
+		return state.BadRequest(err)
 	}
 	return nil
 }
@@ -301,7 +301,7 @@ func (a *App) CopyConfig(src, dst string) error { return cfgstore.Copy(a.Dir, sr
 // DeleteConfig removes a configuration. The active one may not be deleted.
 func (a *App) DeleteConfig(name string) error {
 	if a.isActive(name) {
-		return webui.BadRequest(fmt.Errorf("config %q is active; activate another one first", name))
+		return state.BadRequest(fmt.Errorf("config %q is active; activate another one first", name))
 	}
 	return cfgstore.Delete(a.Dir, name)
 }
@@ -345,7 +345,7 @@ func (a *App) UpdateConfigMeta(name string, distroP, remoteURLP *string) error {
 				return err
 			}
 			if !slices.ContainsFunc(reg, func(d state.Distro) bool { return d.Name == *distroP }) {
-				return webui.BadRequest(fmt.Errorf("no such distro %q", *distroP))
+				return state.BadRequest(fmt.Errorf("no such distro %q", *distroP))
 			}
 		}
 		m.Distro = *distroP
@@ -498,7 +498,7 @@ func (a *App) EnsureDistro(name string) (string, error) {
 		name = s.Distro
 	}
 	if name == "" {
-		return "", webui.BadRequest(errors.New("no collector distro selected: run `compy distro use <name>` (or `compy distro add <name> <path>`)"))
+		return "", state.BadRequest(errors.New("no collector distro selected: run `compy distro use <name>` (or `compy distro add <name> <path>`)"))
 	}
 	user, err := state.LoadDistros()
 	if err != nil {
@@ -510,12 +510,12 @@ func (a *App) EnsureDistro(name string) (string, error) {
 	for _, d := range distro.Defs() {
 		if d.Name == name {
 			if !distro.Available(d) {
-				return "", webui.BadRequest(fmt.Errorf("distro %q has no build for this platform", name))
+				return "", state.BadRequest(fmt.Errorf("distro %q has no build for this platform", name))
 			}
 			return distro.Ensure(a.Dir, d, httpFetch)
 		}
 	}
-	return "", webui.BadRequest(fmt.Errorf("no such distro %q", name))
+	return "", state.BadRequest(fmt.Errorf("no such distro %q", name))
 }
 
 // FetchDistro ensures name's collector binary is present locally,
@@ -618,18 +618,18 @@ func selectDistroIfNone(name string) error {
 // AddDistro registers a collector binary, selecting it if it is the first.
 func (a *App) AddDistro(name, path string) error {
 	if !state.ValidBackendName(name) {
-		return webui.BadRequest(fmt.Errorf("invalid distro name %q: use lowercase letters, digits, dashes", name))
+		return state.BadRequest(fmt.Errorf("invalid distro name %q: use lowercase letters, digits, dashes", name))
 	}
 	abs, err := validateDistroBinary(path)
 	if err != nil {
-		return webui.BadRequest(err)
+		return state.BadRequest(err)
 	}
 	distros, err := state.LoadDistros()
 	if err != nil {
 		return err
 	}
 	if slices.ContainsFunc(distros, func(d state.Distro) bool { return d.Name == name }) {
-		return webui.BadRequest(fmt.Errorf("distro %q already exists", name))
+		return state.BadRequest(fmt.Errorf("distro %q already exists", name))
 	}
 	if w := distroOverrideWarning(name); w != "" {
 		fmt.Fprintf(os.Stderr, "compy: %s\n", w)
@@ -646,11 +646,11 @@ func (a *App) AddDistro(name, path string) error {
 // warning AddDistro's stderr line carries, as a response field instead.
 func (a *App) SetDistroPath(name, path string) (string, error) {
 	if !state.ValidBackendName(name) {
-		return "", webui.BadRequest(fmt.Errorf("invalid distro name %q: use lowercase letters, digits, dashes", name))
+		return "", state.BadRequest(fmt.Errorf("invalid distro name %q: use lowercase letters, digits, dashes", name))
 	}
 	abs, err := validateDistroBinary(path)
 	if err != nil {
-		return "", webui.BadRequest(err)
+		return "", state.BadRequest(err)
 	}
 	distros, err := state.LoadDistros()
 	if err != nil {
@@ -680,7 +680,7 @@ func (a *App) RemoveDistro(name string) (bool, error) {
 		return false, err
 	}
 	if s.Distro == name {
-		return false, webui.BadRequest(fmt.Errorf("distro %q is the selected default; select another distro first", name))
+		return false, state.BadRequest(fmt.Errorf("distro %q is the selected default; select another distro first", name))
 	}
 	distros, err := state.LoadDistros()
 	if err != nil {
@@ -688,7 +688,7 @@ func (a *App) RemoveDistro(name string) (bool, error) {
 	}
 	i := slices.IndexFunc(distros, func(d state.Distro) bool { return d.Name == name })
 	if i < 0 {
-		return false, webui.BadRequest(fmt.Errorf("no user distro entry named %q", name))
+		return false, state.BadRequest(fmt.Errorf("no user distro entry named %q", name))
 	}
 	distros = slices.Delete(distros, i, i+1)
 	if err := state.SaveDistros(distros); err != nil {
@@ -715,14 +715,20 @@ func (a *App) UseDistro(name string) error {
 	if s.ActiveConfig == "" {
 		return nil
 	}
-	// The default is switched either way — it is a global preference, not
-	// something one configuration gets to veto. Say plainly that the active
-	// configuration did not come up with it, rather than returning the bare
-	// collector diagnostics as a server fault.
-	if err := a.Apply(); err != nil {
-		return webui.BadRequest(fmt.Errorf("default collector is now %q, but the active configuration does not run with it: %w", name, err))
+	err = a.Apply()
+	if err == nil {
+		return nil
 	}
-	return nil
+	// The default is switched either way — it is a global preference, not
+	// something one configuration gets to veto. Only say the configuration
+	// is incompatible when that is actually what failed: a plist write or a
+	// launchctl refusal is our fault, and keeps both its own message and its
+	// 500 (the collector log tail the UI shows there is the diagnostic).
+	if !state.IsBadRequest(err) {
+		return err
+	}
+	// Already marked, so the wrap stays a 400 (IsBadRequest unwraps).
+	return fmt.Errorf("default collector is now %q, but the active configuration does not run with it: %w", name, err)
 }
 
 // Vars returns the OTEL_* environment variables for the current settings.
@@ -775,13 +781,13 @@ func (a *App) PutSettings(grpcP, httpP *int, menuSwapP *bool) error {
 	validPort := func(p int) bool { return p >= 1 && p <= 65535 }
 	if grpcP != nil {
 		if !validPort(*grpcP) {
-			return webui.BadRequest(fmt.Errorf("grpc port %d out of range 1-65535", *grpcP))
+			return state.BadRequest(fmt.Errorf("grpc port %d out of range 1-65535", *grpcP))
 		}
 		s.GRPCPort = *grpcP
 	}
 	if httpP != nil {
 		if !validPort(*httpP) {
-			return webui.BadRequest(fmt.Errorf("http port %d out of range 1-65535", *httpP))
+			return state.BadRequest(fmt.Errorf("http port %d out of range 1-65535", *httpP))
 		}
 		s.HTTPPort = *httpP
 	}

@@ -18,7 +18,6 @@ import (
 	"github.com/bronto-io/compy/internal/distro"
 	"github.com/bronto-io/compy/internal/launchd"
 	"github.com/bronto-io/compy/internal/state"
-	"github.com/bronto-io/compy/internal/webui"
 )
 
 // setup points COMPY_HOME and HOME at temp dirs (HOME too: launchd.Install
@@ -441,8 +440,8 @@ func TestUpdateConfigMetaPartialAndDistroValidation(t *testing.T) {
 	}
 
 	bogus := "no-such-distro"
-	if err := a.UpdateConfigMeta("mine", &bogus, nil); err == nil || !webui.IsBadRequest(err) {
-		t.Fatalf("UpdateConfigMeta with unknown distro: err=%v, want a webui.BadRequest-marked error", err)
+	if err := a.UpdateConfigMeta("mine", &bogus, nil); err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("UpdateConfigMeta with unknown distro: err=%v, want a state.BadRequest-marked error", err)
 	}
 	info, _, err = cfgstore.Get(a.Dir, "mine")
 	if err != nil {
@@ -701,21 +700,21 @@ func TestSetDistroPath(t *testing.T) {
 	}
 
 	wantMsg := `invalid distro name "Bad Name!": use lowercase letters, digits, dashes`
-	if _, err := a.SetDistroPath("Bad Name!", bin1); err == nil || !webui.IsBadRequest(err) || err.Error() != wantMsg {
-		t.Fatalf("SetDistroPath with an invalid name: err=%v, want a webui.BadRequest-marked error %q", err, wantMsg)
+	if _, err := a.SetDistroPath("Bad Name!", bin1); err == nil || !state.IsBadRequest(err) || err.Error() != wantMsg {
+		t.Fatalf("SetDistroPath with an invalid name: err=%v, want a state.BadRequest-marked error %q", err, wantMsg)
 	}
-	if _, err := a.SetDistroPath("whatever", filepath.Join(t.TempDir(), "missing")); err == nil || !webui.IsBadRequest(err) {
-		t.Fatalf("SetDistroPath with a nonexistent path: err=%v, want a webui.BadRequest-marked error", err)
+	if _, err := a.SetDistroPath("whatever", filepath.Join(t.TempDir(), "missing")); err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("SetDistroPath with a nonexistent path: err=%v, want a state.BadRequest-marked error", err)
 	}
 
-	if err := a.AddDistro("Bad Name!", bin1); err == nil || !webui.IsBadRequest(err) || err.Error() != wantMsg {
-		t.Fatalf("AddDistro with an invalid name: err=%v, want a webui.BadRequest-marked error %q", err, wantMsg)
+	if err := a.AddDistro("Bad Name!", bin1); err == nil || !state.IsBadRequest(err) || err.Error() != wantMsg {
+		t.Fatalf("AddDistro with an invalid name: err=%v, want a state.BadRequest-marked error %q", err, wantMsg)
 	}
 }
 
 // TestRemoveDistro covers removing a plain user entry (reverted:false),
 // removing a shipped-definition override (reverted:true), and the two
-// webui.BadRequest-marked 400 cases: the selected distro, and a pure
+// state.BadRequest-marked 400 cases: the selected distro, and a pure
 // definition name with no user entry.
 func TestRemoveDistro(t *testing.T) {
 	setup(t, "")
@@ -758,11 +757,11 @@ func TestRemoveDistro(t *testing.T) {
 		t.Fatal("RemoveDistro(core) reverted = false, want true (core is a shipped definition)")
 	}
 
-	if _, err := a.RemoveDistro("fake"); err == nil || !webui.IsBadRequest(err) {
-		t.Fatalf("RemoveDistro(fake) [selected]: err=%v, want a webui.BadRequest-marked error", err)
+	if _, err := a.RemoveDistro("fake"); err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("RemoveDistro(fake) [selected]: err=%v, want a state.BadRequest-marked error", err)
 	}
-	if _, err := a.RemoveDistro("contrib"); err == nil || !webui.IsBadRequest(err) {
-		t.Fatalf("RemoveDistro(contrib) [pure definition, no user entry]: err=%v, want a webui.BadRequest-marked error", err)
+	if _, err := a.RemoveDistro("contrib"); err == nil || !state.IsBadRequest(err) {
+		t.Fatalf("RemoveDistro(contrib) [pure definition, no user entry]: err=%v, want a state.BadRequest-marked error", err)
 	}
 }
 
@@ -1262,7 +1261,7 @@ func TestMigrationStaleGuardFiresWithoutActiveConfig(t *testing.T) {
 // TestUserMistakesAreBadRequests locks in that every failure a person can
 // cause from the UI or CLI — a bad name, a missing or duplicate config, a
 // config the collector rejects, a distro that isn't there — is marked
-// webui.BadRequest, so the REST layer answers 400. The web UI appends a
+// state.BadRequest, so the REST layer answers 400. The web UI appends a
 // collector log tail only to a 5xx (a real fault of ours); a user mistake
 // answered 500 buries its own message under an irrelevant log dump, which
 // is exactly what the 2026-08-25 UI feedback reported.
@@ -1335,8 +1334,8 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 			t.Errorf("%s: err = nil, want an error", tc.name)
 			continue
 		}
-		if !webui.IsBadRequest(err) {
-			t.Errorf("%s: err = %v, want it marked webui.BadRequest (400, no collector log tail)", tc.name, err)
+		if !state.IsBadRequest(err) {
+			t.Errorf("%s: err = %v, want it marked state.BadRequest (400, no collector log tail)", tc.name, err)
 		}
 	}
 
@@ -1345,11 +1344,11 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 	if err := a.UpdateConfigMeta("other", strPtr("broken"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.ValidateConfig("other"); err == nil || !webui.IsBadRequest(err) {
-		t.Errorf("ValidateConfig with a config the collector rejects: err = %v, want webui.BadRequest-marked", err)
+	if err := a.ValidateConfig("other"); err == nil || !state.IsBadRequest(err) {
+		t.Errorf("ValidateConfig with a config the collector rejects: err = %v, want state.BadRequest-marked", err)
 	}
-	if err := a.Activate("other", ""); err == nil || !webui.IsBadRequest(err) {
-		t.Errorf("Activate with a config the collector rejects: err = %v, want webui.BadRequest-marked", err)
+	if err := a.Activate("other", ""); err == nil || !state.IsBadRequest(err) {
+		t.Errorf("Activate with a config the collector rejects: err = %v, want state.BadRequest-marked", err)
 	}
 }
 
@@ -1358,11 +1357,11 @@ func strPtr(s string) *string { return &s }
 // TestBadRequestSurvivesWrapping guards the marker against the commonest way
 // to lose it: a caller adding context with fmt.Errorf("%w").
 func TestBadRequestSurvivesWrapping(t *testing.T) {
-	wrapped := fmt.Errorf("activating mine: %w", webui.BadRequest(errors.New("boom")))
-	if !webui.IsBadRequest(wrapped) {
+	wrapped := fmt.Errorf("activating mine: %w", state.BadRequest(errors.New("boom")))
+	if !state.IsBadRequest(wrapped) {
 		t.Errorf("IsBadRequest(wrapped) = false, want true")
 	}
-	if !errors.Is(webui.BadRequest(os.ErrNotExist), os.ErrNotExist) {
+	if !errors.Is(state.BadRequest(os.ErrNotExist), os.ErrNotExist) {
 		t.Errorf("BadRequest must not hide the error it marks from errors.Is")
 	}
 }
@@ -1399,8 +1398,8 @@ func TestUseDistroReportsApplyFailureWithoutLosingTheSelection(t *testing.T) {
 	if err == nil {
 		t.Fatal("UseDistro = nil, want the apply failure reported")
 	}
-	if !webui.IsBadRequest(err) {
-		t.Errorf("UseDistro error = %v, want webui.BadRequest-marked (no collector log tail)", err)
+	if !state.IsBadRequest(err) {
+		t.Errorf("UseDistro error = %v, want state.BadRequest-marked (no collector log tail)", err)
 	}
 	if !strings.Contains(err.Error(), "mine-own") || !strings.Contains(err.Error(), "unknown type") {
 		t.Errorf("UseDistro error = %q, want it to name the distro and carry the collector's own diagnostics", err)
@@ -1412,4 +1411,88 @@ func TestUseDistroReportsApplyFailureWithoutLosingTheSelection(t *testing.T) {
 	if s.Distro != "mine-own" {
 		t.Errorf("settings.Distro = %q after a failed apply, want mine-own: the default is the user's choice, not the active config's", s.Distro)
 	}
+}
+
+// TestGenuineFaultsStay500 pins the other half of the classification: a
+// failure that is *ours* — an unwritable state directory, launchctl
+// refusing to load the job — must NOT be BadRequest-marked. Without this,
+// a future "make more things 400" sweep would quietly turn every server
+// fault into a 400 and take the collector-log tail (the only diagnostic the
+// UI shows for a real fault) with it.
+func TestGenuineFaultsStay500(t *testing.T) {
+	t.Run("unwritable config dir", func(t *testing.T) {
+		setup(t, "state = running")
+		fakeDistro(t, "exit 0")
+		a, err := app.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(a.Dir, "configs", "mine")
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(dir, 0o755) })
+
+		err = a.WriteConfigYAML("mine", "receivers: {}\nexporters: {}\n")
+		if err == nil {
+			t.Fatal("WriteConfigYAML into an unwritable dir = nil, want a write error")
+		}
+		if state.IsBadRequest(err) {
+			t.Errorf("WriteConfigYAML err = %v, marked BadRequest — an unwritable state dir is our fault, not the caller's", err)
+		}
+	})
+
+	t.Run("launchctl failure on activate", func(t *testing.T) {
+		setup(t, "state = running")
+		fakeDistro(t, "exit 0")
+		orig := launchd.Exec
+		launchd.Exec = func(args ...string) ([]byte, error) {
+			if len(args) > 0 && args[0] == "bootstrap" {
+				return []byte("Load failed: 5: Input/output error"), errors.New("exit status 5")
+			}
+			if len(args) > 0 && args[0] == "print" {
+				return []byte("state = running"), nil
+			}
+			return nil, nil
+		}
+		t.Cleanup(func() { launchd.Exec = orig })
+
+		a, err := app.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
+			t.Fatal(err)
+		}
+		err = a.Activate("mine", "")
+		if err == nil {
+			t.Fatal("Activate with a failing launchctl = nil, want the bootstrap error")
+		}
+		if state.IsBadRequest(err) {
+			t.Errorf("Activate err = %v, marked BadRequest — launchctl refusing the job is our fault, not the caller's", err)
+		}
+
+		// Same fault reached through UseDistro must not be re-labelled either:
+		// UseDistro's "does not run with it" wrap only fits a user mistake.
+		bin := filepath.Join(t.TempDir(), "otelcol")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.AddDistro("second", bin); err != nil {
+			t.Fatal(err)
+		}
+		err = a.UseDistro("second")
+		if err == nil {
+			t.Fatal("UseDistro with a failing launchctl = nil, want the bootstrap error")
+		}
+		if state.IsBadRequest(err) {
+			t.Errorf("UseDistro err = %v, marked BadRequest — the apply failed on launchctl, not on the user's input", err)
+		}
+		if strings.Contains(err.Error(), "does not run with it") {
+			t.Errorf("UseDistro err = %q: that sentence claims the config is incompatible, which is not what happened", err)
+		}
+	})
 }

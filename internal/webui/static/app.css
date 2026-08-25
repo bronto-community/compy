@@ -292,28 +292,30 @@ span.act, .act[disabled] { color: var(--muted); }
 .configs-table .dtable-head, .configs-table .dtable-row {
   grid-template-columns: 20px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr);
 }
+/* Sized on .activate-dot, not on button.activate-dot: the active row's cell
+   is a <span> and the rest are <button>s, and giving them different boxes
+   made the active row shorter than its neighbours.
+   The negative margin cancels the row's 11px vertical padding and the
+   padding puts it back inside the box, so the button's border box spans the
+   full row height — the dot used to be a 14px target in a 42px row, and a
+   click a few pixels high or low landed on the row and did nothing. */
 .activate-dot {
   background: none;
   border: none;
-  padding: 0;
-  margin: 0;
+  align-self: stretch;
+  margin: -11px 0;
+  padding: 11px 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-family: var(--mono);
   font-size: 14px;
   line-height: 1;
   color: var(--muted);
   cursor: default;
 }
-/* The button is the whole first column of its row, not just the glyph: a
-   14px-tall target in a 42px row left most of the row a dead click. */
-button.activate-dot {
-  cursor: pointer;
-  align-self: stretch;
-  width: 100%;
-  min-height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+button.activate-dot { cursor: pointer; }
 button.activate-dot:hover { color: var(--ink); }
 .activate-dot.on { color: var(--accent); }
 .activate-dot.pending { color: var(--accent); }

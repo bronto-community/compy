@@ -34,6 +34,39 @@ const (
 	defaultHTTPPort = 14318
 )
 
+// badRequestErr marks an error as the caller's mistake — a bad name, an
+// unknown configuration, a config the collector rejects — rather than a
+// failure of ours. The REST layer answers 400 for a marked error and 500
+// for everything else, and the web UI staples a collector log tail onto a
+// 500 only, so mis-classifying a user mistake buries its own message.
+//
+// It lives here, in the leaf package everything already imports, so that
+// cfgstore and app can mark their errors without importing the HTTP layer
+// back. internal/webui matches it structurally (a BadRequest() bool
+// method), which keeps that package free of internal dependencies.
+type badRequestErr struct{ error }
+
+// BadRequest reports true, satisfying webui's badRequester interface.
+func (badRequestErr) BadRequest() bool { return true }
+
+// Unwrap keeps the marked error reachable through errors.Is/As, so marking
+// never hides what actually went wrong.
+func (e badRequestErr) Unwrap() error { return e.error }
+
+// BadRequest marks err as the caller's mistake, keeping its message
+// untouched. Mark only errors that are deterministic given the input: an
+// I/O or launchctl failure is ours, and must stay a 500.
+func BadRequest(err error) error { return badRequestErr{err} }
+
+// IsBadRequest reports whether err, or anything it wraps, was marked. It
+// unwraps rather than type-asserting: callers routinely add context with
+// fmt.Errorf("...: %w", err), and a marker that a single %w silently drops
+// is a marker you cannot rely on.
+func IsBadRequest(err error) bool {
+	var b badRequestErr
+	return errors.As(err, &b)
+}
+
 var backendNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // ValidBackendName reports whether name is a valid backend name:

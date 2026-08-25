@@ -64,29 +64,20 @@ type API struct {
 	FetchDistro   func(name string) error
 }
 
-// badRequestErr marks a closure error as the client's fault (400) rather
-// than a server failure (500 — the default for every other closure error).
-// BadRequest and IsBadRequest are its only public surface: webui has no
-// internal dependencies, so a caller like internal/app (which does import
-// webui) flags specific errors this way instead of webui importing app's
-// own error types back.
-type badRequestErr struct{ error }
+// badRequester is how a closure error asks to be reported as 400 Bad
+// Request rather than 500, the default for every other closure error.
+// state.BadRequest is what actually marks them (a leaf package everything
+// already imports); webui matches the behaviour rather than the type, which
+// keeps this package free of internal dependencies in both directions.
+type badRequester interface{ BadRequest() bool }
 
-// Unwrap keeps the marked error reachable through errors.Is/As, so marking
-// never hides what actually went wrong.
-func (e badRequestErr) Unwrap() error { return e.error }
-
-// BadRequest marks err to be reported as 400 Bad Request instead of the
-// default 500, keeping err's message untouched.
-func BadRequest(err error) error { return badRequestErr{err} }
-
-// IsBadRequest reports whether err, or anything it wraps, was marked with
-// BadRequest. It unwraps rather than type-asserting: callers routinely add
-// context with fmt.Errorf("...: %w", err), and a marker that a single %w
-// silently drops is a marker you cannot rely on.
-func IsBadRequest(err error) bool {
-	var b badRequestErr
-	return errors.As(err, &b)
+// isBadRequest reports whether err, or anything it wraps, is marked. It
+// unwraps rather than type-asserting: callers routinely add context with
+// fmt.Errorf("...: %w", err), and a marker that a single %w silently drops
+// is a marker you cannot rely on.
+func isBadRequest(err error) bool {
+	var b badRequester
+	return errors.As(err, &b) && b.BadRequest()
 }
 
 // route is one API endpoint: the drift test (TestOpenAPIDriftAgainstRoutes)
@@ -226,13 +217,13 @@ func writeErr(w http.ResponseWriter, status int, err error) {
 }
 
 // writeClosureErr reports an error returned by an App closure: a
-// webui.BadRequest-marked one (e.g. SetDistroPath's or RemoveDistro's
-// validation failures) as 400, everything else as the default 500. Every
-// handler routes its closure's error through here so any closure gets 400
-// just by marking its error, with no per-handler check.
+// state.BadRequest-marked one (a bad name, an unknown configuration, a
+// config the collector rejects) as 400, everything else as the default 500.
+// Every handler routes its closure's error through here so any closure gets
+// 400 just by marking its error, with no per-handler check.
 func writeClosureErr(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
-	if IsBadRequest(err) {
+	if isBadRequest(err) {
 		status = http.StatusBadRequest
 	}
 	writeErr(w, status, err)
@@ -702,7 +693,7 @@ func handleSetDistroPath(api API) http.HandlerFunc {
 }
 
 // handleRemoveDistro's closure error goes through writeClosureErr, so a
-// webui.BadRequest-marked one (the selected distro, or a pure definition
+// state.BadRequest-marked one (the selected distro, or a pure definition
 // name with no user entry) reports as 400; every other error is the usual
 // 500.
 func handleRemoveDistro(api API) http.HandlerFunc {

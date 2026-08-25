@@ -48,12 +48,18 @@ out on other GOOS in `internal/tray`) and `github.com/webview/webview_go`
 - `launchd` — macOS LaunchAgent management: renders the plist, installs /
   uninstalls / kickstarts / inspects it via `launchctl`.
 - `state` — on-disk state: settings, distros, state directory layout
-  (`COMPY_HOME`, below).
+  (`COMPY_HOME`, below). Also home to `BadRequest`/`IsBadRequest`, the
+  marker that says an error is the caller's mistake (400) rather than ours
+  (500): it lives in this leaf package so `cfgstore` and `app` can mark
+  errors without importing the HTTP layer back.
 - `tray` — macOS menu-bar icon (status, Open UI, Quit — deliberately no
   per-backend toggles); non-darwin build is a no-op stub.
 - `webui` — localhost-only web UI: JSON API plus an embedded (`go:embed`)
-  single-page app; no internal dependencies, the caller wires behavior in
-  via a closure struct.
+  single-page app; no internal dependencies (it recognises `state`'s
+  bad-request marker structurally, by its `BadRequest() bool` method), the
+  caller wires behavior in via a closure struct. A 5xx is the only thing
+  the page appends a collector log tail to, so a user mistake answered 500
+  buries its own message — mark it.
 - `window` — the native window wrapper `compy window` runs.
 
 ## api/
