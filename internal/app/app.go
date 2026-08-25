@@ -83,6 +83,16 @@ func (a *App) Config(name string) (cfgstore.Info, string, error) {
 	return cfgstore.Get(a.Dir, name)
 }
 
+// configDetail is the web UI's view of one configuration: its Info plus
+// YAML.
+func (a *App) configDetail(name string) (any, error) {
+	info, yaml, err := a.Config(name)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"info": info, "yaml": yaml}, nil
+}
+
 // ActiveConfig returns the active configuration's name and its active
 // variable set. Both are "" when nothing has been activated yet.
 func (a *App) ActiveConfig() (string, string, error) {
@@ -454,6 +464,14 @@ func (a *App) EnsureDistro(name string) (string, error) {
 	return "", fmt.Errorf("no such distro %q", name)
 }
 
+// FetchDistro ensures name's collector binary is present locally,
+// downloading a shipped definition on first use; a no-op for an
+// already-downloaded or user-registered distro.
+func (a *App) FetchDistro(name string) error {
+	_, err := a.EnsureDistro(name)
+	return err
+}
+
 // Distros lists the distro registry: shipped definitions (flagged available
 // for this platform and whether they are downloaded) plus user entries.
 func (a *App) Distros() ([]map[string]any, error) {
@@ -585,6 +603,19 @@ func (a *App) EnvInfo() (map[string]string, string, error) {
 // GetSettings returns compy's global settings.
 func (a *App) GetSettings() (state.Settings, error) { return state.LoadSettings() }
 
+// settingsMap is the web UI's view of Settings.
+func (a *App) settingsMap() (map[string]any, error) {
+	s, err := a.GetSettings()
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"grpc_port":        s.GRPCPort,
+		"http_port":        s.HTTPPort,
+		"menu_distro_swap": s.MenuDistroSwap,
+	}, nil
+}
+
 // PutSettings partially updates compy's global settings (nil = unchanged);
 // grpcP/httpP must be in 1-65535. Port changes take effect on the next
 // Apply/Activate, not immediately.
@@ -653,13 +684,48 @@ func (a *App) statusMap() (map[string]any, error) {
 	}, nil
 }
 
-// WebUIAPI wires the web UI's closures onto App methods. The v2 UI is a
-// stopgap (P3 rebuilds it): status, the configuration list, and activation.
+// WebUIAPI wires the web UI's closures onto App methods: the full v2 REST
+// surface (docs/superpowers/plans/2026-08-25-compy-v2-p2-rest.md).
 func (a *App) WebUIAPI() webui.API {
 	return webui.API{
 		Status:   a.statusMap,
-		Configs:  func() (any, error) { return a.Configs() },
-		Activate: func(name string) error { return a.Activate(name, "") },
 		Log:      func() (string, error) { return collector.TailLog(a.LogPath(), 50) },
+		Env:      a.EnvInfo,
+		SetOSEnv: a.SetOSEnv,
+
+		GetSettings: a.settingsMap,
+		PutSettings: a.PutSettings,
+
+		Apply:    a.Apply,
+		Rollback: a.Rollback,
+		Validate: a.Validate,
+
+		Configs:       func() (any, error) { return a.Configs() },
+		CreateConfig:  a.CreateConfig,
+		CreateFromURL: a.CreateFromURL,
+		GetConfig:     a.configDetail,
+		PutConfigYAML: a.WriteConfigYAML,
+		PutConfigMeta: a.UpdateConfigMeta,
+		DeleteConfig:  a.DeleteConfig,
+		CopyConfig:    a.CopyConfig,
+		Activate:      a.Activate,
+		Sync:          a.Sync,
+		Resync:        a.Resync,
+		SyncAll:       a.SyncAll,
+
+		PutSet:    a.ReplaceSet,
+		DeleteSet: a.DeleteSet,
+		UseSet:    a.UseSet,
+
+		Distros: func() (any, error) { return a.Distros() },
+		AddDistro: func(name, path string) (string, error) {
+			warning := a.AddDistroWarning(name)
+			if err := a.AddDistro(name, path); err != nil {
+				return "", err
+			}
+			return warning, nil
+		},
+		UseDistro:   a.UseDistro,
+		FetchDistro: a.FetchDistro,
 	}
 }

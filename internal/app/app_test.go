@@ -499,6 +499,21 @@ func TestEnvInfo(t *testing.T) {
 	}
 }
 
+func TestFetchDistro(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.FetchDistro("fake"); err != nil {
+		t.Fatalf("FetchDistro(fake): %v", err)
+	}
+	if err := a.FetchDistro("no-such-distro"); err == nil {
+		t.Fatal("FetchDistro(no-such-distro): want error, got nil")
+	}
+}
+
 func TestAddDistroWarning(t *testing.T) {
 	setup(t, "")
 	a, err := app.New()

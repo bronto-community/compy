@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -19,10 +20,8 @@ var staticFiles embed.FS
 
 // API is filled with closures by cmd/compy (internal/app.WebUIAPI); this is
 // the full v2 REST surface (docs/superpowers/plans/2026-08-25-compy-v2-p2-rest.md,
-// "The REST surface"). Status, Configs, Activate, and Log are the frozen P1
-// stopgap shapes the embedded static page already calls; everything else is
-// wired by later tasks (nil until then — routes() must serve those as 501
-// without dereferencing the closure).
+// "The REST surface"). Status, Configs, Activate, and Log are also the
+// frozen P1 stopgap shapes the embedded static page already calls.
 type API struct {
 	Status   func() (map[string]any, error)            // service state, distro, ports, active config
 	Log      func() (string, error)                    // tail of collector log
@@ -44,7 +43,7 @@ type API struct {
 	PutConfigMeta func(name string, distro, remoteURL *string) error // partial: nil = unchanged
 	DeleteConfig  func(name string) error
 	CopyConfig    func(src, dst string) error
-	Activate      func(name string) error // make a configuration the running one
+	Activate      func(name, set string) error // make a configuration the running one; "" set keeps the current one
 	Sync          func(name string) error
 	Resync        func(name string) error
 	SyncAll       func() ([]string, error)
@@ -68,43 +67,42 @@ type route struct {
 	H       func(API) http.HandlerFunc
 }
 
-// routes is the full REST surface. New (not-yet-wired) endpoints use
-// notImplemented, which never touches its API argument — so a nil closure
-// field on an unwired endpoint is safe.
+// routes is the full REST surface (docs/superpowers/plans/2026-08-25-compy-v2-p2-rest.md,
+// "The REST surface"); api/openapi.json mirrors it exactly (TestOpenAPIDriftAgainstRoutes).
 func routes() []route {
 	return []route{
 		{"GET", "/api/status", handleStatus},
 		{"GET", "/api/log", handleLog},
-		{"GET", "/api/env", notImplemented},
-		{"POST", "/api/os-env", notImplemented},
+		{"GET", "/api/env", handleEnv},
+		{"POST", "/api/os-env", handleSetOSEnv},
 
-		{"GET", "/api/settings", notImplemented},
-		{"PUT", "/api/settings", notImplemented},
+		{"GET", "/api/settings", handleGetSettings},
+		{"PUT", "/api/settings", handlePutSettings},
 
-		{"POST", "/api/service/apply", notImplemented},
-		{"POST", "/api/service/rollback", notImplemented},
-		{"POST", "/api/service/validate", notImplemented},
+		{"POST", "/api/service/apply", handleApply},
+		{"POST", "/api/service/rollback", handleRollback},
+		{"POST", "/api/service/validate", handleValidate},
 
 		{"GET", "/api/configs", handleConfigs},
-		{"POST", "/api/configs", notImplemented},
-		{"POST", "/api/configs/from-url", notImplemented},
-		{"GET", "/api/configs/{name}", notImplemented},
-		{"PUT", "/api/configs/{name}/yaml", notImplemented},
-		{"PUT", "/api/configs/{name}/meta", notImplemented},
-		{"DELETE", "/api/configs/{name}", notImplemented},
-		{"POST", "/api/configs/{name}/copy", notImplemented},
+		{"POST", "/api/configs", handleCreateConfig},
+		{"POST", "/api/configs/from-url", handleCreateFromURL},
+		{"GET", "/api/configs/{name}", handleGetConfig},
+		{"PUT", "/api/configs/{name}/yaml", handlePutConfigYAML},
+		{"PUT", "/api/configs/{name}/meta", handlePutConfigMeta},
+		{"DELETE", "/api/configs/{name}", handleDeleteConfig},
+		{"POST", "/api/configs/{name}/copy", handleCopyConfig},
 		{"POST", "/api/configs/{name}/activate", handleActivate},
-		{"POST", "/api/configs/{name}/sync", notImplemented},
-		{"POST", "/api/configs/{name}/resync", notImplemented},
-		{"POST", "/api/configs/sync-all", notImplemented},
-		{"PUT", "/api/configs/{name}/sets/{set}", notImplemented},
-		{"DELETE", "/api/configs/{name}/sets/{set}", notImplemented},
-		{"POST", "/api/configs/{name}/sets/{set}/use", notImplemented},
+		{"POST", "/api/configs/{name}/sync", handleSync},
+		{"POST", "/api/configs/{name}/resync", handleResync},
+		{"POST", "/api/configs/sync-all", handleSyncAll},
+		{"PUT", "/api/configs/{name}/sets/{set}", handlePutSet},
+		{"DELETE", "/api/configs/{name}/sets/{set}", handleDeleteSet},
+		{"POST", "/api/configs/{name}/sets/{set}/use", handleUseSet},
 
-		{"GET", "/api/distros", notImplemented},
-		{"POST", "/api/distros", notImplemented},
-		{"POST", "/api/distros/{name}/use", notImplemented},
-		{"POST", "/api/distros/{name}/fetch", notImplemented},
+		{"GET", "/api/distros", handleDistros},
+		{"POST", "/api/distros", handleAddDistro},
+		{"POST", "/api/distros/{name}/use", handleUseDistro},
+		{"POST", "/api/distros/{name}/fetch", handleFetchDistro},
 	}
 }
 
@@ -210,9 +208,19 @@ func handleConfigs(api API) http.HandlerFunc {
 	}
 }
 
+// handleActivate reads an OPTIONAL JSON body {"set"}: the stopgap index.html
+// posts with no body at all, which must keep working, so an empty body is
+// not an error — only a malformed (non-empty, invalid) one is.
 func handleActivate(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := api.Activate(r.PathValue("name")); err != nil {
+		var body struct {
+			Set string `json:"set"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := api.Activate(r.PathValue("name"), body.Set); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -231,11 +239,363 @@ func handleLog(api API) http.HandlerFunc {
 	}
 }
 
-// notImplemented serves the still-unwired portion of the REST surface. It
-// never touches api, so it is safe to use before the corresponding closure
-// exists.
-func notImplemented(API) http.HandlerFunc {
+func handleEnv(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		writeErr(w, http.StatusNotImplemented, errors.New("not implemented"))
+		vars, script, err := api.Env()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"vars": vars, "script": script})
 	}
+}
+
+func handleSetOSEnv(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			On bool `json:"on"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := api.SetOSEnv(body.On); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleGetSettings(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		settings, err := api.GetSettings()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
+	}
+}
+
+// handlePutSettings applies a partial update, then responds with the full
+// resulting settings (the openapi PUT response schema is Settings, not a
+// bare ok).
+func handlePutSettings(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			GRPCPort       *int  `json:"grpc_port"`
+			HTTPPort       *int  `json:"http_port"`
+			MenuDistroSwap *bool `json:"menu_distro_swap"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := api.PutSettings(body.GRPCPort, body.HTTPPort, body.MenuDistroSwap); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		settings, err := api.GetSettings()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
+	}
+}
+
+func handleApply(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Apply(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleRollback(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Rollback(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleValidate(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Validate(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleCreateConfig(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+			Yaml string `json:"yaml"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := api.CreateConfig(body.Name, body.Yaml); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleCreateFromURL(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := api.CreateFromURL(body.Name, body.URL); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleGetConfig(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		detail, err := api.GetConfig(r.PathValue("name"))
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+	}
+}
+
+// handlePutConfigYAML's body is text/plain, not JSON: the whole body is the
+// new YAML content.
+func handlePutConfigYAML(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := api.PutConfigYAML(r.PathValue("name"), string(data)); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handlePutConfigMeta(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Distro    *string `json:"distro"`
+			RemoteURL *string `json:"remote_url"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := api.PutConfigMeta(r.PathValue("name"), body.Distro, body.RemoteURL); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleDeleteConfig(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.DeleteConfig(r.PathValue("name")); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleCopyConfig(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Dst string `json:"dst"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := api.CopyConfig(r.PathValue("name"), body.Dst); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleSync(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Sync(r.PathValue("name")); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleResync(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.Resync(r.PathValue("name")); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleSyncAll(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		synced, err := api.SyncAll()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"synced": synced})
+	}
+}
+
+// handlePutSet treats an absent or null "values" as {}: the closure never
+// sees a nil map.
+func handlePutSet(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		set := r.PathValue("set")
+		if set == "" {
+			writeErr(w, http.StatusBadRequest, errors.New("set name required"))
+			return
+		}
+		var body struct {
+			Values map[string]string `json:"values"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if body.Values == nil {
+			body.Values = map[string]string{}
+		}
+		if err := api.PutSet(r.PathValue("name"), set, body.Values); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleDeleteSet(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		set := r.PathValue("set")
+		if set == "" {
+			writeErr(w, http.StatusBadRequest, errors.New("set name required"))
+			return
+		}
+		if err := api.DeleteSet(r.PathValue("name"), set); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleUseSet(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		set := r.PathValue("set")
+		if set == "" {
+			writeErr(w, http.StatusBadRequest, errors.New("set name required"))
+			return
+		}
+		if err := api.UseSet(r.PathValue("name"), set); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleDistros(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		distros, err := api.Distros()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, distros)
+	}
+}
+
+func handleAddDistro(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		warning, err := api.AddDistro(body.Name, body.Path)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"warning": warning})
+	}
+}
+
+func handleUseDistro(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.UseDistro(r.PathValue("name")); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func handleFetchDistro(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.FetchDistro(r.PathValue("name")); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// decodeBody decodes r's JSON body into v. An empty body (no Content-Length,
+// nothing read) is not an error — v keeps its zero value — since several
+// routes' bodies are wholly or partially optional (the frozen stopgap
+// index.html posts /activate with no body at all). Only a non-empty,
+// malformed body is reported as an error.
+func decodeBody(r *http.Request, v any) error {
+	if r.Body == nil {
+		return nil
+	}
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		if err == io.EOF {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
