@@ -148,6 +148,8 @@ const S = {
   theme: "system",
   dl: {},                  // { distroName: {status, pct, error} }
   addName: "", addPath: "",
+  settings: null,          // { grpc_port, http_port }
+  portsSaved: false,       // "applies on the next restart" line showing
 };
 
 /* ── theme ────────────────────────────────────────────────────────────
@@ -202,6 +204,27 @@ function activeName() {
   return S.status.config;
 }
 function isSecret(key) { return /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH/i.test(key); }
+/* Ports honesty: compy only injects COMPY_GRPC_PORT / COMPY_HTTP_PORT — a
+   config whose YAML doesn't reference them listens wherever its YAML says,
+   so the settings ports are only claimed when the active config's vars
+   include them (2026-08-26 feedback). */
+function activePortRefs() {
+  const info = S.status ? byName(S.status.config) : null;
+  let grpc = false, http = false;
+  for (const v of (info && info.vars) || []) {
+    if (v.name === "COMPY_GRPC_PORT") grpc = true;
+    if (v.name === "COMPY_HTTP_PORT") http = true;
+  }
+  return { grpc, http };
+}
+function portsText(long) {
+  const r = activePortRefs();
+  const st = S.status || {};
+  if (r.grpc && r.http) return long ? ":" + st.grpc_port + " grpc · :" + st.http_port + " http" : ":" + st.grpc_port + " :" + st.http_port;
+  if (r.grpc) return ":" + st.grpc_port + " grpc";
+  if (r.http) return ":" + st.http_port + " http";
+  return "ports per config.yaml";
+}
 function fmtCount(n) {
   if (n == null) return "—";
   if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, "") + "m";
@@ -267,6 +290,7 @@ async function loadCollector() {
   S.log = (log && log.log) || "";
 }
 async function loadDistros() { S.distros = (await api("/api/distros")) || []; }
+async function loadSettings() { S.settings = await api("/api/settings"); }
 async function loadYAML(name) {
   const d = await api(cfgURL(name));
   S.yaml = d.yaml || "";
@@ -306,7 +330,7 @@ async function enterRoute() {
       destroyEditor();
     }
     if (r.screen === "collector") await loadCollector();
-    if (r.screen === "settings") await loadDistros();
+    if (r.screen === "settings") { S.portsSaved = false; await Promise.all([loadDistros(), loadSettings()]); }
     if (r.screen === "configs") await loadCollector(); // sidebar's warn badge
   } catch (e) {
     showError(e);
@@ -416,16 +440,16 @@ function renderSidebar() {
   const busy = !!S.busyId || S.restarting;
   const word = stopped && !busy ? "stopped" : busy ? "restarting…" : "running";
   const dotColor = busy ? "var(--accent)" : stopped ? "var(--dim2)" : "var(--ok)";
-  const ports = S.status ? ":" + S.status.grpc_port + " :" + S.status.http_port : "";
   box.appendChild(el("div", { class: "line1" }, [
     el("span", { class: "dot5", attrs: { style: "background: " + dotColor } }),
     span("", word),
   ]));
   box.appendChild(span("name", activeName()));
   // Stopped, the card already says "nothing active"; naming the preset that
-  // is not running next to it just contradicts the line above.
-  box.appendChild(span("preset", "preset · " + ((!stopped && S.status && S.status.preset) || "—")));
-  box.appendChild(span("ports", ((S.status && S.status.distro) || "no collector") + " · " + (stopped ? "not listening" : ports)));
+  // is not running next to it just contradicts the line above. Running with
+  // no preset is the implicit "default" preset (empty values), not "—".
+  box.appendChild(span("preset", "preset · " + (stopped ? "—" : (S.status && S.status.preset) || "default")));
+  box.appendChild(span("ports", ((S.status && S.status.distro) || "no collector") + " · " + (stopped ? "not listening" : portsText(false))));
 }
 
 /* ── screen 1: configurations ─────────────────────────────────────── */
@@ -453,6 +477,8 @@ function screenConfigs() {
   ]));
 
   const strips = el("div", { class: "strip-wrap" });
+  const help = helpStrip();
+  if (help) strips.appendChild(help);
   if (S.newOpen) strips.appendChild(newConfigStrip());
   if (S.note) strips.appendChild(el("div", { class: "note", text: S.note }));
   if (nothingActive() && !S.busyId) strips.appendChild(nothingActiveStrip());
@@ -475,6 +501,20 @@ function screenConfigs() {
   if (S.confirm) scroll.appendChild(confirmRow());
   wrap.appendChild(scroll);
   return wrap;
+}
+
+/* Getting-started strip: three sentences, dismissible, remembered in
+   localStorage (guarded — WKWebView can run with storage blocked). */
+function helpStrip() {
+  try { if (localStorage.getItem("compy.helpDismissed") === "1") return null; } catch (e) { /* show it */ }
+  return el("div", { class: "gethelp" }, [
+    el("span", { class: "b sans", text: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. new configuration adds your own — paste yaml or fetch it from a url." }),
+    el("span", { class: "grow" }),
+    el("button", {
+      class: "act x", text: "✕", title: "hide this",
+      on: { click: () => { try { localStorage.setItem("compy.helpDismissed", "1"); } catch (e) { /* session-only */ } render(); } },
+    }),
+  ]);
 }
 
 function nothingActiveStrip() {
@@ -541,7 +581,18 @@ function configRow(info) {
   const typeTitle = origin === "url" ? "fetched from " + host
     : origin === "builtin" ? "built in to compy" : "yours";
 
-  const row = el("div", { class: "cfg-grid cfg-row" + (running ? " on" : "") });
+  // The whole row opens the config editor (same action as the name) so the
+  // dead space between columns is clickable; interactive children are
+  // excluded by the closest() guard rather than per-child stopPropagation.
+  const row = el("div", {
+    class: "cfg-grid cfg-row" + (running ? " on" : ""),
+    on: {
+      click: (e) => {
+        if (e.target.closest("button, input, .menu")) return;
+        go("#/configs/" + enc(name));
+      },
+    },
+  });
 
   row.appendChild(el("span", { class: "cell-icons" }, [
     iconWrap("run", running ? "dot" : "circle", 13, false, running ? "running now" : "not running"),
@@ -550,7 +601,13 @@ function configRow(info) {
 
   row.appendChild(el("button", {
     class: "cfg-name", on: { click: () => go("#/configs/" + enc(name)) },
-  }, [span("", name)]));
+  }, [
+    span("", name),
+    // Active-config indication beyond the amber name and dot: the word
+    // itself, pulsing, so the row unambiguously says "this is running"
+    // (2026-08-26 feedback). Stopped-but-active stays dimmed, wordless.
+    running && !busy ? span("runword", "running") : null,
+  ]));
 
   /* preset cell: selector (chevron only when there is more than one),
      play, pencil, and the in-flight indicator. */
@@ -558,10 +615,12 @@ function configRow(info) {
   const selBtn = el("button", {
     class: "preset-sel" + (many ? " many" : ""),
     attrs: many ? { "aria-haspopup": "true" } : { tabindex: "-1" },
-    title: list.length ? null : "this config has no presets",
+    title: list.length ? null : "no presets yet — activates with default values",
     on: { click: () => { if (many) { S.presetsOpenId = S.presetsOpenId === name ? null : name; render(); } } },
   }, [
-    span("nm", sel || "—"),
+    // A preset-less config runs on the implicit default preset (empty
+    // values) — say "default", muted, rather than a broken-looking "—".
+    span(sel ? "nm" : "nm implicit", sel || "default"),
     el("span", { class: "grow" }),
     many ? el("span", { class: "caret" }, [icon("chevron", 12)]) : null,
   ]);
@@ -574,10 +633,12 @@ function configRow(info) {
     attrs: alreadyRunning || busy ? { disabled: "" } : null,
     on: { click: () => activate(name, sel) },
   }, [icon("play", 11, true)]));
+  // A pencil here read as "edit the config"; the row-level icon is now a
+  // plus that adds a preset (the per-preset pencil lives in the dropdown).
   cell.appendChild(el("button", {
-    class: "pencil", title: "edit preset values",
-    on: { click: () => openInline(name, sel, false) },
-  }, [icon("pencil", 12)]));
+    class: "addp", title: "add a preset",
+    on: { click: () => openInline(name, "", true) },
+  }, [icon("plus", 12)]));
 
   if (busy) {
     cell.appendChild(el("span", { class: "busy" }, [
@@ -1282,17 +1343,21 @@ function screenCollector() {
 function tiles(stopped) {
   const st = S.status || {};
   const tile = (label, node) => el("div", { class: "tile" }, [span("colhead", label), node]);
+  // "listening" only claims the settings ports the active config actually
+  // references (see portsText); anything else is the config's own business.
+  const refs = activePortRefs();
+  const perYaml = !stopped && !refs.grpc && !refs.http;
   return el("div", { class: "tiles" }, [
     tile("configuration", el("span", { class: "v accent", text: activeName() })),
-    tile("preset", el("span", { class: "v" + (stopped ? " off" : ""), text: stopped ? "—" : (st.preset || "—") })),
+    tile("preset", el("span", { class: "v" + (stopped || !st.preset ? " off" : ""), text: stopped ? "—" : (st.preset || "default") })),
     tile("collector", el("button", {
       class: "link", text: st.distro || "none selected",
       title: "every config runs on this one. change it in settings.",
       on: { click: () => go("#/settings") },
     })),
     tile("listening", el("span", {
-      class: "v" + (stopped ? " off" : ""),
-      text: stopped ? "not listening" : ":" + st.grpc_port + " grpc · :" + st.http_port + " http",
+      class: "v" + (stopped || perYaml ? " off" : ""),
+      text: stopped ? "not listening" : portsText(true),
     })),
   ]);
 }
@@ -1389,7 +1454,7 @@ function screenSettings() {
   wrap.appendChild(el("div", { class: "sec" }, [
     span("title", "app"),
     el("div", { class: "subtitle sans" }, [
-      document.createTextNode("ports and shell wiring live in the CLI: "),
+      document.createTextNode("shell wiring lives in the CLI: "),
       el("span", { attrs: { style: "color: var(--text3)" }, text: "compy env" }),
     ]),
   ]));
@@ -1416,6 +1481,7 @@ function screenSettings() {
       el("span", { class: "grow" }),
       el("span", { class: "switch" + (osEnvOn ? " on" : "") }, [el("i")]),
     ]),
+    portsRow(),
   ]));
 
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
@@ -1507,6 +1573,63 @@ function distroRow(b) {
   return row;
 }
 
+/* Ports row: the COMPY_GRPC_PORT / COMPY_HTTP_PORT values (excluded from
+   preset value cards — they're global; this row is their home). The backend
+   only stores them: nothing re-applies a running collector, so a save is
+   answered honestly with "applies when the collector next restarts". */
+function portsRow() {
+  const st = S.settings;
+  const frag = document.createDocumentFragment();
+  const portField = (key, label) => el("span", { class: "pfield" }, [
+    span("plbl", label),
+    el("input", {
+      class: "field sm",
+      attrs: {
+        type: "number", min: "1", max: "65535", spellcheck: "false",
+        "data-fk": "port-" + key, "aria-label": label + " port",
+      },
+      props: { value: st && st[key + "_port"] != null ? String(st[key + "_port"]) : "" },
+      on: { change: (e) => savePort(key + "_port", e.target.value) },
+    }),
+  ]);
+  frag.appendChild(el("div", { class: "srow" }, [
+    el("span", { class: "lbl" }, [
+      span("t", "otlp ports"),
+      el("span", { class: "n sans", text: "for configs that listen on compy's ports (COMPY_GRPC_PORT / COMPY_HTTP_PORT)" }),
+    ]),
+    el("span", { class: "grow" }),
+    portField("grpc", "grpc"),
+    portField("http", "http"),
+  ]));
+  if (S.portsSaved) {
+    const running = !nothingActive();
+    frag.appendChild(el("div", { class: "srow portsnote" }, [
+      el("span", { class: "n sans", text: running
+        ? "saved. the new ports apply when the collector next restarts."
+        : "saved. the collector is stopped — the new ports apply when it starts." }),
+      el("span", { class: "grow" }),
+      running ? el("button", {
+        class: "act", text: "restart now",
+        on: { click: async () => { S.portsSaved = false; await restartCollector(); note("collector restarted on the new ports", 3200); } },
+      }) : null,
+    ]));
+  }
+  return frag;
+}
+async function savePort(key, raw) {
+  const n = parseInt(raw, 10);
+  if (!n) { render(); return; } // empty or junk: put the saved value back
+  clearError();
+  try {
+    const body = {};
+    body[key] = n;
+    S.settings = await apiJSON("/api/settings", "PUT", body); // backend 400s out-of-range
+    S.portsSaved = true;
+    await loadCore(); // status carries the (still-running) old ports; refresh anyway
+  } catch (e) { showError(e); try { await loadSettings(); } catch (e2) { /* keep stale */ } }
+  render();
+}
+
 async function setOSEnv(on) {
   clearError();
   try {
@@ -1586,7 +1709,7 @@ async function refresh() {
     await loadCore();
     if (S.screen === "collector") { if (S.tail) await loadCollector(); }
     else if (S.screen === "configs") await loadCollector();
-    else if (S.screen === "settings") await loadDistros();
+    else if (S.screen === "settings") await Promise.all([loadDistros(), loadSettings()]);
   } catch (e) { return; } // a transient failure should not blank the window
   if (refreshBlocked()) return;
   render();
@@ -1603,5 +1726,16 @@ if (window.matchMedia) {
 document.addEventListener("click", (e) => {
   if (S.presetsOpenId && !e.target.closest(".cell-preset")) { S.presetsOpenId = null; render(); }
 }, true);
+// cmd/ctrl+S saves in the editor — the same save-and-validate as the button.
+// preventDefault always, so the browser's save dialog never opens; outside
+// the editor the shortcut otherwise does nothing. No other shortcuts.
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    if (S.screen !== "editor") return;
+    const info = byName(S.editId);
+    if (info) saveConfig(info);
+  }
+});
 enterRoute();
 setInterval(refresh, 3000);
