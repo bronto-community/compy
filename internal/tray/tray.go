@@ -140,12 +140,8 @@ func (m *menu) sync() {
 	// Menu bar counts warn-level lines only (controller ruling D2); the
 	// error count that used to sit alongside it is dropped from this line.
 	_, warns, _ := m.a.LogStats(500) // best-effort: a log-read error just omits the tail
-	// Configs are fetched before the status line so it can say honestly
-	// whether the settings ports apply to the active config; a failed list
-	// falls back to "ports per config.yaml" rather than a claimed port.
 	configs, cfgErr := m.a.Configs()
-	grpcRef, httpRef := activePortRefs(configs, st.Config)
-	line1, line2 := statusLines(st, warns, grpcRef, httpRef)
+	line1, line2 := statusLines(st, warns)
 	m.status.SetTitle(line1)
 	m.statusLine2.SetTitle(line2)
 

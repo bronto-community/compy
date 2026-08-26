@@ -5,6 +5,7 @@ package tray
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/bronto-io/compy/internal/app"
 	"github.com/bronto-io/compy/internal/cfgstore"
@@ -22,11 +23,10 @@ import (
 // amber/grey running dot — a native menu item can't tint text, so a glyph
 // carries what colour would.
 //
-// grpcRef/httpRef say whether the active config's YAML references
-// COMPY_GRPC_PORT / COMPY_HTTP_PORT: compy only injects those variables, so
-// a config that doesn't reference them listens wherever its YAML says, and
-// printing the settings ports would be a lie (2026-08-26 feedback).
-func statusLines(st app.Status, warns int, grpcRef, httpRef bool) (line1, line2 string) {
+// The ports segment is st.Listening — the ports the collector process is
+// actually listening on, detected from the OS — never a claim derived from
+// settings or YAML. Nothing detected omits the segment entirely.
+func statusLines(st app.Status, warns int) (line1, line2 string) {
 	if !st.Running {
 		return "○ Stopped", "no listeners"
 	}
@@ -36,41 +36,31 @@ func statusLines(st app.Status, warns int, grpcRef, httpRef bool) (line1, line2 
 	} else {
 		line1 += " · default"
 	}
-	switch {
-	case grpcRef && httpRef:
-		line2 = fmt.Sprintf(":%d :%d", st.GRPCPort, st.HTTPPort)
-	case grpcRef:
-		line2 = fmt.Sprintf(":%d grpc", st.GRPCPort)
-	case httpRef:
-		line2 = fmt.Sprintf(":%d http", st.HTTPPort)
-	default:
-		line2 = "ports per config.yaml"
-	}
+	line2 = portsSegment(st.Listening)
 	if warns > 0 {
-		line2 += fmt.Sprintf(" · %d warnings", warns)
+		if line2 != "" {
+			line2 += " · "
+		}
+		line2 += fmt.Sprintf("%d warnings", warns)
 	}
 	return line1, line2
 }
 
-// activePortRefs reports whether the active config's YAML references
-// COMPY_GRPC_PORT / COMPY_HTTP_PORT — the only ports compy actually injects.
-// Unknown config (deleted, or the list failed to load) reports neither, so
-// the status line falls back to the honest "ports per config.yaml".
-func activePortRefs(configs []cfgstore.Info, active string) (grpcRef, httpRef bool) {
-	for _, c := range configs {
-		if c.Name != active {
-			continue
-		}
-		for _, v := range c.Vars {
-			if v.Name == "COMPY_GRPC_PORT" {
-				grpcRef = true
-			}
-			if v.Name == "COMPY_HTTP_PORT" {
-				httpRef = true
-			}
-		}
+// portsSegment compacts detected listening ports for one status line: up to
+// four shown as ":6000 :6001 :8888", more as "N ports open", none as "" —
+// no detection, no claim.
+func portsSegment(ports []int) string {
+	if len(ports) == 0 {
+		return ""
 	}
-	return grpcRef, httpRef
+	if len(ports) > 4 {
+		return fmt.Sprintf("%d ports open", len(ports))
+	}
+	parts := make([]string, len(ports))
+	for i, p := range ports {
+		parts[i] = fmt.Sprintf(":%d", p)
+	}
+	return strings.Join(parts, " ")
 }
 
 // recencyOrder orders configuration names per ACCEPTANCE C5.2: `recent`'s
