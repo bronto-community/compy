@@ -204,26 +204,22 @@ function activeName() {
   return S.status.config;
 }
 function isSecret(key) { return /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH/i.test(key); }
-/* Ports honesty: compy only injects COMPY_GRPC_PORT / COMPY_HTTP_PORT — a
-   config whose YAML doesn't reference them listens wherever its YAML says,
-   so the settings ports are only claimed when the active config's vars
-   include them (2026-08-26 feedback). */
-function activePortRefs() {
-  const info = S.status ? byName(S.status.config) : null;
-  let grpc = false, http = false;
-  for (const v of (info && info.vars) || []) {
-    if (v.name === "COMPY_GRPC_PORT") grpc = true;
-    if (v.name === "COMPY_HTTP_PORT") http = true;
-  }
-  return { grpc, http };
+/* Ports honesty: only ports the collector process is ACTUALLY listening on
+   (detected OS-side via lsof, /api/status "listening") are ever claimed —
+   never a guess from settings or YAML. Nothing detected, nothing shown. */
+function detectedPorts() { return (S.status && S.status.listening) || []; }
+function portsCompact(ports) {
+  if (ports.length > 4) return ports.length + " ports open";
+  return ports.map((p) => ":" + p).join(" ");
 }
-function portsText(long) {
-  const r = activePortRefs();
+/* What we know about a detected port: the settings grpc/http port, or the
+   port the health scrape actually answered on. Anything else is bare. */
+function portLabel(p) {
   const st = S.status || {};
-  if (r.grpc && r.http) return long ? ":" + st.grpc_port + " grpc · :" + st.http_port + " http" : ":" + st.grpc_port + " :" + st.http_port;
-  if (r.grpc) return ":" + st.grpc_port + " grpc";
-  if (r.http) return ":" + st.http_port + " http";
-  return "ports per config.yaml";
+  if (p === st.grpc_port) return "grpc";
+  if (p === st.http_port) return "http";
+  if (S.health && S.health.available && S.health.port === p) return "telemetry";
+  return "";
 }
 function fmtCount(n) {
   if (n == null) return "—";
@@ -449,7 +445,10 @@ function renderSidebar() {
   // is not running next to it just contradicts the line above. Running with
   // no preset is the implicit "default" preset (empty values), not "—".
   box.appendChild(span("preset", "preset · " + (stopped ? "—" : (S.status && S.status.preset) || "default")));
-  box.appendChild(span("ports", ((S.status && S.status.distro) || "no collector") + " · " + (stopped ? "not listening" : portsText(false))));
+  // Only detected ports are claimed; stopped or nothing detected shows no
+  // ports line at all. (The collector in use lives in settings, not here.)
+  const ports = detectedPorts();
+  if (!stopped && ports.length) box.appendChild(span("ports", portsCompact(ports)));
 }
 
 /* ── screen 1: configurations ─────────────────────────────────────── */
@@ -1357,10 +1356,11 @@ function screenCollector() {
 function tiles(stopped) {
   const st = S.status || {};
   const tile = (label, node) => el("div", { class: "tile" }, [span("colhead", label), node]);
-  // "listening" only claims the settings ports the active config actually
-  // references (see portsText); anything else is the config's own business.
-  const refs = activePortRefs();
-  const perYaml = !stopped && !refs.grpc && !refs.http;
+  // "listening" shows the FULL detected list, labeling what we know: the
+  // settings grpc/http ports and the port health actually scraped. Bare
+  // otherwise. Nothing detected while running is said plainly, not guessed.
+  const ports = detectedPorts();
+  const listenText = ports.map((p) => (":" + p + (portLabel(p) ? " " + portLabel(p) : ""))).join(" · ");
   return el("div", { class: "tiles" }, [
     tile("configuration", el("span", { class: "v accent", text: activeName() })),
     tile("preset", el("span", { class: "v" + (stopped || !st.preset ? " off" : ""), text: stopped ? "—" : (st.preset || "default") })),
@@ -1370,8 +1370,9 @@ function tiles(stopped) {
       on: { click: () => go("#/settings") },
     })),
     tile("listening", el("span", {
-      class: "v" + (stopped || perYaml ? " off" : ""),
-      text: stopped ? "not listening" : portsText(true),
+      class: "v" + (stopped || !ports.length ? " off" : ""),
+      attrs: { style: "white-space: normal; overflow-wrap: anywhere;" },
+      text: stopped ? "not listening" : ports.length ? listenText : "nothing detected",
     })),
   ]);
 }
@@ -1391,7 +1392,7 @@ function healthStrip(stopped) {
     el("span", { class: "grow" }),
     el("span", {
       class: "src", title: "the collector's own prometheus endpoint",
-      text: stopped ? "no metrics while stopped" : has ? "localhost:8888/metrics" : "localhost:8888/metrics · no answer",
+      text: stopped ? "no metrics while stopped" : has ? "localhost:" + (h.port || 8888) + "/metrics" : "localhost:8888/metrics · no answer",
     }),
   ]);
 }
