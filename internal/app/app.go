@@ -302,28 +302,39 @@ func (a *App) Activate(name, preset string) error {
 	if err := a.launch(name, preset); err != nil {
 		return err
 	}
-	if err := collector.Probe(s.GRPCPort, probeTimeout); err != nil {
-		// Configurations own their receivers and may bind nowhere near
-		// compy's ports, so a failed probe only means "not listening
-		// there" — launchd is the authority on whether the job is up.
-		if running, rerr := launchd.Running(); rerr != nil || !running {
-			tail, _ := collector.TailLog(a.LogPath(), 20)
-			failure := fmt.Errorf("collector did not come up: %w\n%s", err, tail)
-			if !cfgstore.HasSnapshot(a.Dir) {
-				return failure // nothing ever started; nothing to come back to
-			}
-			still, rerr := a.restorePrevious()
-			if rerr != nil {
-				return fmt.Errorf("%w\nand restoring the last working setup failed too: %v", failure, rerr)
-			}
-			// The reassurance is a claim about the world, so make it only
-			// when launchd agrees: a restore that itself failed to start
-			// must not be reported as "still running".
-			if back, _ := launchd.Running(); !back {
-				return failure
-			}
-			return state.StillRunning(failure, still)
+	// The probe is only the settle/wait: it retries until something answers
+	// on compy's gRPC port or the timeout passes. launchd is the authority
+	// on "up" in BOTH directions — a foreign process squatting the port
+	// answers the dial for a collector that crashed on it, and a
+	// configuration owns its receivers and may bind nowhere near compy's
+	// ports — so the job counts as started only when launchd confirms it
+	// (a launchctl error counts as not-up either way).
+	probeErr := collector.Probe(s.GRPCPort, probeTimeout)
+	if running, rerr := launchd.Running(); rerr != nil || !running {
+		if probeErr == nil {
+			probeErr = errors.New("something else answers the probe port, but launchd reports the job is not running")
 		}
+		tail, _ := collector.TailLog(a.LogPath(), 20)
+		failure := fmt.Errorf("collector did not come up: %w\n%s", probeErr, tail)
+		// The busy port — not compy's probe port — is the actionable line,
+		// and it is otherwise buried in the tail: lead with it.
+		if bind := collector.BindError(tail); bind != "" {
+			failure = fmt.Errorf("%s\ncollector did not come up: %v\n%s", bind, probeErr, tail)
+		}
+		if !cfgstore.HasSnapshot(a.Dir) {
+			return failure // nothing ever started; nothing to come back to
+		}
+		still, rerr := a.restorePrevious()
+		if rerr != nil {
+			return fmt.Errorf("%w\nand restoring the last working setup failed too: %v", failure, rerr)
+		}
+		// The reassurance is a claim about the world, so make it only
+		// when launchd agrees: a restore that itself failed to start
+		// must not be reported as "still running" — say it died instead.
+		if back, _ := launchd.Running(); !back {
+			return fmt.Errorf("%w\nthe previous setup (%s) was restored but did not start either — nothing is running now", failure, still)
+		}
+		return state.StillRunning(failure, still)
 	}
 	// Proven to have started: this is the setup a later failure comes back
 	// to. Snapshot before remember() so the two writes to settings.json

@@ -26,16 +26,30 @@ import (
 // writes ~/Library/LaunchAgents/...), stubs launchd.Exec, and returns a
 // pointer to the recorded launchctl invocations.
 func setup(t *testing.T, printOut string) *[][]string {
+	return setupStaged(t, printOut)
+}
+
+// setupStaged is setup with a scripted sequence of `launchctl print`
+// outputs: the nth print call answers stages[n], the last stage repeating
+// once the script runs out. Activate consults launchd after every probe —
+// launchd, not the probe, is the authority on "up" — so a test whose
+// scenario changes over time (running during the initial activation, down
+// at the failing one, back up after the restore) stages the answers in
+// activation order.
+func setupStaged(t *testing.T, stages ...string) *[][]string {
 	t.Helper()
 	t.Setenv("COMPY_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 
 	var calls [][]string
+	prints := 0
 	orig := launchd.Exec
 	launchd.Exec = func(args ...string) ([]byte, error) {
 		calls = append(calls, args)
 		if len(args) > 0 && args[0] == "print" {
-			return []byte(printOut), nil
+			i := min(prints, len(stages)-1)
+			prints++
+			return []byte(stages[i]), nil
 		}
 		return nil, nil
 	}
@@ -297,7 +311,7 @@ func TestActivateWithoutDistroMentionsDistroCommand(t *testing.T) {
 }
 
 func TestDeleteActiveConfigErrors(t *testing.T) {
-	setup(t, "")
+	setup(t, "state = running") // the initial Activate must find the job up
 	fakeDistro(t, "exit 0")
 	listenPort(t)
 
@@ -405,7 +419,9 @@ func TestResetReactivatesWhenActive(t *testing.T) {
 }
 
 func TestRenameConfigUpdatesSettingsAndRecent(t *testing.T) {
-	calls := setup(t, "") // launchd reports not running: no re-apply expected
+	// Running during the initial activation (Activate only succeeds when
+	// launchd confirms), stopped by rename time: no re-apply expected.
+	calls := setupStaged(t, "state = running", "")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
 
@@ -1015,6 +1031,48 @@ func TestActivateStartupFailureReportsTheLog(t *testing.T) {
 	}
 }
 
+// TestActivateFailureLeadsWithTheBusyPort: when the log tail shows an
+// "address already in use" failure, the busy port — not compy's probe
+// port — is the headline; the probe detail and the tail follow.
+func TestActivateFailureLeadsWithTheBusyPort(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close() // nothing listens: the probe fails
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.GRPCPort = port
+	if err := state.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail := `Error: cannot start pipelines: failed to start "otlp" receiver: listen tcp 127.0.0.1:16317: bind: address already in use` + "\n"
+	if err := os.WriteFile(a.LogPath(), []byte(tail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = a.Activate("debug", "")
+	if err == nil {
+		t.Fatal("Activate() = nil, want a startup failure")
+	}
+	if !strings.HasPrefix(err.Error(), "port 16317 is already in use by another process") {
+		t.Errorf("error = %q, want it to LEAD with the busy port", err)
+	}
+	if !strings.Contains(err.Error(), "collector did not come up") {
+		t.Errorf("error = %q, want the probe detail kept after the headline", err)
+	}
+}
+
 func TestNewMaterializesDefaults(t *testing.T) {
 	setup(t, "")
 	a, err := app.New()
@@ -1586,7 +1644,9 @@ func TestGenuineFaultsStay500(t *testing.T) {
 // and its preset — back, and the error names what is still running so the UI
 // can say so.
 func TestActivateStartupFailureRestoresPrevious(t *testing.T) {
-	calls := setup(t, "")
+	// Running for the initial activation only; down at the failing
+	// activation's check AND after the restore — the restore also died.
+	calls := setupStaged(t, "state = running", "")
 	fakeDistro(t, "exit 0")
 	port := listenPort(t)
 
@@ -1622,12 +1682,17 @@ func TestActivateStartupFailureRestoresPrevious(t *testing.T) {
 	if !strings.Contains(err.Error(), "cannot start") {
 		t.Errorf("error = %q, want the collector's own log tail", err)
 	}
-	// launchd reports nothing running throughout this test, so the error
-	// must not claim otherwise; TestStillRunningOnlyWhenItActuallyIs covers
-	// the branch where the restore does come back up.
+	// launchd reports nothing running after the failure, so the error must
+	// not claim otherwise; TestStillRunningOnlyWhenItActuallyIs covers the
+	// branch where the restore does come back up.
 	var sr interface{ StillRunning() string }
 	if errors.As(err, &sr) {
 		t.Errorf("error claims %q still running while launchd reports nothing", sr.StillRunning())
+	}
+	// A restore that was attempted and also died must be said out loud, not
+	// left as a silent "cfg-b failed" next to a status naming cfg-a.
+	if !strings.Contains(err.Error(), "did not start either") {
+		t.Errorf("error = %q, want it to say the restored setup did not start either", err)
 	}
 
 	// The previous configuration and preset are the active ones again...
@@ -1863,25 +1928,12 @@ func TestRecencyIsCapped(t *testing.T) {
 // "restore" it. The snapshot must therefore be of the last setup that
 // actually started, taken on success.
 func TestEditingTheRunningConfigIntoAFailureRestoresIt(t *testing.T) {
-	setup(t, "")
+	// Staged launchd prints: #1 the initial activation's up-check
+	// (running), #2 reactivateIf's guard (the collector IS running, so the
+	// edit re-applies), #3 the failing activation's authority check (not
+	// running: the start failed), everything after is the restore coming up.
+	setupStaged(t, "state = running", "state = running", "", "state = running")
 	fakeDistro(t, "exit 0") // validates anything; nothing ever listens
-
-	// Staged launchd: print #1 is reactivateIf's guard (the collector IS
-	// running, so the edit re-applies), #2 is the failing activation's
-	// probe fallback (not running: the start failed), everything after is
-	// the restore coming up.
-	prints := 0
-	origExec := launchd.Exec
-	launchd.Exec = func(args ...string) ([]byte, error) {
-		if len(args) > 0 && args[0] == "print" {
-			prints++
-			if prints != 2 {
-				return []byte("state = running"), nil
-			}
-		}
-		return nil, nil
-	}
-	t.Cleanup(func() { launchd.Exec = origExec })
 	port := listenPort(t)
 
 	a, err := app.New()
@@ -1935,7 +1987,8 @@ func TestEditingTheRunningConfigIntoAFailureRestoresIt(t *testing.T) {
 // editing the active config while the collector is stopped writes the edit
 // and leaves the collector stopped — no bootstrap, no error.
 func TestEditingTheStoppedActiveConfigStaysStopped(t *testing.T) {
-	calls := setup(t, "")
+	// Running for the initial activation, stopped when the edit lands.
+	calls := setupStaged(t, "state = running", "")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
 
@@ -1966,7 +2019,9 @@ func TestEditingTheStoppedActiveConfigStaysStopped(t *testing.T) {
 // TestUseDistroStartupFailureRestoresTheBinary: switching the one collector
 // to a binary that won't start puts the working one back, settings included.
 func TestUseDistroStartupFailureRestoresTheBinary(t *testing.T) {
-	setup(t, "")
+	// Running for the initial activation, down when the switched binary
+	// fails to start, back up once the restore has run.
+	setupStaged(t, "state = running", "", "state = running")
 	fakeDistro(t, "exit 0")
 	port := listenPort(t)
 
@@ -2016,24 +2071,12 @@ func TestUseDistroStartupFailureRestoresTheBinary(t *testing.T) {
 // TestStillRunningOnlyWhenItActuallyIs: the reassurance is a claim about the
 // world, so it is made only when launchd confirms the restored job is up.
 func TestStillRunningOnlyWhenItActuallyIs(t *testing.T) {
-	setup(t, "")
+	// launchd confirms the initial activation, reports "not running" for the
+	// failing activation's check, then "running" once the previous
+	// configuration has been put back.
+	setupStaged(t, "state = running", "", "state = running")
 	fakeDistro(t, "exit 0")
 	port := listenPort(t)
-
-	// launchd reports "not running" for the failing activation's check, then
-	// "running" once the previous configuration has been put back.
-	prints := 0
-	orig := launchd.Exec
-	launchd.Exec = func(args ...string) ([]byte, error) {
-		if len(args) > 0 && args[0] == "print" {
-			prints++
-			if prints > 1 {
-				return []byte("state = running"), nil
-			}
-		}
-		return nil, nil
-	}
-	t.Cleanup(func() { launchd.Exec = orig })
 
 	a, err := app.New()
 	if err != nil {
@@ -2049,7 +2092,6 @@ func TestStillRunningOnlyWhenItActuallyIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	closeListener(t, port)
-	prints = 0
 
 	err = a.Activate("other", "")
 	if err == nil {
@@ -2061,6 +2103,61 @@ func TestStillRunningOnlyWhenItActuallyIs(t *testing.T) {
 	}
 	if name, preset, _ := a.ActiveConfig(); name != "debug" || preset != "prod" {
 		t.Errorf("active = %q/%q, want debug/prod", name, preset)
+	}
+}
+
+// TestSquatterOnProbePortDoesNotFakeSuccess: a foreign process holding
+// compy's gRPC port answers the probe's bare TCP dial, so a collector that
+// crashed on "address already in use" used to look successfully started —
+// exit 0, previous collector booted out, the broken setup snapshotted as
+// last-good. launchd is the authority in both directions: probe success
+// counts for nothing while launchd says the job is down.
+func TestSquatterOnProbePortDoesNotFakeSuccess(t *testing.T) {
+	// running during the initial activation, down for everything after —
+	// the failing activation's check and the post-restore check both see a
+	// dead job, so no still-running claim may be made.
+	calls := setupStaged(t, "state = running", "")
+	fakeDistro(t, "exit 0")
+	listenPort(t) // stays open: the squatter answering compy's gRPC port
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatalf("Activate(debug): %v", err)
+	}
+	if err := a.CreateConfig("other", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	err = a.Activate("other", "")
+	if err == nil {
+		t.Fatal("Activate(other) = nil: a squatter answering the probe port faked a successful start")
+	}
+	var sr interface{ StillRunning() string }
+	if errors.As(err, &sr) {
+		t.Errorf("error claims %q still running while launchd reports the job down", sr.StillRunning())
+	}
+	// The existing restore machinery must have put debug back...
+	if !called(*calls, "bootstrap") {
+		t.Errorf("previous configuration not restored: %v", *calls)
+	}
+	if name, _, _ := a.ActiveConfig(); name != "debug" {
+		t.Errorf("ActiveConfig = %q after the failure, want debug restored", name)
+	}
+	// ...and the broken setup must not have been snapshotted as last-good.
+	data, rerr := os.ReadFile(filepath.Join(a.Dir, "last-good", "settings.json"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	var snap state.Settings
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatal(err)
+	}
+	if snap.ActiveConfig != "debug" {
+		t.Errorf("last-good active_config = %q, want debug (the broken setup was snapshotted)", snap.ActiveConfig)
 	}
 }
 

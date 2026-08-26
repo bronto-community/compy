@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"time"
 )
@@ -49,6 +50,30 @@ func Probe(port int, timeout time.Duration) error {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+// bindErrRE matches the collector's "address already in use" line in both
+// shapes it takes in the log: the zap JSON-tail component error
+// (`... {"error": "listen tcp 127.0.0.1:16317: bind: address already in use", ...}`)
+// and the final plain
+// `Error: ... listen tcp 127.0.0.1:8888: bind: address already in use`.
+var bindErrRE = regexp.MustCompile(`listen tcp ([^\s:"]+):(\d+): bind: address already in use`)
+
+// BindError scans a log tail for an "address already in use" failure and
+// returns a one-line human sentence naming the busy port — the actionable
+// fact otherwise buried mid-tail — or "" when the tail has none. Port 8888
+// gets the extra context that it is otelcol's own default telemetry port,
+// which a config conflicts with without ever mentioning it.
+func BindError(tail string) string {
+	m := bindErrRE.FindStringSubmatch(tail)
+	if m == nil {
+		return ""
+	}
+	msg := fmt.Sprintf("port %s is already in use by another process", m[2])
+	if m[2] == "8888" {
+		msg += " — :8888 is the collector's own telemetry port; every config uses it unless service::telemetry moves it"
+	}
+	return msg
 }
 
 // tailReadCap bounds how much of the log file TailLog reads, measured back
