@@ -519,3 +519,11 @@ with the text above.
   "compy was reset". The reset uninstalls the collector job and wipes the
   state dir's contents (never the dir itself, never the tray's own agent);
   the CLI twin is `compy factory-reset`, which refuses without `--yes`.
+- **The menu bar shows the designed icon, not the "compy" title** (round 7):
+  the "track + signals" template icon from the icon handoff (vendored with
+  its spec under `internal/tray/icons/`), icon-only per macOS convention,
+  tooltip kept. State is shape, as the handoff requires: solid = running,
+  hollow = stopped, dots collapsed into one heavy mark = running with
+  errors in the log tail (the same error count `LogStats` already reports);
+  shipped as per-state `.icns` (16 + 16@2x black-on-transparent rasters)
+  via `systray.SetTemplateIcon`, switched only when the state changes.
