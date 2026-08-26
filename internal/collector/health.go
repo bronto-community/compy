@@ -55,14 +55,26 @@ type Health struct {
 // every failure — nothing listening, a timeout, something else on the port —
 // means the same thing to the caller, "no numbers".
 func ScrapePorts(ports []int) Health {
-	if h := health(fmt.Sprintf("http://localhost:%d/metrics", defaultMetricsPort)); h.Available {
-		h.Port = defaultMetricsPort
-		return h
+	// Pid-bound: when detection gave us the collector's own listeners,
+	// probe ONLY those (:8888 first when present) — a blind default probe
+	// could read some other collector's metrics on this machine. The
+	// default is the fallback only when detection is unavailable.
+	if len(ports) == 0 {
+		if h := health(fmt.Sprintf("http://localhost:%d/metrics", defaultMetricsPort)); h.Available {
+			h.Port = defaultMetricsPort
+			return h
+		}
+		return Health{}
 	}
+	ordered := make([]int, 0, len(ports))
 	for _, p := range ports {
 		if p == defaultMetricsPort {
-			continue // just tried
+			ordered = append([]int{p}, ordered...)
+		} else {
+			ordered = append(ordered, p)
 		}
+	}
+	for _, p := range ordered {
 		if h := health(fmt.Sprintf("http://localhost:%d/metrics", p)); h.Available {
 			h.Port = p
 			return h
