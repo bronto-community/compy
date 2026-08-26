@@ -478,3 +478,17 @@ with the text above.
   grpc/http ports and the port the health scrape actually answered on
   (`telemetry`) — unknown ports bare. Health tries :8888 first, then the
   detected ports; the strip names the port that answered.
+- **The window opens at the design size** (round 4): `compy window` defaults
+  to 1240×838 (was 960×680) and stays resizable; every screen must hold
+  without collision or sideways scrolling down to ~900px wide.
+- **The log message column wraps** (round 4 — supersedes the Collector
+  section's `min-width: max-content` rule): time and level stay fixed-width
+  and aligned, the message wraps within its column and long tokens (URLs,
+  JSON blobs) break rather than stretch the row. The log never scrolls
+  sideways at any width.
+- Narrow-width fixes behind the 960×680 report (round 4): the settings
+  pane's cards no longer flex-shrink — a short window used to compress them,
+  and `overflow: hidden` clipped the table's last-row border, leaving the
+  trash icon on the clipped corner and cutting the OTEL_* toggle row in
+  half; the configs preset column yields 330px → 238px min at narrow widths
+  so rows never overflow the pane sideways.
