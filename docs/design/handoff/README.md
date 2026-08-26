@@ -465,3 +465,16 @@ with the text above.
   yaml, so not part of presets. The honest applies-on-next-restart note
   (with the restart action while running) stays. The grid is sized to take
   more cards later; user-defined variables are not built yet.
+- **Real listening-port detection replaces the port guessing** (round 3):
+  compy shows only the ports the collector process is ACTUALLY listening
+  on, detected OS-side (launchd's pid + lsof), never claims derived from
+  settings or YAML — "ports per config.yaml" and the `COMPY_*_PORT`
+  reference-sniffing are deleted everywhere. Undetectable (lsof absent or
+  failing, process gone) means no claim shown, never an error. Sidebar and
+  menu-bar line show up to 4 ports as ":6000 :6001 :8888", more as
+  "N ports open", nothing detected omits the segment; the sidebar also
+  drops the distro name (it lives in settings). The collector "listening"
+  tile shows the full detected list, labeling what we know — settings
+  grpc/http ports and the port the health scrape actually answered on
+  (`telemetry`) — unknown ports bare. Health tries :8888 first, then the
+  detected ports; the strip names the port that answered.
