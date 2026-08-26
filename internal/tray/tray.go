@@ -401,13 +401,15 @@ func handleOpenApp(item *systray.MenuItem) {
 }
 
 // spawnWindow starts `compy window` and reaps it in the background, so
-// windowProc.alive() flips as soon as the user closes it.
+// windowProc.alive() flips as soon as the user closes it. It spawns the
+// bundled binary when a compy.app sits next to this one (see windowExe), so
+// the window shows the compy name and Dock icon.
 func spawnWindow() (*windowProc, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(exe, "window")
+	cmd := exec.Command(windowExe(exe), "window")
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
