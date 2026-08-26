@@ -20,7 +20,7 @@ import (
 
 // Def describes one pinned collector distribution.
 type Def struct {
-	Name    string // "core", "contrib", "otlp", "ebpf-profiler"
+	Name    string // "core", "contrib", "otlp"
 	Version string
 	URLs    map[string]string // "darwin_arm64" -> tar.gz URL; missing platform = unavailable
 	SHA256  map[string]string // per platform, of the tar.gz
