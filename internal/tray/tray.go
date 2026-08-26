@@ -54,6 +54,10 @@ type menu struct {
 
 	restart *systray.MenuItem
 
+	// icon is the state the menu-bar icon currently shows, so sync() only
+	// calls into systray when it actually changes (not every 5s tick).
+	icon iconState
+
 	// presetOwner records which (config, preset) each live preset-submenu
 	// item currently represents, so its click handler can resolve that at
 	// click time (like handleSlotClicks does via slotNames) instead of
@@ -73,7 +77,10 @@ type presetTarget struct {
 }
 
 func onReady(a *app.App) {
-	systray.SetTitle("compy")
+	// Icon-only, no title (macOS convention); the designed template icon —
+	// black-on-transparent, tinted by AppKit — carries the state by shape
+	// (icons/README.md). Start at stopped until the first sync says better.
+	systray.SetTemplateIcon(iconStopped.data(), iconStopped.data())
 	systray.SetTooltip("compy — local OpenTelemetry Collector manager")
 
 	m := &menu{
@@ -138,12 +145,13 @@ func (m *menu) sync() {
 		return
 	}
 	// Menu bar counts warn-level lines only (controller ruling D2); the
-	// error count that used to sit alongside it is dropped from this line.
-	_, warns, _ := m.a.LogStats(500) // best-effort: a log-read error just omits the tail
+	// error count feeds the icon's attention state instead of this line.
+	errs, warns, _ := m.a.LogStats(500) // best-effort: a log-read error just omits the tail
 	configs, cfgErr := m.a.Configs()
 	line1, line2 := statusLines(st, warns)
 	m.status.SetTitle(line1)
 	m.statusLine2.SetTitle(line2)
+	m.setIcon(iconFor(st.Running, errs))
 
 	if cfgErr != nil {
 		return
@@ -256,6 +264,19 @@ func (m *menu) resolvePresetClick(item *systray.MenuItem) (presetTarget, bool) {
 	defer m.mu.Unlock()
 	target, ok := m.presetOwner[item]
 	return target, ok
+}
+
+// setIcon swaps the menu-bar icon when — and only when — the state changed,
+// so the 5s resync doesn't churn systray. Called from sync(), so it runs
+// under m.mu everywhere but onReady's initial single-threaded call (the
+// same discipline as slotNames/setPresetOwner). The zero value of m.icon is
+// iconStopped, matching the icon onReady sets before the first sync.
+func (m *menu) setIcon(s iconState) {
+	if s == m.icon {
+		return
+	}
+	m.icon = s
+	systray.SetTemplateIcon(s.data(), s.data())
 }
 
 func setChecked(item *systray.MenuItem, want bool) {
