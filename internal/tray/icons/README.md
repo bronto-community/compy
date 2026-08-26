@@ -17,6 +17,24 @@ The rasters are generated from the SVGs; committed, not rebuilt at build time:
   `icons.go` embeds and `systray.SetTemplateIcon` ships to NSImage, which
   keeps both reps and picks 1×/2× per display.
 
+## Menu-item indicator icons (`item-*`)
+
+`item-active.svg` (filled dot — the glyph's pad motif), `item-down.svg` /
+`item-up.svg` (chevrons, stroke 3 + round caps like the running glyph), and
+`item-blank.svg` (fully transparent) are the per-menu-item three-state
+indicators on config rows and preset items: active / going down / going up
+during an activation swap, blank otherwise. They replaced the native
+checkmark as the state carrier. The blank exists because systray has no way
+to clear a menu item's icon once set, and painting it on every row keeps
+titles aligned. Same pipeline as the menu-bar states: 16 + 32 px
+black-on-transparent PNGs via headless Chrome (rendered through a scaling
+`<img>` wrapper — a bare SVG navigation renders at natural size and crops;
+packaging/macos/README.md lesson), packed per state into `item-*.icns`
+(`icon_16x16` + `icon_16x16@2x`), embedded by `icons.go`, shipped through
+per-item `MenuItem.SetTemplateIcon` (verified: same `NSImage initWithData`
+path as the status icon, so .icns works per-item too — including the
+all-transparent blank, which `iconutil` accepts).
+
 To regenerate after an SVG change: render the PNGs at exactly 16 and 32 px
 with any rasterizer that preserves alpha, then repackage:
 
