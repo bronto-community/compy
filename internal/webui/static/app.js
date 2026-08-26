@@ -150,6 +150,9 @@ const S = {
   addName: "", addPath: "",
   settings: null,          // { grpc_port, http_port }
   portsSaved: false,       // "applies on the next restart" line showing
+  resetArm: false,         // factory-reset inline confirm showing
+  resetTyped: "",          // what's in its type-compy-to-confirm field
+  resetBusy: false,        // reset request in flight
 };
 
 /* ── theme ────────────────────────────────────────────────────────────
@@ -326,7 +329,10 @@ async function enterRoute() {
       destroyEditor();
     }
     if (r.screen === "collector") await loadCollector();
-    if (r.screen === "settings") { S.portsSaved = false; await Promise.all([loadDistros(), loadSettings()]); }
+    if (r.screen === "settings") {
+      S.portsSaved = false; S.resetArm = false; S.resetTyped = "";
+      await Promise.all([loadDistros(), loadSettings()]);
+    }
     if (r.screen === "configs") await loadCollector(); // sidebar's warn badge
   } catch (e) {
     showError(e);
@@ -1596,8 +1602,95 @@ function screenSettings() {
     ]),
   ]));
   wrap.appendChild(table);
+
+  // Factory reset lives at the very bottom, quietly set apart as the one
+  // danger area: muted err styling, and a stronger confirm than delete —
+  // this deletes user data wholesale, so the verb stays disabled until
+  // "compy" is typed.
+  wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
+    span("title", "danger"),
+  ]));
+  wrap.appendChild(factoryResetCard());
+
   if (lastError) wrap.appendChild(errorStrip());
   return wrap;
+}
+
+function factoryResetCard() {
+  const card = el("div", { class: "card danger-card" });
+  card.appendChild(el("div", { class: "srow" }, [
+    el("span", { class: "lbl" }, [
+      span("t", "reset compy to factory settings"),
+      el("span", { class: "n sans", text: "deletes all configurations, presets, downloaded collectors, logs, and settings — the shipped configs come back fresh." }),
+    ]),
+    el("span", { class: "grow" }),
+    S.resetArm ? null : el("button", {
+      class: "btn quiet", text: "reset…",
+      on: {
+        click: () => {
+          S.resetArm = true; S.resetTyped = "";
+          render();
+          const f = document.querySelector('[data-fk="reset-confirm"]');
+          if (f) f.focus();
+        },
+      },
+    }),
+  ]));
+  if (S.resetArm) {
+    const ready = S.resetTyped.trim() === "compy" && !S.resetBusy;
+    card.appendChild(el("div", { class: "confirm reset-confirm" }, [
+      el("span", { class: "q sans", text: "this deletes everything compy manages. type compy to confirm." }),
+      el("input", {
+        class: "field sm reset-field",
+        attrs: { placeholder: "compy", spellcheck: "false", autocomplete: "off", "data-fk": "reset-confirm", "aria-label": "type compy to confirm the reset" },
+        props: { value: S.resetTyped },
+        on: {
+          // No render() here: it would rebuild the focused input mid-word.
+          // The verb's disabled state is flipped in place instead.
+          input: (e) => {
+            S.resetTyped = e.target.value;
+            const verb = e.target.closest(".reset-confirm").querySelector(".btn.danger");
+            if (S.resetTyped.trim() === "compy" && !S.resetBusy) verb.removeAttribute("disabled");
+            else verb.setAttribute("disabled", "");
+          },
+        },
+      }),
+      el("span", { class: "grow" }),
+      el("button", { class: "act", text: "keep everything", on: { click: () => { S.resetArm = false; S.resetTyped = ""; render(); } } }),
+      el("button", {
+        class: "btn danger", text: S.resetBusy ? "resetting…" : "reset compy",
+        attrs: ready ? null : { disabled: "" },
+        on: { click: doFactoryReset },
+      }),
+    ]));
+  }
+  return card;
+}
+
+async function doFactoryReset() {
+  if (S.resetBusy || S.resetTyped.trim() !== "compy") return;
+  clearError();
+  S.resetBusy = true;
+  render();
+  try {
+    await api("/api/factory-reset", { method: "POST" });
+    // Nothing in memory survives a factory reset: drop every server-derived
+    // and per-config bit of client state, then load it all fresh.
+    Object.assign(S, {
+      status: null, configs: [], health: null, log: "", distros: [],
+      yaml: "", yamlOf: null, find: "",
+      busyId: null, err: null, errName: null, errKept: null,
+      newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
+      confirm: null, confirmVerb: null, confirmId: null, confirmKind: null,
+      presetSel: {}, presetsOpenId: null, inline: null, inlineName: "",
+      dl: {}, addName: "", addPath: "", settings: null, portsSaved: false,
+      resetArm: false, resetTyped: "",
+    });
+    await Promise.all([loadCore(), loadDistros(), loadSettings()]);
+    note("compy was reset", 4000);
+  } catch (e) { showError(e); }
+  S.resetBusy = false;
+  render();
 }
 
 function distroRow(b) {
@@ -1791,7 +1884,8 @@ function refreshBlocked() {
   const a = document.activeElement;
   const inField = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
   return inField || S.busyId || S.saving || S.restarting || S.presetsOpenId || S.inline
-    || S.confirm || S.newOpen || S.unlockAsk || document.querySelector("dialog[open]")
+    || S.confirm || S.newOpen || S.unlockAsk || S.resetArm || S.resetBusy
+    || document.querySelector("dialog[open]")
     || (S.screen === "editor" && cmDirty);
 }
 async function refresh() {

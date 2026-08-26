@@ -508,3 +508,14 @@ with the text above.
   matches the full raw text, continuations included — copy still copies
   the raw lines, and a malformed JSON tail stays raw in the message.
   Unknown shapes always fall back to a plain raw row.
+- **Settings ends in a factory reset** (round 6): a "danger" section at the
+  very bottom — muted err styling (err border and destructive verb only, no
+  red carnival) — with one action, "reset compy to factory settings", and a
+  sentence naming what it deletes (all configurations, presets, downloaded
+  collectors, logs, and settings — the shipped configs come back fresh). It
+  arms the usual inline confirm, hardened for wholesale data loss: the
+  destructive verb ("reset compy") stays disabled until "compy" is typed
+  into an inline field. Success reloads the client's entire state and notes
+  "compy was reset". The reset uninstalls the collector job and wipes the
+  state dir's contents (never the dir itself, never the tray's own agent);
+  the CLI twin is `compy factory-reset`, which refuses without `--yes`.

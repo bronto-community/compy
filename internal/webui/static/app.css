@@ -702,6 +702,17 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 }
 .gvnote .n { font-size: 11.5px; color: var(--muted); }
 
+/* settings: factory reset — the one danger area, muted err rather than a
+   red carnival: err on the border and the destructive verb only. Its
+   inline confirm reuses .confirm, flattened into the card. */
+.danger-card { border-color: var(--errLine); }
+.danger-card .srow { border-bottom: 0; }
+.danger-card .srow .lbl .t { color: var(--errText); }
+.reset-confirm { margin: 0; border: 0; border-top: 1px solid var(--errDiv); border-radius: 0; }
+.reset-field { width: 110px; flex: 0 0 auto; background: var(--window); }
+.btn.danger[disabled] { color: var(--err); border-color: var(--errLine); }
+.btn.danger[disabled]:hover { background: none; }
+
 /* ── disabled controls: unmistakably muted, never hidden ──────────────
    Every button-ish control fades as a group; the per-class colour rules
    above keep the exact tone, and the explaining tooltip stays. */
