@@ -1495,8 +1495,13 @@ function screenSettings() {
       el("span", { class: "grow" }),
       el("span", { class: "switch" + (osEnvOn ? " on" : "") }, [el("i")]),
     ]),
-    portsRow(),
   ]));
+
+  wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
+    span("title", "global variables"),
+    el("div", { class: "subtitle sans", text: "available in every configuration's yaml — that's why they're not part of presets." }),
+  ]));
+  wrap.appendChild(globalVars());
 
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
     span("title", "collector"),
@@ -1587,44 +1592,51 @@ function distroRow(b) {
   return row;
 }
 
-/* Ports row: the COMPY_GRPC_PORT / COMPY_HTTP_PORT values (excluded from
-   preset value cards — they're global; this row is their home). The backend
-   only stores them: nothing re-applies a running collector, so a save is
-   answered honestly with "applies when the collector next restarts". */
-function portsRow() {
+/* Global variables: the COMPY_GRPC_PORT / COMPY_HTTP_PORT values (excluded
+   from preset value cards — they're global; this section is their home,
+   2026-08-26 round 2). Same card grid as a preset's values, sized to take
+   more cards later. The backend only stores them: nothing re-applies a
+   running collector, so a save is answered honestly with "applies when the
+   collector next restarts". */
+const GLOBAL_VARS = [
+  { key: "grpc_port", name: "COMPY_GRPC_PORT", desc: "otlp/grpc port — reference it as ${env:COMPY_GRPC_PORT}" },
+  { key: "http_port", name: "COMPY_HTTP_PORT", desc: "otlp/http port — reference it as ${env:COMPY_HTTP_PORT}" },
+];
+function globalVars() {
   const st = S.settings;
-  const frag = document.createDocumentFragment();
-  const portField = (key, label) => el("span", { class: "pfield" }, [
-    span("plbl", label),
-    el("input", {
-      class: "field sm",
-      attrs: {
-        type: "number", min: "1", max: "65535", spellcheck: "false",
-        "data-fk": "port-" + key, "aria-label": label + " port",
-      },
-      props: { value: st && st[key + "_port"] != null ? String(st[key + "_port"]) : "" },
-      on: { change: (e) => savePort(key + "_port", e.target.value) },
-    }),
-  ]);
-  frag.appendChild(el("div", { class: "srow" }, [
-    el("span", { class: "lbl" }, [
-      span("t", "otlp ports"),
-      el("span", { class: "n sans", text: "for configs that listen on compy's ports (COMPY_GRPC_PORT / COMPY_HTTP_PORT)" }),
-    ]),
-    el("span", { class: "grow" }),
-    portField("grpc", "grpc"),
-    portField("http", "http"),
-  ]));
+  const frag = el("div", { class: "gvwrap" });
+  const grid = el("div", { class: "vals gvars" });
+  for (const g of GLOBAL_VARS) {
+    grid.appendChild(el("div", { class: "val" }, [
+      el("div", { class: "k" }, [
+        el("span", { class: "name", text: g.name, title: g.desc }),
+        el("span", { class: "grow" }),
+        span("origin", "settings"),
+      ]),
+      el("div", { class: "v" }, [
+        el("input", {
+          class: "field",
+          attrs: {
+            type: "number", min: "1", max: "65535", spellcheck: "false",
+            "data-fk": "gvar-" + g.key, "aria-label": g.name,
+          },
+          props: { value: st && st[g.key] != null ? String(st[g.key]) : "" },
+          on: { change: (e) => savePort(g.key, e.target.value) },
+        }),
+      ]),
+    ]));
+  }
+  frag.appendChild(grid);
   if (S.portsSaved) {
     const running = !nothingActive();
-    frag.appendChild(el("div", { class: "srow portsnote" }, [
+    frag.appendChild(el("div", { class: "gvnote" }, [
       el("span", { class: "n sans", text: running
-        ? "saved. the new ports apply when the collector next restarts."
-        : "saved. the collector is stopped — the new ports apply when it starts." }),
+        ? "saved. the new value applies when the collector next restarts."
+        : "saved. the collector is stopped — the new value applies when it starts." }),
       el("span", { class: "grow" }),
       running ? el("button", {
         class: "act", text: "restart now",
-        on: { click: async () => { S.portsSaved = false; await restartCollector(); note("collector restarted on the new ports", 3200); } },
+        on: { click: async () => { S.portsSaved = false; await restartCollector(); note("collector restarted on the new values", 3200); } },
       }) : null,
     ]));
   }

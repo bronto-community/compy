@@ -669,16 +669,16 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .bin-add input { background: var(--panel); font-size: 12px; padding: 5px 8px; }
 .bin-actions { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
 
-/* settings: ports row */
-.srow .pfield { display: flex; align-items: center; gap: 8px; }
-.srow .pfield .plbl {
-  font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+/* settings: global variables — the editor's value-card grid, reused */
+.gvwrap { display: flex; flex-direction: column; }
+.vals.gvars .val input::-webkit-inner-spin-button,
+.vals.gvars .val input::-webkit-outer-spin-button { -webkit-appearance: none; }
+.gvnote {
+  margin-top: 8px; padding: 9px 12px; border: 1px solid var(--border2);
+  border-radius: 5px; background: var(--raise);
+  display: flex; align-items: center; gap: 14px;
 }
-.srow .pfield input { width: 88px; background: var(--panel); }
-.srow .pfield input::-webkit-inner-spin-button,
-.srow .pfield input::-webkit-outer-spin-button { -webkit-appearance: none; }
-.srow.portsnote { padding-top: 9px; padding-bottom: 9px; background: var(--raise); }
-.srow.portsnote .n { font-size: 11.5px; color: var(--muted); }
+.gvnote .n { font-size: 11.5px; color: var(--muted); }
 
 /* ── disabled controls: unmistakably muted, never hidden ──────────────
    Every button-ish control fades as a group; the per-class colour rules
