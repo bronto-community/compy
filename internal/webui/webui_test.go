@@ -1010,7 +1010,7 @@ func TestActivationFailureCarriesStillRunning(t *testing.T) {
 	srv := httptest.NewServer(Handler(api))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/api/configs/ebpf-profiles/activate", "", nil)
+	resp, err := http.Post(srv.URL+"/api/configs/wont-start/activate", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

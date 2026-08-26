@@ -153,7 +153,7 @@ func TestAvailable(t *testing.T) {
 		t.Error("expected Available false for def without current platform URL")
 	}
 
-	empty := Def{Name: "ebpf-profiler", URLs: map[string]string{}}
+	empty := Def{Name: "no-binaries", URLs: map[string]string{}}
 	if Available(empty) {
 		t.Error("expected Available false for def with no URLs")
 	}
@@ -193,9 +193,5 @@ func TestRegistryMergesUserOverrides(t *testing.T) {
 	// Path == "" since nothing has been downloaded into root.
 	if d, ok := byName["contrib"]; !ok || d.Path != "" {
 		t.Errorf("contrib entry = %+v, want empty Path (not downloaded)", d)
-	}
-	// ebpf-profiler: definition present, unavailable, not downloaded.
-	if d, ok := byName["ebpf-profiler"]; !ok || d.Path != "" {
-		t.Errorf("ebpf-profiler entry = %+v, want empty Path", d)
 	}
 }

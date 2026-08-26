@@ -11,9 +11,6 @@ package distro
 // independently cross-checked by downloading the darwin_arm64 tarballs and
 // running `shasum -a 256` on them (see task-4-report.md for the exact
 // commands and output) — both matched exactly.
-//
-// ebpf-profiler has no upstream binary releases: URLs/SHA256 are empty, so
-// Available() is false on every platform.
 const releaseBase = "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.135.0/"
 
 var defs = []Def{
@@ -55,14 +52,5 @@ var defs = []Def{
 			"darwin_arm64": "aeb17e692e8d3d3fcffa91c92e5937b871bf82558ff4765fcb13766989fe7033",
 			"linux_amd64":  "435b3931dc2243fd99234cc956117079731ce3fe81782c57fbca85d5f51278cf",
 		},
-	},
-	{
-		// opentelemetry-ebpf-profiler publishes no binary releases;
-		// empty URLs/SHA256 make Available() false everywhere.
-		Name:    "ebpf-profiler",
-		Version: "",
-		Binary:  "",
-		URLs:    map[string]string{},
-		SHA256:  map[string]string{},
 	},
 }
