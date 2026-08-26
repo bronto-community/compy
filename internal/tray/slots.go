@@ -121,6 +121,34 @@ func presetChoices(info cfgstore.Info) (names []string, multi bool) {
 	return names, true
 }
 
+// pendingTitle marks a clicked config/preset row while its activation is in
+// flight. Only the title carries the pending state — the checkmark itself
+// keeps meaning "this is what launchd is running" and never moves until a
+// post-activation sync says so.
+func pendingTitle(base string) string {
+	return base + " — Activating…"
+}
+
+// activatingLine is the status block's first line while an activation is in
+// flight, so feedback exists even if the open menu doesn't repaint live.
+// preset "" means "keep the config's own active preset" and names nothing.
+func activatingLine(config, preset string) string {
+	if preset == "" {
+		return "Activating " + config + "…"
+	}
+	return "Activating " + config + " · " + preset + "…"
+}
+
+// errorLine renders a failed action for the status line (truncated — the
+// full error goes to the tray's stderr log).
+func errorLine(err error) string {
+	msg := err.Error()
+	if len(msg) > 80 {
+		msg = msg[:80] + "…"
+	}
+	return "error: " + msg
+}
+
 // windowProc is the standalone window process the tray spawned. alive() is
 // answered from done rather than by signalling the pid: the tray never
 // Waits on the child in the foreground, so a signal-0 probe would keep
