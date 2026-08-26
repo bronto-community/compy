@@ -16,29 +16,24 @@ import (
 	"github.com/bronto-io/compy/internal/cfgstore"
 )
 
-func TestRecencyOrder(t *testing.T) {
+// TestAlphabetical pins the 2026-08-26 ordering ruling: the whole menu is
+// alphabetical, case-insensitively — recency no longer orders it (the Recent
+// list stays in status/API; only the tray stopped consuming it).
+func TestAlphabetical(t *testing.T) {
 	cases := []struct {
-		name   string
-		names  []string
-		recent []string
-		want   []string
+		name  string
+		names []string
+		want  []string
 	}{
-		{"no recency: alphabetical", []string{"c", "a", "b"}, nil, []string{"a", "b", "c"}},
-		{"recent first, rest alphabetical", []string{"a", "b", "c", "d"}, []string{"c", "a"}, []string{"c", "a", "b", "d"}},
-		{"recent dedup keeps first occurrence", []string{"a", "b"}, []string{"a", "a", "b"}, []string{"a", "b"}},
-		{
-			// T1 review: DeleteConfig doesn't prune Settings.Recent, so a
-			// recent entry can name a configuration that no longer exists —
-			// it must not surface as a menu item (nor as a gap in the order).
-			"stale recent entry (deleted config) dropped",
-			[]string{"a", "b"}, []string{"ghost", "b", "a"}, []string{"b", "a"},
-		},
-		{"empty", nil, nil, nil},
+		{"sorted", []string{"c", "a", "b"}, []string{"a", "b", "c"}},
+		{"case-insensitive", []string{"Zeta", "alpha", "Beta"}, []string{"alpha", "Beta", "Zeta"}},
+		{"equal folds tie-break case-sensitively", []string{"a", "A"}, []string{"A", "a"}},
+		{"empty", nil, nil},
 	}
 	for _, c := range cases {
-		got := recencyOrder(c.names, c.recent)
+		got := alphabetical(c.names)
 		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%s: recencyOrder(%v, %v) = %v, want %v", c.name, c.names, c.recent, got, c.want)
+			t.Errorf("%s: alphabetical(%v) = %v, want %v", c.name, c.names, got, c.want)
 		}
 	}
 }
@@ -54,9 +49,9 @@ func TestSplitInline(t *testing.T) {
 		{"fits exactly", []string{"a", "b"}, 2, []string{"a", "b"}, nil},
 		{"under capacity", []string{"a", "b"}, 4, []string{"a", "b"}, nil},
 		{
-			// C5.3: overflow is re-sorted alphabetically, independent of the
-			// recency order that put it there.
-			"overflow re-sorted alphabetically", []string{"z", "a", "c", "b"}, 2, []string{"z", "a"}, []string{"b", "c"},
+			// 2026-08-26 amendment: More… simply continues the alphabetical
+			// order — no re-sort of its own.
+			"overflow continues the given order", []string{"a", "b", "c", "d"}, 2, []string{"a", "b"}, []string{"c", "d"},
 		},
 		{"empty", nil, 4, nil, nil},
 	}
@@ -183,16 +178,19 @@ func TestErrorLine(t *testing.T) {
 
 func TestPresetChoices(t *testing.T) {
 	cases := []struct {
-		name      string
-		info      cfgstore.Info
-		wantNames []string
-		wantMulti bool
+		name        string
+		info        cfgstore.Info
+		wantNames   []string
+		wantSubmenu bool
 	}{
 		{"no presets: single-click", cfgstore.Info{}, nil, false},
 		{
-			"one preset: single-click",
+			// 2026-08-26 feedback: a single preset still gets the submenu —
+			// switching applies "if a preset is available", and the submenu
+			// shows what would run.
+			"one preset: submenu",
 			cfgstore.Info{Meta: cfgstore.Meta{Presets: map[string]map[string]string{"default": {}}}},
-			nil, false,
+			[]string{"default"}, true,
 		},
 		{
 			"two+ presets: submenu, sorted",
@@ -201,16 +199,29 @@ func TestPresetChoices(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		names, multi := presetChoices(c.info)
-		if multi != c.wantMulti || !reflect.DeepEqual(names, c.wantNames) {
-			t.Errorf("%s: presetChoices() = %v, %v, want %v, %v", c.name, names, multi, c.wantNames, c.wantMulti)
+		names, submenu := presetChoices(c.info)
+		if submenu != c.wantSubmenu || !reflect.DeepEqual(names, c.wantNames) {
+			t.Errorf("%s: presetChoices() = %v, %v, want %v, %v", c.name, names, submenu, c.wantNames, c.wantSubmenu)
 		}
 	}
 }
 
+// TestCheckedConfig pins the checkmark's meaning — "this is what is
+// RUNNING": the active config is checked only while the collector runs; a
+// stopped collector checks nothing, however recently a config was active
+// (the status block still names it).
+func TestCheckedConfig(t *testing.T) {
+	if got := checkedConfig(app.Status{Running: true, Config: "otlp"}); got != "otlp" {
+		t.Errorf("running: checkedConfig = %q, want otlp", got)
+	}
+	if got := checkedConfig(app.Status{Running: false, Config: "otlp"}); got != "" {
+		t.Errorf("stopped: checkedConfig = %q, want \"\" (no checkmark while stopped)", got)
+	}
+}
+
 // TestPresetOwnershipFollowsSlotReassignment is the T3 review's regression:
-// slot i is a fixed menu position, and a recency reorder can put a
-// different configuration there between syncs. Config acme{default,prod}
+// slot i is a fixed menu position, and a reorder (a config created, deleted
+// or renamed) can put a different configuration there between syncs. Config acme{default,prod}
 // occupies slot i, then a re-sync reassigns it to beta{default,us} — both
 // configs have a "default" preset, so the slot's preset-item cache (keyed
 // by preset name only) reuses the very same *systray.MenuItem for
@@ -237,6 +248,65 @@ func TestPresetOwnershipFollowsSlotReassignment(t *testing.T) {
 	}
 	if target.config != "beta" || target.preset != "default" {
 		t.Errorf("resolvePresetClick = %+v, want {config:beta preset:default} — a click on the reused item must activate whoever owns it now, not acme", target)
+	}
+}
+
+// TestSyncRowPresetSubmenu drives the REAL syncRow — the code sync() runs
+// for every row — for a multi-preset config, pinning that the submenu path
+// populates m.presetOwner so a click resolves to the right (config, preset),
+// and that checkmarks obey the running-only rule. The helper tests above
+// (presetChoices etc.) cover pieces syncRow composes; this one guards
+// against the wiring drifting away from them.
+//
+// systray constraint (same as TestPresetOwnershipFollowsSlotReassignment):
+// AddSubMenuItemCheckbox needs the Cocoa run loop that only systray.Run
+// provides, so the row's preset-item cache is pre-seeded with bare
+// *systray.MenuItem values — on those, SetTitle/SetTooltip/Check/Uncheck
+// only mutate fields (their update() no-ops for an item never registered
+// with systray), which is exactly what lets the real syncRow run here.
+func TestSyncRowPresetSubmenu(t *testing.T) {
+	m := &menu{presetOwner: map[*systray.MenuItem]presetTarget{}}
+	row := &systray.MenuItem{}
+	presetItems := map[string]*systray.MenuItem{"default": {}, "eu": {}}
+	info := cfgstore.Info{Meta: cfgstore.Meta{Presets: map[string]map[string]string{"default": {}, "eu": {}}}}
+
+	// Running acme·eu: the row and the eu preset are checked, both preset
+	// items owned by acme.
+	m.syncRow(row, presetItems, "acme", info, app.Status{Running: true, Config: "acme", Preset: "eu"})
+	if len(m.presetOwner) != 2 {
+		t.Fatalf("presetOwner has %d entries, want 2 — syncRow must record every preset item's ownership", len(m.presetOwner))
+	}
+	for name, item := range presetItems {
+		target, ok := m.resolvePresetClick(item)
+		if !ok || target.config != "acme" || target.preset != name {
+			t.Errorf("preset %q resolves to %+v, %v; want {acme %s}, true", name, target, ok, name)
+		}
+	}
+	if !row.Checked() {
+		t.Error("running active config: row must be checked")
+	}
+	if !presetItems["eu"].Checked() || presetItems["default"].Checked() {
+		t.Errorf("running preset eu: checked eu=%v default=%v, want true/false", presetItems["eu"].Checked(), presetItems["default"].Checked())
+	}
+
+	// Stopped: same active config in status, but nothing is running — no
+	// checkmark anywhere (the checkmark means "this is what is running").
+	m.syncRow(row, presetItems, "acme", info, app.Status{Running: false, Config: "acme", Preset: "eu"})
+	if row.Checked() || presetItems["eu"].Checked() || presetItems["default"].Checked() {
+		t.Errorf("stopped: checked row=%v eu=%v default=%v, want all false", row.Checked(), presetItems["eu"].Checked(), presetItems["default"].Checked())
+	}
+
+	// A single-preset config keeps its submenu (2026-08-26 feedback): the
+	// one preset item stays owned and checked while running.
+	single := &systray.MenuItem{}
+	singleItems := map[string]*systray.MenuItem{"default": {}}
+	singleInfo := cfgstore.Info{Meta: cfgstore.Meta{Presets: map[string]map[string]string{"default": {}}}}
+	m.syncRow(single, singleItems, "solo", singleInfo, app.Status{Running: true, Config: "solo", Preset: "default"})
+	if target, ok := m.resolvePresetClick(singleItems["default"]); !ok || target != (presetTarget{config: "solo", preset: "default"}) {
+		t.Errorf("single-preset submenu: resolves to %+v, %v; want {solo default}, true", target, ok)
+	}
+	if !singleItems["default"].Checked() {
+		t.Error("single-preset submenu: running preset must be checked")
 	}
 }
 

@@ -65,54 +65,54 @@ func portsSegment(ports []int) string {
 	return strings.Join(parts, " ")
 }
 
-// recencyOrder orders configuration names per ACCEPTANCE C5.2: `recent`'s
-// activation order first, then every other existing config alphabetically.
-// A `recent` entry for a configuration that no longer exists (e.g. deleted
-// since) is dropped rather than surfaced as a menu item.
-func recencyOrder(names []string, recent []string) []string {
+// alphabetical orders configuration names case-insensitively (2026-08-26
+// amendment: the whole menu is alphabetical — supersedes the v4 recency
+// ordering, which read as "what is the order here?"). Names equal under
+// folding tie-break case-sensitively for a deterministic menu.
+func alphabetical(names []string) []string {
 	if len(names) == 0 {
 		return nil
 	}
-	exists := make(map[string]bool, len(names))
-	for _, n := range names {
-		exists[n] = true
-	}
-	ordered := make([]string, 0, len(names))
-	seen := make(map[string]bool, len(names))
-	for _, r := range recent {
-		if exists[r] && !seen[r] {
-			ordered = append(ordered, r)
-			seen[r] = true
+	out := slices.Clone(names)
+	slices.SortFunc(out, func(a, b string) int {
+		if c := strings.Compare(strings.ToLower(a), strings.ToLower(b)); c != 0 {
+			return c
 		}
-	}
-	rest := make([]string, 0, len(names)-len(ordered))
-	for _, n := range names {
-		if !seen[n] {
-			rest = append(rest, n)
-		}
-	}
-	slices.Sort(rest)
-	return append(ordered, rest...)
+		return strings.Compare(a, b)
+	})
+	return out
 }
 
-// splitInline divides a recency-ordered name list into up to n inline rows
-// and the "More…" remainder, itself re-sorted alphabetically regardless of
-// where in the recency order it fell (ACCEPTANCE C5.3).
+// splitInline divides the alphabetically ordered name list into up to n
+// inline rows and the "More…" remainder, which simply continues the same
+// alphabetical order (2026-08-26 amendment).
 func splitInline(ordered []string, n int) (inline, overflow []string) {
 	if len(ordered) <= n {
 		return ordered, nil
 	}
-	inline = ordered[:n]
-	overflow = append([]string(nil), ordered[n:]...)
-	slices.Sort(overflow)
-	return inline, overflow
+	return ordered[:n], ordered[n:]
+}
+
+// checkedConfig is the one configuration whose row (and running preset)
+// carries the radio checkmark: the active config while the collector is
+// RUNNING, nobody when it is stopped. The checkmark means "this is what is
+// running" — the same honesty rule that keeps it parked during a pending
+// activation — and with the collector stopped, nothing is running (the
+// active config is still named in the status block).
+func checkedConfig(st app.Status) string {
+	if st.Running {
+		return st.Config
+	}
+	return ""
 }
 
 // presetChoices reports a configuration's presets (sorted) and whether it
-// gets a submenu at all: only 2+ presets do (ACCEPTANCE C5.4) — a config
-// with zero or one preset activates directly on click.
-func presetChoices(info cfgstore.Info) (names []string, multi bool) {
-	if len(info.Meta.Presets) < 2 {
+// gets a submenu at all: any config with a preset does (2026-08-26 feedback:
+// switch "if a preset is available" — a single-preset submenu still shows
+// what would run). Picking a preset there is the activation; a preset-less
+// config activates directly on click.
+func presetChoices(info cfgstore.Info) (names []string, submenu bool) {
+	if len(info.Meta.Presets) == 0 {
 		return nil, false
 	}
 	names = make([]string, 0, len(info.Meta.Presets))

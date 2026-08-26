@@ -1,10 +1,12 @@
 //go:build darwin
 
 // Package tray implements compy's macOS menu-bar item: status line, the
-// CONFIGURATION list (recency-first, "More…" overflow alphabetical, a
+// CONFIGURATION list (alphabetical, "More…" overflow continuing it, a
 // preset submenu where picking a preset is the activation), "Restart
 // collector", and "Open compy" for everything else. Menu bar v4 —
-// docs/design/handoff/README.md § "5. Menu bar", ACCEPTANCE.md C5.
+// docs/design/handoff/README.md § "5. Menu bar" and its 2026-08-26
+// amendments (alphabetical ordering supersedes C5.2 recency), ACCEPTANCE.md
+// C5.
 package tray
 
 import (
@@ -69,7 +71,8 @@ type menu struct {
 	// click time (like handleSlotClicks does via slotNames) instead of
 	// trusting a name captured in a closure at item-creation time. That
 	// distinction matters because slot positions are fixed and reused
-	// across configs (recency reorders who sits at slot i): a preset-name
+	// across configs (creates/deletes/renames reorder who sits at slot i):
+	// a preset-name
 	// cache keyed only by "default" would otherwise let one config's leftover
 	// item — and its stale closure — silently activate a different config
 	// that happens to share a preset name (T3 review finding).
@@ -179,7 +182,7 @@ func (m *menu) sync() {
 		byName[c.Name] = c
 		names = append(names, c.Name)
 	}
-	inline, overflow := splitInline(recencyOrder(names, st.Recent), len(m.slots))
+	inline, overflow := splitInline(alphabetical(names), len(m.slots))
 
 	for i, slot := range m.slots {
 		if i >= len(inline) {
@@ -190,11 +193,12 @@ func (m *menu) sync() {
 		}
 		name := inline[i]
 		if m.slotNames[i] != name {
-			// This slot changed which config it shows (recency reordered).
-			// Drop its whole preset cache rather than let a same-named
-			// preset item survive into a different config's ownership —
-			// belt-and-braces alongside the click-time resolution in
-			// syncRow/resolvePresetClick (T3 review finding).
+			// This slot changed which config it shows (a create, delete or
+			// rename shifted the alphabetical order). Drop its whole preset
+			// cache rather than let a same-named preset item survive into a
+			// different config's ownership — belt-and-braces alongside the
+			// click-time resolution in syncRow/resolvePresetClick (T3
+			// review finding).
 			m.removeStale(m.slotPresets[i], map[string]bool{})
 		}
 		m.slotNames[i] = name
@@ -231,10 +235,12 @@ func (m *menu) sync() {
 }
 
 // syncRow reconciles one configuration's menu row against current status:
-// the row's own checkmark, and — only for a 2+-preset configuration
-// (ACCEPTANCE C5.4) — its preset submenu, lazily created in presetItems
+// the row's own checkmark, and — for a configuration with presets
+// (presetChoices) — its preset submenu, lazily created in presetItems
 // (that row's own cache, since systray can only append items). Clicking a
 // preset row is itself the activation; the running preset is checked.
+// Checkmarks mean "this is what is RUNNING" (checkedConfig): a stopped
+// collector checks nothing, however recently a config was active.
 //
 // Every preset item's ownership is (re)recorded here on every sync, whether
 // the item is newly created or reused from a previous sync — the click
@@ -243,10 +249,10 @@ func (m *menu) sync() {
 // so a cache entry that outlives a config change never misdirects the
 // activation (T3 review finding).
 func (m *menu) syncRow(item *systray.MenuItem, presetItems map[string]*systray.MenuItem, name string, info cfgstore.Info, st app.Status) {
-	active := name == st.Config
+	active := name == checkedConfig(st)
 	setChecked(item, active)
-	presets, multi := presetChoices(info)
-	if !multi {
+	presets, submenu := presetChoices(info)
+	if !submenu {
 		m.removeStale(presetItems, map[string]bool{})
 		return
 	}
@@ -344,8 +350,8 @@ func (m *menu) handleSlotClicks(i int, slot *systray.MenuItem) {
 // handlePresetClicks activates whatever (config, preset) this submenu item
 // currently owns, per m.presetOwner — resolved fresh at click time rather
 // than a name captured when the item was created, since a fixed-position
-// row's preset items can end up reused for a different config across
-// recency reorders. "Picking a preset is the activation" (README § 5).
+// row's preset items can end up reused for a different config when the
+// list reorders. "Picking a preset is the activation" (README § 5).
 func (m *menu) handlePresetClicks(item *systray.MenuItem) {
 	for range item.ClickedCh {
 		target, ok := m.resolvePresetClick(item)
