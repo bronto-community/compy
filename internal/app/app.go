@@ -368,6 +368,40 @@ func (a *App) Stop() error { return launchd.Uninstall() }
 // under the word the UI and CLI use for it.
 func (a *App) Start() error { return a.Apply() }
 
+// FactoryReset returns compy to its as-installed state, as if it had never
+// run: the collector's LaunchAgent is uninstalled (tolerating "was not
+// running", like Stop), every entry inside the state directory is deleted —
+// configs/, logs/, last-good/, legacy-v1* archives, downloaded collector
+// binaries (distros/), settings.json, distros.json — and the first-run path
+// runs again (recreate the layout, materialize the shipped defaults). The
+// directory itself survives: it may be user-placed or a symlink, so its
+// contents are wiped, never the path followed elsewhere. The tray's own
+// LaunchAgent is a separate job and stays installed.
+func (a *App) FactoryReset() error {
+	if err := launchd.Uninstall(); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(a.Dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(a.Dir, e.Name())); err != nil {
+			return err
+		}
+	}
+	a.mu.Lock()
+	a.downloads = nil // any recorded download now points at a deleted binary
+	a.mu.Unlock()
+	// The same first-run path app.New takes: state.Dir recreates the layout,
+	// MaterializeDefaults puts the shipped configs back. No settings file
+	// means defaults (default ports, no distro, nothing active).
+	if _, err := state.Dir(); err != nil {
+		return err
+	}
+	return cfgstore.MaterializeDefaults(a.Dir)
+}
+
 // Apply re-activates the current configuration and preset.
 func (a *App) Apply() error {
 	name, _, err := a.activeName()
@@ -1093,11 +1127,12 @@ func (a *App) WebUIAPI() webui.API {
 		GetSettings: a.settingsMap,
 		PutSettings: a.PutSettings,
 
-		Health:   a.Health,
-		Apply:    a.Apply,
-		Stop:     a.Stop,
-		Start:    a.Start,
-		Validate: a.Validate,
+		Health:       a.Health,
+		Apply:        a.Apply,
+		Stop:         a.Stop,
+		Start:        a.Start,
+		Validate:     a.Validate,
+		FactoryReset: a.FactoryReset,
 
 		Configs:        func() (any, error) { return a.Configs() },
 		CreateConfig:   a.CreateConfig,

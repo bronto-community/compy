@@ -48,6 +48,7 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy presets rename <config> <from> <to>
   compy settings
   compy settings set [--grpc-port N] [--http-port N]
+  compy factory-reset --yes
   compy distro list
   compy distro add <name> <path>
   compy distro set-path <name> <path>
@@ -127,6 +128,8 @@ func run(args []string) error {
 		return cmdPresets(rest)
 	case "settings":
 		return cmdSettings(rest)
+	case "factory-reset":
+		return cmdFactoryReset(rest)
 	case "distro":
 		return cmdDistro(rest)
 	case "service":
@@ -464,6 +467,27 @@ func cmdSettings(args []string) error {
 		}
 	})
 	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP) })
+}
+
+// cmdFactoryReset wipes the state directory and starts over. The CLI has no
+// confirm UI, so the destruction is gated on --yes: without it, say what
+// would be deleted and how to confirm, and exit non-zero.
+func cmdFactoryReset(args []string) error {
+	fs := flag.NewFlagSet("factory-reset", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "confirm the reset")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return withApp(func(a *app.App) error {
+		if !*yes {
+			return fmt.Errorf("factory-reset deletes everything in %s: all configurations, presets, downloaded collectors, logs, and settings — the shipped configs come back fresh.\nrun `compy factory-reset --yes` to confirm", a.Dir)
+		}
+		if err := a.FactoryReset(); err != nil {
+			return err
+		}
+		fmt.Println("compy was reset to factory settings")
+		return nil
+	})
 }
 
 func cmdDistro(args []string) error {

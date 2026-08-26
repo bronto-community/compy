@@ -33,11 +33,12 @@ type API struct {
 	GetSettings func() (map[string]any, error)
 	PutSettings func(grpcPort, httpPort *int) error // partial: nil = unchanged
 
-	Health   func() (any, error) // collector's own metrics; {"available": false} when stopped
-	Apply    func() error
-	Stop     func() error // stop the collector; the active configuration stays named
-	Start    func() error // run the active configuration again
-	Validate func() error
+	Health       func() (any, error) // collector's own metrics; {"available": false} when stopped
+	Apply        func() error
+	Stop         func() error // stop the collector; the active configuration stays named
+	Start        func() error // run the active configuration again
+	Validate     func() error
+	FactoryReset func() error // uninstall the job, wipe the state dir, re-create the shipped defaults
 
 	Configs        func() (any, error) // configurations, JSON-marshalable
 	CreateConfig   func(name, yaml string) error
@@ -118,6 +119,8 @@ func routes() []route {
 		{"POST", "/api/service/stop", handleStop},
 		{"POST", "/api/service/start", handleStart},
 		{"POST", "/api/service/validate", handleValidate},
+
+		{"POST", "/api/factory-reset", handleFactoryReset},
 
 		{"GET", "/api/configs", handleConfigs},
 		{"POST", "/api/configs", handleCreateConfig},
@@ -458,6 +461,18 @@ func handleStart(api API) http.HandlerFunc {
 func handleValidate(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := api.Validate(); err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+// handleFactoryReset wipes the state directory and starts over. Nothing
+// here is a user mistake — any failure is a plain 500.
+func handleFactoryReset(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := api.FactoryReset(); err != nil {
 			writeClosureErr(w, err)
 			return
 		}

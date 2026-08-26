@@ -366,6 +366,21 @@
         }
       }
     },
+    "/api/factory-reset": {
+      "post": {
+        "summary": "Reset compy to factory settings: uninstall the collector job, wipe the state directory's contents, and re-create the shipped defaults (the tray's own agent is untouched)",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
     "/api/configs": {
       "get": {
         "summary": "List configurations",
