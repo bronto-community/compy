@@ -2222,3 +2222,108 @@ func TestHealthOnlyReportsOurCollector(t *testing.T) {
 		t.Errorf("Health() with the job running: %v", err)
 	}
 }
+
+// TestFactoryReset: a reset while the collector is running (per the shim)
+// uninstalls the job and returns the state dir to as-installed — user
+// configs gone, shipped configs back pristine, settings and distros back to
+// defaults, downloaded binaries and logs deleted — without touching the
+// directory itself.
+func TestFactoryReset(t *testing.T) {
+	calls := setup(t, "state = running")
+	fakeDistro(t, "exit 0") // a custom distro entry, selected
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetVar("bronto", "prod", "BRONTO_API_KEY", "s3cret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.WriteConfigYAML("debug", "poked: true\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("mine", ""); err != nil {
+		t.Fatal(err) // running: settings.json now names mine, last-good exists
+	}
+	// A "downloaded" collector binary and a log line, to be wiped.
+	binDir := filepath.Join(a.Dir, "distros", "contrib-1.0")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "otelcol"), []byte("bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.LogPath(), []byte("a log line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	if err := a.FactoryReset(); err != nil {
+		t.Fatalf("FactoryReset: %v", err)
+	}
+
+	// The running job was uninstalled: booted out, plist gone.
+	if !called(*calls, "bootout") {
+		t.Errorf("FactoryReset did not boot the job out: %v", *calls)
+	}
+	if path, err := launchd.PlistPath(); err == nil {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("plist still present after FactoryReset (stat err = %v)", err)
+		}
+	}
+
+	// Exactly the shipped configs, all pristine.
+	infos, err := a.Configs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, info := range infos {
+		names = append(names, info.Name)
+		if info.Provenance != "shipped" || info.Modified {
+			t.Errorf("config %s: provenance=%s modified=%v, want pristine shipped", info.Name, info.Provenance, info.Modified)
+		}
+		if len(info.Meta.Presets) != 0 {
+			t.Errorf("config %s kept presets %v", info.Name, info.Meta.Presets)
+		}
+	}
+	if want := []string{"bronto", "debug", "otlp"}; !slices.Equal(names, want) {
+		t.Errorf("configs after reset = %v, want %v", names, want)
+	}
+
+	// Settings back to defaults: default ports, no distro, nothing active.
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ActiveConfig != "" || s.Distro != "" || s.GRPCPort != 14317 || s.HTTPPort != 14318 || len(s.Recent) != 0 {
+		t.Errorf("settings after reset = %+v, want defaults", s)
+	}
+	// The custom distro entry is gone, and so are downloaded binaries.
+	distros, err := state.LoadDistros()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(distros) != 0 {
+		t.Errorf("distros after reset = %v, want none", distros)
+	}
+	if _, err := os.Stat(filepath.Join(a.Dir, "distros")); !os.IsNotExist(err) {
+		t.Errorf("downloaded binaries survived the reset (stat err = %v)", err)
+	}
+	// Logs and the last-good snapshot are gone; the dir layout is back.
+	if _, err := os.Stat(a.LogPath()); !os.IsNotExist(err) {
+		t.Errorf("collector log survived the reset (stat err = %v)", err)
+	}
+	if cfgstore.HasSnapshot(a.Dir) {
+		t.Error("last-good snapshot survived the reset")
+	}
+	for _, sub := range []string{"configs", "logs", "last-good"} {
+		if fi, err := os.Stat(filepath.Join(a.Dir, sub)); err != nil || !fi.IsDir() {
+			t.Errorf("state dir missing %s/ after reset (err = %v)", sub, err)
+		}
+	}
+}
