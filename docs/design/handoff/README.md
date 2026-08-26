@@ -451,6 +451,10 @@ with the text above.
   the new ports apply when the collector next restarts and offers the
   restart action. The "ports live in the CLI" sentence is now "shell wiring
   lives in the CLI".
+- The **menu-bar configuration list is alphabetical** (case-insensitive),
+  More… simply continuing it past ten — recency no longer orders the menu
+  (supersedes the v4 "ten most recent first" rule; `recent` stays in
+  status/API).
 - The getting-started strip is a real **help affordance** (round 2): a
   circle-help icon leads it, and a help icon button in the configs header
   (title "help") reopens it when dismissed (or toggles it closed).
