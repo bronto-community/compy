@@ -4,7 +4,9 @@
 // via webview_go) instead of a browser tab. It runs as its own process: the
 // tray owns its process's main thread for systray, and the webview needs a
 // main thread of its own. State is file-based, so this process serves the
-// same UI over its own ephemeral localhost listener.
+// same UI over its own ephemeral localhost listener. The window opens at
+// the design size (1240×838, docs/design/handoff/README.md) and stays
+// resizable (HintNone); the layout is expected to hold down to ~900px wide.
 package window
 
 import (
@@ -32,7 +34,7 @@ func Run(a *app.App) error {
 	w := webview.New(false)
 	defer w.Destroy()
 	w.SetTitle("compy")
-	w.SetSize(960, 680, webview.HintNone)
+	w.SetSize(1240, 838, webview.HintNone)
 	w.Navigate(fmt.Sprintf("http://127.0.0.1:%d/", ln.Addr().(*net.TCPAddr).Port))
 	w.Run()
 	return nil
