@@ -703,16 +703,29 @@ func (a *App) Health() (any, error) {
 func (a *App) Log(n int) (string, error) { return collector.TailLog(a.LogPath(), n) }
 
 // LogStats counts collector log lines, among the last `lines` lines, whose
-// level field is "error" or "warn". Collector zap lines are tab-separated
-// (timestamp, level, caller, message); strings.Fields tolerates a
-// space-delimited log the same way. A missing log file counts as zero, not
-// an error.
+// level field is "error" or "warn" — counting only lines since the
+// collector's last startup. otelcol logs a "Starting otelcol..." message at
+// each boot; counting the whole persisted tail instead would let yesterday's
+// errors pin the tray's attention icon (and the status line's counts) on a
+// perfectly healthy run today. No startup marker in the window means a
+// long-running collector whose marker scrolled out of the tail — those lines
+// are all current-session anyway, so the whole window counts. Collector zap
+// lines are tab-separated (timestamp, level, caller, message);
+// strings.Fields tolerates a space-delimited log the same way. A missing log
+// file counts as zero, not an error.
 func (a *App) LogStats(lines int) (errors, warnings int, err error) {
 	tail, err := collector.TailLog(a.LogPath(), lines)
 	if err != nil {
 		return 0, 0, err
 	}
-	for _, line := range strings.Split(tail, "\n") {
+	all := strings.Split(tail, "\n")
+	for i := len(all) - 1; i >= 0; i-- {
+		if strings.Contains(all[i], "Starting otelcol") {
+			all = all[i+1:]
+			break
+		}
+	}
+	for _, line := range all {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
