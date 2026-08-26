@@ -23,7 +23,7 @@ import (
 	"github.com/bronto-io/compy/internal/cfgstore"
 )
 
-// refreshInterval is how often the status line and menu check-states are
+// refreshInterval is how often the status line and menu indicator icons are
 // re-synced with the state directory (which the CLI or window may have
 // changed behind our back).
 const refreshInterval = 5 * time.Second
@@ -57,14 +57,22 @@ type menu struct {
 	restart *systray.MenuItem
 	toggle  *systray.MenuItem // Stop/Start Collector, title tracks running state
 
-	// running mirrors the last synced Status.Running so the toggle's click
-	// handler can decide Stop vs Start at click time, under m.mu — the same
-	// discipline as slotNames.
-	running bool
+	// last mirrors the last synced Status so click handlers can decide what
+	// they are doing — Stop vs Start, which rows a swap transitions — at
+	// click time, under m.mu (the same discipline as slotNames).
+	last app.Status
 
 	// icon is the state the menu-bar icon currently shows, so sync() only
 	// calls into systray when it actually changes (not every 5s tick).
 	icon iconState
+
+	// itemIcons is the indicator each config row / preset item currently
+	// shows, so setItemIcon only calls into systray on a change. An item
+	// absent from the map has never been painted (a fresh systray item has
+	// no image at all), so its first paint always goes through — including
+	// the blank, which keeps titles aligned with iconed rows and is also
+	// the only way to take an icon back off (systray cannot clear one).
+	itemIcons map[*systray.MenuItem]itemState
 
 	// presetOwner records which (config, preset) each live preset-submenu
 	// item currently represents, so its click handler can resolve that at
@@ -97,6 +105,7 @@ func onReady(a *app.App) {
 		moreItems:   map[string]*systray.MenuItem{},
 		morePresets: map[string]map[string]*systray.MenuItem{},
 		presetOwner: map[*systray.MenuItem]presetTarget{},
+		itemIcons:   map[*systray.MenuItem]itemState{},
 	}
 
 	m.status = systray.AddMenuItem("...", "service status")
@@ -111,7 +120,10 @@ func onReady(a *app.App) {
 	m.slotNames = make([]string, maxInline)
 	m.slotPresets = make([]map[string]*systray.MenuItem, maxInline)
 	for i := 0; i < maxInline; i++ {
-		slot := systray.AddMenuItemCheckbox("", "activate this configuration", false)
+		// Plain items, not checkboxes: the three-state indicator icons
+		// (active / going down / going up) carry the state the native
+		// checkmark used to — one indicator system, not two fighting.
+		slot := systray.AddMenuItem("", "activate this configuration")
 		slot.Hide()
 		m.slots = append(m.slots, slot)
 		m.slotPresets[i] = map[string]*systray.MenuItem{}
@@ -163,7 +175,7 @@ func (m *menu) sync() {
 	m.status.SetTitle(line1)
 	m.statusLine2.SetTitle(line2)
 	m.setIcon(iconFor(st.Running, errs))
-	m.running = st.Running
+	m.last = st
 	m.toggle.SetTitle(toggleTitle(st.Running))
 	// Restarting a stopped collector makes no sense — the toggle's Start is
 	// the way up.
@@ -212,7 +224,7 @@ func (m *menu) sync() {
 		seen[name] = true
 		item, ok := m.moreItems[name]
 		if !ok {
-			item = m.more.AddSubMenuItemCheckbox(name, "activate "+name, false)
+			item = m.more.AddSubMenuItem(name, "activate "+name)
 			m.moreItems[name] = item
 			m.morePresets[name] = map[string]*systray.MenuItem{}
 			go m.handleConfigClicks(name, item)
@@ -235,12 +247,15 @@ func (m *menu) sync() {
 }
 
 // syncRow reconciles one configuration's menu row against current status:
-// the row's own checkmark, and — for a configuration with presets
+// the row's own indicator icon, and — for a configuration with presets
 // (presetChoices) — its preset submenu, lazily created in presetItems
 // (that row's own cache, since systray can only append items). Clicking a
-// preset row is itself the activation; the running preset is checked.
-// Checkmarks mean "this is what is RUNNING" (checkedConfig): a stopped
-// collector checks nothing, however recently a config was active.
+// preset row is itself the activation; the running preset carries the
+// active icon. The active icon means "this is what is RUNNING"
+// (checkedConfig, rowState/presetState): a stopped collector marks
+// nothing, however recently a config was active. Running as part of every
+// sync, this is also what repaints truth over doAct's transition icons
+// once the action has finished — success or failure alike.
 //
 // Every preset item's ownership is (re)recorded here on every sync, whether
 // the item is newly created or reused from a previous sync — the click
@@ -249,8 +264,7 @@ func (m *menu) sync() {
 // so a cache entry that outlives a config change never misdirects the
 // activation (T3 review finding).
 func (m *menu) syncRow(item *systray.MenuItem, presetItems map[string]*systray.MenuItem, name string, info cfgstore.Info, st app.Status) {
-	active := name == checkedConfig(st)
-	setChecked(item, active)
+	m.setItemIcon(item, rowState(name, st))
 	presets, submenu := presetChoices(info)
 	if !submenu {
 		m.removeStale(presetItems, map[string]bool{})
@@ -261,13 +275,13 @@ func (m *menu) syncRow(item *systray.MenuItem, presetItems map[string]*systray.M
 		seen[preset] = true
 		pi, ok := presetItems[preset]
 		if !ok {
-			pi = item.AddSubMenuItemCheckbox(preset, "activate "+name+" · "+preset, false)
+			pi = item.AddSubMenuItem(preset, "activate "+name+" · "+preset)
 			presetItems[preset] = pi
 			go m.handlePresetClicks(pi)
 		}
 		pi.SetTooltip("activate " + name + " · " + preset)
 		m.setPresetOwner(pi, name, preset)
-		setChecked(pi, active && preset == st.Preset)
+		m.setItemIcon(pi, presetState(name, preset, st))
 	}
 	m.removeStale(presetItems, seen)
 }
@@ -302,23 +316,78 @@ func (m *menu) setIcon(s iconState) {
 	systray.SetTemplateIcon(s.data(), s.data())
 }
 
-func setChecked(item *systray.MenuItem, want bool) {
-	if want && !item.Checked() {
-		item.Check()
-	} else if !want && item.Checked() {
-		item.Uncheck()
+// setItemIcon paints one config row's / preset item's indicator when — and
+// only when — it changed (the itemIcons cache), so the 5s resync doesn't
+// churn systray. itemNone paints the transparent blank: systray has no way
+// to clear an item's icon, and the blank keeps every title aligned with the
+// iconed rows. Called from sync() and doAct(), so under m.mu everywhere but
+// onReady's initial single-threaded call — the slotNames discipline.
+func (m *menu) setItemIcon(item *systray.MenuItem, s itemState) {
+	if cur, ok := m.itemIcons[item]; ok && cur == s {
+		return
+	}
+	m.itemIcons[item] = s
+	item.SetTemplateIcon(s.data(), s.data())
+}
+
+// paintMarks puts an action's transition icons up at click time: going-down
+// on what is being deactivated, going-up on what is activating. Rows or
+// presets the marks name but the menu doesn't currently show (an overflow
+// config whose submenu was never built, say) are skipped — the status line
+// still narrates the action.
+func (m *menu) paintMarks(marks swapMarks) {
+	if it := m.rowItem(marks.rowDown); it != nil {
+		m.setItemIcon(it, itemDown)
+	}
+	if it := m.rowItem(marks.rowUp); it != nil {
+		m.setItemIcon(it, itemUp)
+	}
+	if it := m.presetItem(marks.presetDown); it != nil {
+		m.setItemIcon(it, itemDown)
+	}
+	if it := m.presetItem(marks.presetUp); it != nil {
+		m.setItemIcon(it, itemUp)
 	}
 }
 
+// rowItem finds the menu item currently showing config name — an inline
+// slot or a More… entry — or nil. Callers hold m.mu.
+func (m *menu) rowItem(name string) *systray.MenuItem {
+	if name == "" {
+		return nil
+	}
+	for i, n := range m.slotNames {
+		if n == name {
+			return m.slots[i]
+		}
+	}
+	return m.moreItems[name] // nil when absent
+}
+
+// presetItem finds the preset submenu item t currently names, or nil.
+// Callers hold m.mu.
+func (m *menu) presetItem(t presetTarget) *systray.MenuItem {
+	if t == (presetTarget{}) {
+		return nil
+	}
+	for i, n := range m.slotNames {
+		if n == t.config {
+			return m.slotPresets[i][t.preset]
+		}
+	}
+	return m.morePresets[t.config][t.preset] // nil map lookup is fine
+}
+
 // removeStale removes every item in items not named in seen, dropping its
-// preset ownership record too (a no-op for items that were never a preset
-// row's key, e.g. the top-level "More…" entries).
+// preset ownership and icon records too (ownership is a no-op for items
+// that were never a preset row's key, e.g. the top-level "More…" entries).
 func (m *menu) removeStale(items map[string]*systray.MenuItem, seen map[string]bool) {
 	for name, item := range items {
 		if !seen[name] {
 			item.Remove()
 			delete(items, name)
 			delete(m.presetOwner, item)
+			delete(m.itemIcons, item)
 		}
 	}
 }
@@ -330,8 +399,10 @@ func (m *menu) handleConfigClicks(name string, item *systray.MenuItem) {
 		// preset. Native menus don't deliver this click at all once the row
 		// has grown a submenu (multi-preset) — picking a preset there is
 		// the activation.
+		m.mu.Lock()
 		p := m.presetFor(name)
-		m.act(activatingLine(name, p), item, name, func() error { return m.a.Activate(name, p) })
+		m.doAct(activatingLine(name, p), activateMarks(m.last, presetTarget{config: name, preset: p}), func() error { return m.a.Activate(name, p) })
+		m.mu.Unlock()
 	}
 }
 
@@ -357,7 +428,7 @@ func (m *menu) handleSlotClicks(i int, slot *systray.MenuItem) {
 			continue
 		}
 		p := m.presetFor(name)
-		m.doAct(activatingLine(name, p), slot, name, func() error { return m.a.Activate(name, p) })
+		m.doAct(activatingLine(name, p), activateMarks(m.last, presetTarget{config: name, preset: p}), func() error { return m.a.Activate(name, p) })
 		m.mu.Unlock()
 	}
 }
@@ -373,23 +444,27 @@ func (m *menu) handlePresetClicks(item *systray.MenuItem) {
 		if !ok {
 			continue
 		}
-		m.act(activatingLine(target.config, target.preset), item, target.preset, func() error {
+		m.mu.Lock()
+		m.doAct(activatingLine(target.config, target.preset), activateMarks(m.last, target), func() error {
 			return m.a.Activate(target.config, target.preset)
 		})
+		m.mu.Unlock()
 	}
 }
 
 // handleToggle stops the collector when it is running and starts it when it
 // is not, resolving which at click time from the last synced state (under
-// m.mu, like handleSlotClicks). doAct's closing sync() flips the title, the
-// Restart enable-state, and the menu-bar icon.
+// m.mu, like handleSlotClicks). Stopping marks the running row going down,
+// starting marks the active row going up (toggleMarks); doAct's closing
+// sync() flips the title, the Restart enable-state, and the menu-bar icon.
 func (m *menu) handleToggle() {
 	for range m.toggle.ClickedCh {
 		m.mu.Lock()
-		if m.running {
-			m.doAct(toggleBusyLine(true), nil, "", func() error { return m.a.Stop() })
+		marks := toggleMarks(m.last)
+		if m.last.Running {
+			m.doAct(toggleBusyLine(true), marks, func() error { return m.a.Stop() })
 		} else {
-			m.doAct(toggleBusyLine(false), nil, "", func() error { return m.a.Start() })
+			m.doAct(toggleBusyLine(false), marks, func() error { return m.a.Start() })
 		}
 		m.mu.Unlock()
 	}
@@ -398,38 +473,30 @@ func (m *menu) handleToggle() {
 // handleRestart re-applies the active configuration (README "Restart
 // collector"). The design's in-flight pulse has no native-menu equivalent;
 // a static "Restarting…" title stands in for it (busy state still visible,
-// no animation needed).
+// no animation needed), and the running row shows going-up (restartMarks).
 func (m *menu) handleRestart() {
 	for range m.restart.ClickedCh {
-		m.act("Restarting…", nil, "", func() error { return m.a.Apply() })
+		m.mu.Lock()
+		m.doAct("Restarting…", restartMarks(m.last), func() error { return m.a.Apply() })
+		m.mu.Unlock()
 	}
 }
 
-// act runs an apply-triggering action with a progress note in the status
-// line; errors land there too (truncated) and in the tray log. pending, if
-// non-nil, is the clicked menu item: its title gains pendingTitle's
-// "— Activating…" suffix for the duration (immediate feedback that the click
-// registered — the checkmark stays honest and only moves on post-completion
-// sync), with base its normal title to restore. A second click while one
-// activation is in flight queues on m.mu and runs after.
-func (m *menu) act(note string, pending *systray.MenuItem, base string, fn func() error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.doAct(note, pending, base, fn)
-}
-
-// doAct is act's body; callers hold m.mu — which is also the sync-vs-pending
+// doAct runs an apply-triggering action with a progress note in the status
+// line; errors land there too (truncated) and in the tray log. marks are
+// the transition icons painted up front — going-down on what the action
+// deactivates, going-up on what it brings up — immediate feedback that the
+// click registered, while the ACTIVE icon stays honest and only moves on
+// the post-completion sync, which repaints launchd truth over the
+// transitions: success puts active on the new config, failure puts it back
+// on the survivor. Callers hold m.mu — which is also the sync-vs-transition
 // guard: the 5s ticker syncs under the same lock, so it cannot repaint (and
-// erase the pending suffix) while the activation is still running.
-func (m *menu) doAct(note string, pending *systray.MenuItem, base string, fn func() error) {
-	if pending != nil {
-		pending.SetTitle(pendingTitle(base))
-	}
+// erase the transition icons) while the action is still running; a second
+// click while one is in flight queues on m.mu and runs after.
+func (m *menu) doAct(note string, marks swapMarks, fn func() error) {
+	m.paintMarks(marks)
 	m.status.SetTitle(note)
 	err := fn()
-	if pending != nil {
-		pending.SetTitle(base) // cleared on success and failure alike, before the error pause
-	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "compy tray:", err)
 		m.status.SetTitle(errorLine(err))

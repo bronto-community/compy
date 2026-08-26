@@ -540,3 +540,17 @@ with the text above.
   it is present. The light appicon variant is vendored source-only
   (asset-catalogue light/dark variants need Xcode tooling). The Dock never
   shows the menu-bar glyph, nor the menu bar the app icon, per the handoff.
+- **Menu rows show three-state indicator icons, not the checkmark** (round
+  9): during an activation swap the old "checkmark stays + '— Activating…'
+  title suffix" mechanic is rejected. Config rows AND preset submenu items
+  carry per-item template icons (`internal/tray/icons/item-*`, drawn in the
+  menu-bar glyph's family): a filled dot = active (what is RUNNING — the
+  checkmark's old honesty rule), a down chevron = going down (the running
+  side of an in-flight swap, stop included), an up chevron = going up (the
+  activating side; start and restart show up only). Both sides of a swap
+  show their transition at click time; the end-of-action sync repaints
+  launchd truth — success or failure alike. A same-config preset swap
+  transitions only the presets; the row keeps its active dot. The native
+  Check()/Uncheck() and the title suffix are gone; stopped still shows no
+  icons anywhere, and a transparent blank icon stands in for "none" (systray
+  cannot clear a set icon) which also keeps titles aligned.

@@ -135,14 +135,10 @@ func TestStatusLines(t *testing.T) {
 	}
 }
 
-// TestPendingActivationForms covers the click-feedback strings: the clicked
-// row's pending title suffix and the status line's activating form. The
-// checkmark itself is untouched by design — it only ever reflects launchd
-// truth, so pending state lives in titles alone.
+// TestPendingActivationForms covers the status line's activating form (the
+// in-flight state on the rows themselves is the transition icons — see
+// TestActivateMarks — not a title suffix).
 func TestPendingActivationForms(t *testing.T) {
-	if got, want := pendingTitle("otlp"), "otlp — Activating…"; got != want {
-		t.Errorf("pendingTitle = %q, want %q", got, want)
-	}
 	if got, want := activatingLine("otlp", ""), "Activating otlp…"; got != want {
 		t.Errorf("activatingLine no preset = %q, want %q", got, want)
 	}
@@ -206,16 +202,137 @@ func TestPresetChoices(t *testing.T) {
 	}
 }
 
-// TestCheckedConfig pins the checkmark's meaning — "this is what is
-// RUNNING": the active config is checked only while the collector runs; a
-// stopped collector checks nothing, however recently a config was active
+// TestCheckedConfig pins the active indicator's meaning — "this is what is
+// RUNNING": the active config is marked only while the collector runs; a
+// stopped collector marks nothing, however recently a config was active
 // (the status block still names it).
 func TestCheckedConfig(t *testing.T) {
 	if got := checkedConfig(app.Status{Running: true, Config: "otlp"}); got != "otlp" {
 		t.Errorf("running: checkedConfig = %q, want otlp", got)
 	}
 	if got := checkedConfig(app.Status{Running: false, Config: "otlp"}); got != "" {
-		t.Errorf("stopped: checkedConfig = %q, want \"\" (no checkmark while stopped)", got)
+		t.Errorf("stopped: checkedConfig = %q, want \"\" (no active icon while stopped)", got)
+	}
+}
+
+// TestSteadyStates pins the steady-state icon selection sync paints: the
+// running config row and its running preset carry the active icon, every
+// other row and preset none — and a stopped collector shows no icons
+// anywhere. This is also the failure repaint: a failed swap's end-of-doAct
+// sync sees launchd still running the survivor, so the survivor gets the
+// active icon back and the failed target drops its going-up mark to none.
+func TestSteadyStates(t *testing.T) {
+	running := app.Status{Running: true, Config: "acme", Preset: "eu"}
+	if got := rowState("acme", running); got != itemActive {
+		t.Errorf("running config row = %v, want itemActive", got)
+	}
+	if got := rowState("beta", running); got != itemNone {
+		t.Errorf("other config row = %v, want itemNone", got)
+	}
+	if got := presetState("acme", "eu", running); got != itemActive {
+		t.Errorf("running preset = %v, want itemActive", got)
+	}
+	if got := presetState("acme", "us", running); got != itemNone {
+		t.Errorf("other preset of running config = %v, want itemNone", got)
+	}
+	if got := presetState("beta", "eu", running); got != itemNone {
+		t.Errorf("same-named preset of another config = %v, want itemNone", got)
+	}
+
+	stopped := app.Status{Running: false, Config: "acme", Preset: "eu"}
+	if rowState("acme", stopped) != itemNone || presetState("acme", "eu", stopped) != itemNone {
+		t.Error("stopped: no icons anywhere, however recently acme·eu was active")
+	}
+}
+
+// TestActivateMarks pins the transition icons an activation click paints —
+// both sides of a swap show their state: down on what is being deactivated,
+// up on what is activating.
+func TestActivateMarks(t *testing.T) {
+	cases := []struct {
+		name   string
+		st     app.Status
+		target presetTarget
+		want   swapMarks
+	}{
+		{
+			"swap A→B: A down, B up, both presets marked",
+			app.Status{Running: true, Config: "acme", Preset: "eu"},
+			presetTarget{config: "beta", preset: "us"},
+			swapMarks{
+				rowDown: "acme", rowUp: "beta",
+				presetDown: presetTarget{config: "acme", preset: "eu"},
+				presetUp:   presetTarget{config: "beta", preset: "us"},
+			},
+		},
+		{
+			// Documented choice: on a same-config preset swap the row keeps
+			// its active icon (the config stays the running one) — only the
+			// presets transition.
+			"same-config preset swap: presets transition, row stays active",
+			app.Status{Running: true, Config: "acme", Preset: "eu"},
+			presetTarget{config: "acme", preset: "us"},
+			swapMarks{
+				presetDown: presetTarget{config: "acme", preset: "eu"},
+				presetUp:   presetTarget{config: "acme", preset: "us"},
+			},
+		},
+		{
+			"activation from stopped: up only, nothing goes down",
+			app.Status{Running: false, Config: "acme", Preset: "eu"},
+			presetTarget{config: "beta", preset: "us"},
+			swapMarks{rowUp: "beta", presetUp: presetTarget{config: "beta", preset: "us"}},
+		},
+		{
+			"re-clicking the running preset: up (re-apply), never down+up at once",
+			app.Status{Running: true, Config: "acme", Preset: "eu"},
+			presetTarget{config: "acme", preset: "eu"},
+			swapMarks{presetUp: presetTarget{config: "acme", preset: "eu"}},
+		},
+		{
+			"plain-click swap with no target preset marks rows only",
+			app.Status{Running: true, Config: "acme", Preset: "eu"},
+			presetTarget{config: "beta"},
+			swapMarks{
+				rowDown: "acme", rowUp: "beta",
+				presetDown: presetTarget{config: "acme", preset: "eu"},
+			},
+		},
+	}
+	for _, c := range cases {
+		if got := activateMarks(c.st, c.target); got != c.want {
+			t.Errorf("%s: activateMarks = %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestToggleAndRestartMarks: stopping shows going-down on the running row
+// (and preset) until sync confirms; starting shows going-up on the active
+// config; restart shows going-up on the running row — the collector comes
+// straight back, and one paint can't show down-then-up.
+func TestToggleAndRestartMarks(t *testing.T) {
+	running := app.Status{Running: true, Config: "acme", Preset: "eu"}
+	stopped := app.Status{Running: false, Config: "acme", Preset: "eu"}
+
+	want := swapMarks{rowDown: "acme", presetDown: presetTarget{config: "acme", preset: "eu"}}
+	if got := toggleMarks(running); got != want {
+		t.Errorf("stop: toggleMarks = %+v, want %+v", got, want)
+	}
+	want = swapMarks{rowUp: "acme", presetUp: presetTarget{config: "acme", preset: "eu"}}
+	if got := toggleMarks(stopped); got != want {
+		t.Errorf("start: toggleMarks = %+v, want %+v", got, want)
+	}
+	if got := restartMarks(running); got != want {
+		t.Errorf("restart: restartMarks = %+v, want %+v", got, want)
+	}
+	if got := restartMarks(stopped); got != (swapMarks{}) {
+		t.Errorf("restart while stopped marks nothing, got %+v", got)
+	}
+
+	// A preset-less config transitions its row alone.
+	want = swapMarks{rowDown: "debug"}
+	if got := toggleMarks(app.Status{Running: true, Config: "debug"}); got != want {
+		t.Errorf("stop preset-less: toggleMarks = %+v, want %+v", got, want)
 	}
 }
 
@@ -254,24 +371,28 @@ func TestPresetOwnershipFollowsSlotReassignment(t *testing.T) {
 // TestSyncRowPresetSubmenu drives the REAL syncRow — the code sync() runs
 // for every row — for a multi-preset config, pinning that the submenu path
 // populates m.presetOwner so a click resolves to the right (config, preset),
-// and that checkmarks obey the running-only rule. The helper tests above
-// (presetChoices etc.) cover pieces syncRow composes; this one guards
-// against the wiring drifting away from them.
+// and that the indicator icons obey the running-only rule. The helper tests
+// above (presetChoices, TestSteadyStates etc.) cover pieces syncRow
+// composes; this one guards against the wiring drifting away from them.
 //
 // systray constraint (same as TestPresetOwnershipFollowsSlotReassignment):
-// AddSubMenuItemCheckbox needs the Cocoa run loop that only systray.Run
-// provides, so the row's preset-item cache is pre-seeded with bare
-// *systray.MenuItem values — on those, SetTitle/SetTooltip/Check/Uncheck
-// only mutate fields (their update() no-ops for an item never registered
-// with systray), which is exactly what lets the real syncRow run here.
+// AddSubMenuItem needs the Cocoa run loop that only systray.Run provides,
+// so the row's preset-item cache is pre-seeded with bare *systray.MenuItem
+// values — on those, SetTitle/SetTooltip only mutate fields, and
+// SetTemplateIcon messages the nil Cocoa delegate (a no-op before
+// systray.Run), which is exactly what lets the real syncRow run here; the
+// icon assertions read m.itemIcons, the cache setItemIcon paints through.
 func TestSyncRowPresetSubmenu(t *testing.T) {
-	m := &menu{presetOwner: map[*systray.MenuItem]presetTarget{}}
+	m := &menu{
+		presetOwner: map[*systray.MenuItem]presetTarget{},
+		itemIcons:   map[*systray.MenuItem]itemState{},
+	}
 	row := &systray.MenuItem{}
 	presetItems := map[string]*systray.MenuItem{"default": {}, "eu": {}}
 	info := cfgstore.Info{Meta: cfgstore.Meta{Presets: map[string]map[string]string{"default": {}, "eu": {}}}}
 
-	// Running acme·eu: the row and the eu preset are checked, both preset
-	// items owned by acme.
+	// Running acme·eu: the row and the eu preset carry the active icon,
+	// both preset items owned by acme.
 	m.syncRow(row, presetItems, "acme", info, app.Status{Running: true, Config: "acme", Preset: "eu"})
 	if len(m.presetOwner) != 2 {
 		t.Fatalf("presetOwner has %d entries, want 2 — syncRow must record every preset item's ownership", len(m.presetOwner))
@@ -282,18 +403,18 @@ func TestSyncRowPresetSubmenu(t *testing.T) {
 			t.Errorf("preset %q resolves to %+v, %v; want {acme %s}, true", name, target, ok, name)
 		}
 	}
-	if !row.Checked() {
-		t.Error("running active config: row must be checked")
+	if m.itemIcons[row] != itemActive {
+		t.Errorf("running active config: row icon = %v, want itemActive", m.itemIcons[row])
 	}
-	if !presetItems["eu"].Checked() || presetItems["default"].Checked() {
-		t.Errorf("running preset eu: checked eu=%v default=%v, want true/false", presetItems["eu"].Checked(), presetItems["default"].Checked())
+	if m.itemIcons[presetItems["eu"]] != itemActive || m.itemIcons[presetItems["default"]] != itemNone {
+		t.Errorf("running preset eu: icons eu=%v default=%v, want itemActive/itemNone", m.itemIcons[presetItems["eu"]], m.itemIcons[presetItems["default"]])
 	}
 
 	// Stopped: same active config in status, but nothing is running — no
-	// checkmark anywhere (the checkmark means "this is what is running").
+	// icons anywhere (the active icon means "this is what is running").
 	m.syncRow(row, presetItems, "acme", info, app.Status{Running: false, Config: "acme", Preset: "eu"})
-	if row.Checked() || presetItems["eu"].Checked() || presetItems["default"].Checked() {
-		t.Errorf("stopped: checked row=%v eu=%v default=%v, want all false", row.Checked(), presetItems["eu"].Checked(), presetItems["default"].Checked())
+	if m.itemIcons[row] != itemNone || m.itemIcons[presetItems["eu"]] != itemNone || m.itemIcons[presetItems["default"]] != itemNone {
+		t.Errorf("stopped: icons row=%v eu=%v default=%v, want all itemNone", m.itemIcons[row], m.itemIcons[presetItems["eu"]], m.itemIcons[presetItems["default"]])
 	}
 
 	// A single-preset config gets NO submenu (2026-08-26 feedback, second
