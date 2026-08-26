@@ -65,9 +65,20 @@ const usage = `compy — local OpenTelemetry Collector manager
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "compy: "+err.Error())
+		fmt.Fprintln(os.Stderr, "compy: "+errorText(err))
 		os.Exit(1)
 	}
+}
+
+// errorText renders a command's failure, appending the still-running
+// reassurance REST/UI users get: a failed activation that put the previous
+// setup back says so, instead of leaving the CLI user to guess what runs.
+func errorText(err error) string {
+	var sr interface{ StillRunning() string }
+	if errors.As(err, &sr) {
+		return err.Error() + "\nthe previous setup is still running: " + sr.StillRunning()
+	}
+	return err.Error()
 }
 
 func run(args []string) error {
