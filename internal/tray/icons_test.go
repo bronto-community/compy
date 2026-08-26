@@ -39,3 +39,19 @@ func TestIconDataEmbedded(t *testing.T) {
 		seen[&d[0]] = true
 	}
 }
+
+func TestItemIconDataEmbedded(t *testing.T) {
+	icnsMagic := []byte("icns")
+	seen := map[*byte]bool{}
+	for _, s := range []itemState{itemNone, itemActive, itemDown, itemUp} {
+		d := s.data()
+		if len(d) == 0 || !bytes.HasPrefix(d, icnsMagic) {
+			t.Errorf("item state %v: not .icns data (len %d)", s, len(d))
+			continue
+		}
+		if seen[&d[0]] {
+			t.Errorf("item state %v: shares icon bytes with another state", s)
+		}
+		seen[&d[0]] = true
+	}
+}

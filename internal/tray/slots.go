@@ -94,9 +94,10 @@ func splitInline(ordered []string, n int) (inline, overflow []string) {
 }
 
 // checkedConfig is the one configuration whose row (and running preset)
-// carries the radio checkmark: the active config while the collector is
-// RUNNING, nobody when it is stopped. The checkmark means "this is what is
-// running" — the same honesty rule that keeps it parked during a pending
+// carries the active indicator icon (it carried the native checkmark before
+// the three-state icons replaced it): the active config while the collector
+// is RUNNING, nobody when it is stopped. The indicator means "this is what
+// is running" — the same honesty rule that keeps it parked during a pending
 // activation — and with the collector stopped, nothing is running (the
 // active config is still named in the status block).
 func checkedConfig(st app.Status) string {
@@ -156,12 +157,97 @@ func toggleBusyLine(running bool) string {
 	return "Starting…"
 }
 
-// pendingTitle marks a clicked config/preset row while its activation is in
-// flight. Only the title carries the pending state — the checkmark itself
-// keeps meaning "this is what launchd is running" and never moves until a
-// post-activation sync says so.
-func pendingTitle(base string) string {
-	return base + " — Activating…"
+// rowState is a config row's steady-state indicator: the active icon on the
+// one configuration that is RUNNING (checkedConfig's rule, inherited from
+// the checkmark it replaced), no icon otherwise — so a stopped collector
+// shows no icons anywhere.
+func rowState(name string, st app.Status) itemState {
+	if name == checkedConfig(st) {
+		return itemActive
+	}
+	return itemNone
+}
+
+// presetState is a preset submenu item's steady-state indicator: active only
+// when its config is the running one AND it is that config's running preset.
+func presetState(config, preset string, st app.Status) itemState {
+	if config == checkedConfig(st) && preset == st.Preset {
+		return itemActive
+	}
+	return itemNone
+}
+
+// swapMarks is what an in-flight action paints at click time: the config row
+// and preset item going down (the running ones being deactivated) and the
+// ones going up (the target). "" / the zero presetTarget mean "mark
+// nothing". The end-of-action sync repaints launchd truth over these —
+// success or failure alike.
+type swapMarks struct {
+	rowDown, rowUp       string
+	presetDown, presetUp presetTarget
+}
+
+// activateMarks is the transition an activation click paints, given the last
+// synced status: the still-running config row and its running preset go
+// down, the clicked target row and preset go up. From stopped, nothing is
+// going down — up only. A same-config preset swap marks only the presets
+// (old down, new up); the row itself stays on the active icon, since that
+// configuration keeps running. Re-clicking the running preset paints it
+// going up (it is re-applied), never both directions at once.
+func activateMarks(st app.Status, target presetTarget) swapMarks {
+	m := swapMarks{}
+	if target.preset != "" {
+		m.presetUp = target
+	}
+	if !st.Running {
+		m.rowUp = target.config
+		return m
+	}
+	if st.Config != target.config {
+		m.rowDown = st.Config
+		m.rowUp = target.config
+	}
+	if st.Preset != "" {
+		down := presetTarget{config: st.Config, preset: st.Preset}
+		if down != m.presetUp {
+			m.presetDown = down
+		}
+	}
+	return m
+}
+
+// toggleMarks is the Stop/Start transition: stopping marks the running row
+// (and its running preset) going down; starting marks the active config
+// going up — the one Start will bring back.
+func toggleMarks(st app.Status) swapMarks {
+	m := swapMarks{}
+	if st.Running {
+		m.rowDown = st.Config
+		if st.Preset != "" {
+			m.presetDown = presetTarget{config: st.Config, preset: st.Preset}
+		}
+		return m
+	}
+	m.rowUp = st.Config
+	if st.Preset != "" {
+		m.presetUp = presetTarget{config: st.Config, preset: st.Preset}
+	}
+	return m
+}
+
+// restartMarks is the Restart transition: going up on the running config row
+// and preset — the collector comes straight back, and a single paint can't
+// show down-then-up, so up (the end state being worked toward) carries it.
+// Restart is disabled while stopped, so a stopped status marks nothing.
+func restartMarks(st app.Status) swapMarks {
+	if !st.Running {
+		return swapMarks{}
+	}
+	m := swapMarks{rowUp: st.Config}
+	if st.Preset != "" {
+		m.presetUp = presetTarget{config: st.Config, preset: st.Preset}
+	}
+	return m
 }
 
 // activatingLine is the status block's first line while an activation is in
