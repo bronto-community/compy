@@ -284,7 +284,7 @@ func (m *menu) handleConfigClicks(name string, item *systray.MenuItem) {
 		// Activate with the configuration's own active preset ("" keeps it).
 		// Native menus don't deliver this click at all once the row has grown
 		// a submenu (multi-preset) — picking a preset there is the activation.
-		m.act("activating "+name+"…", func() error { return m.a.Activate(name, "") })
+		m.act(activatingLine(name, ""), item, name, func() error { return m.a.Activate(name, "") })
 	}
 }
 
@@ -298,7 +298,7 @@ func (m *menu) handleSlotClicks(i int, slot *systray.MenuItem) {
 			m.mu.Unlock()
 			continue
 		}
-		m.doAct("activating "+name+"…", func() error { return m.a.Activate(name, "") })
+		m.doAct(activatingLine(name, ""), slot, name, func() error { return m.a.Activate(name, "") })
 		m.mu.Unlock()
 	}
 }
@@ -314,7 +314,7 @@ func (m *menu) handlePresetClicks(item *systray.MenuItem) {
 		if !ok {
 			continue
 		}
-		m.act("activating "+target.config+" · "+target.preset+"…", func() error {
+		m.act(activatingLine(target.config, target.preset), item, target.preset, func() error {
 			return m.a.Activate(target.config, target.preset)
 		})
 	}
@@ -326,28 +326,38 @@ func (m *menu) handlePresetClicks(item *systray.MenuItem) {
 // no animation needed).
 func (m *menu) handleRestart() {
 	for range m.restart.ClickedCh {
-		m.act("Restarting…", func() error { return m.a.Apply() })
+		m.act("Restarting…", nil, "", func() error { return m.a.Apply() })
 	}
 }
 
 // act runs an apply-triggering action with a progress note in the status
-// line; errors land there too (truncated) and in the tray log.
-func (m *menu) act(note string, fn func() error) {
+// line; errors land there too (truncated) and in the tray log. pending, if
+// non-nil, is the clicked menu item: its title gains pendingTitle's
+// "— Activating…" suffix for the duration (immediate feedback that the click
+// registered — the checkmark stays honest and only moves on post-completion
+// sync), with base its normal title to restore. A second click while one
+// activation is in flight queues on m.mu and runs after.
+func (m *menu) act(note string, pending *systray.MenuItem, base string, fn func() error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.doAct(note, fn)
+	m.doAct(note, pending, base, fn)
 }
 
-// doAct is act's body; callers hold m.mu.
-func (m *menu) doAct(note string, fn func() error) {
+// doAct is act's body; callers hold m.mu — which is also the sync-vs-pending
+// guard: the 5s ticker syncs under the same lock, so it cannot repaint (and
+// erase the pending suffix) while the activation is still running.
+func (m *menu) doAct(note string, pending *systray.MenuItem, base string, fn func() error) {
+	if pending != nil {
+		pending.SetTitle(pendingTitle(base))
+	}
 	m.status.SetTitle(note)
-	if err := fn(); err != nil {
+	err := fn()
+	if pending != nil {
+		pending.SetTitle(base) // cleared on success and failure alike, before the error pause
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "compy tray:", err)
-		msg := err.Error()
-		if len(msg) > 80 {
-			msg = msg[:80] + "…"
-		}
-		m.status.SetTitle("error: " + msg)
+		m.status.SetTitle(errorLine(err))
 		time.Sleep(3 * time.Second) // let the error be seen before resync
 	}
 	m.sync()

@@ -5,6 +5,7 @@ package tray
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"fyne.io/systray"
@@ -134,6 +135,32 @@ func TestStatusLines(t *testing.T) {
 		if line1 != c.wantLine1 || line2 != c.wantLine2 {
 			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, line1, line2, c.wantLine1, c.wantLine2)
 		}
+	}
+}
+
+// TestPendingActivationForms covers the click-feedback strings: the clicked
+// row's pending title suffix and the status line's activating form. The
+// checkmark itself is untouched by design — it only ever reflects launchd
+// truth, so pending state lives in titles alone.
+func TestPendingActivationForms(t *testing.T) {
+	if got, want := pendingTitle("otlp"), "otlp — Activating…"; got != want {
+		t.Errorf("pendingTitle = %q, want %q", got, want)
+	}
+	if got, want := activatingLine("otlp", ""), "Activating otlp…"; got != want {
+		t.Errorf("activatingLine no preset = %q, want %q", got, want)
+	}
+	if got, want := activatingLine("otlp", "eu"), "Activating otlp · eu…"; got != want {
+		t.Errorf("activatingLine with preset = %q, want %q", got, want)
+	}
+}
+
+func TestErrorLine(t *testing.T) {
+	if got, want := errorLine(fmt.Errorf("boom")), "error: boom"; got != want {
+		t.Errorf("errorLine = %q, want %q", got, want)
+	}
+	long := errorLine(fmt.Errorf("%s", strings.Repeat("x", 120)))
+	if want := "error: " + strings.Repeat("x", 80) + "…"; long != want {
+		t.Errorf("errorLine long = %q, want %q", long, want)
 	}
 }
 
