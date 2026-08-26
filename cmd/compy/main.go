@@ -190,7 +190,30 @@ func withApp(fn func(*app.App) error) error {
 	if err != nil {
 		return err
 	}
+	a.Progress = printDownload
 	return fn(a)
+}
+
+// printDownload is the default reporter for automatic distro downloads
+// (e.g. `compy use` on a fresh home fetching contrib): a percentage on
+// stderr, redrawn only when it changes — the same shape `compy distro
+// fetch` prints — with a newline once it completes.
+var printDownloadLast = -1
+
+func printDownload(name string, done, total int64) {
+	if total <= 0 {
+		return
+	}
+	pct := int(done * 100 / total)
+	if pct == printDownloadLast {
+		return
+	}
+	printDownloadLast = pct
+	fmt.Fprintf(os.Stderr, "\rdownloading %s… %d%%", name, pct)
+	if pct >= 100 {
+		fmt.Fprintln(os.Stderr)
+		printDownloadLast = -1
+	}
 }
 
 func cmdStatus(args []string) error {

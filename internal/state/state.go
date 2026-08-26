@@ -17,7 +17,7 @@ import (
 type Settings struct {
 	GRPCPort     int    `json:"grpc_port"`     // default 14317
 	HTTPPort     int    `json:"http_port"`     // default 14318
-	Distro       string `json:"distro"`        // global default distro, "" = none
+	Distro       string `json:"distro"`        // global default distro, "" = compy's default (contrib)
 	ActiveConfig string `json:"active_config"` // active configuration, "" = none
 	OSEnv        bool   `json:"os_env"`        // OS-level env injection active
 

@@ -5,6 +5,7 @@
 package app
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -31,12 +32,28 @@ import (
 // connections after kickstart.
 const probeTimeout = 5 * time.Second
 
+// DefaultDistro is the collector compy uses when settings name none:
+// contrib, downloaded (checksum-verified) automatically the first time
+// anything needs a collector binary. An explicit settings.Distro — set via
+// `compy distro use` or a first `compy distro add` — always wins.
+const DefaultDistro = "contrib"
+
 // App holds the resolved state directory. Settings are re-read per
 // operation so concurrent editors (CLI and web UI) never fight over a
 // cached copy. Download progress is the one thing App does keep: it belongs
 // to the process doing the downloading and is meaningless to anyone else.
 type App struct {
 	Dir string
+
+	// Fetch downloads distro archives; nil means plain HTTP(S). Tests
+	// inject one so no test ever pulls a real collector release.
+	Fetch distro.Fetch
+
+	// Progress, when set, is EnsureDistro's default download reporter for
+	// callers that pass none — the CLI sets it so an automatic download
+	// (e.g. `compy use` on a fresh home fetching contrib) prints its
+	// percent like `compy distro fetch` does.
+	Progress func(name string, done, total int64)
 
 	mu        sync.Mutex
 	downloads map[string]download
@@ -476,7 +493,7 @@ func (a *App) Status() (Status, error) {
 	}
 	return Status{
 		Running:   running,
-		Distro:    s.Distro,
+		Distro:    cmp.Or(s.Distro, DefaultDistro),
 		GRPCPort:  s.GRPCPort,
 		HTTPPort:  s.HTTPPort,
 		Config:    s.ActiveConfig,
@@ -755,19 +772,20 @@ func httpFetch(url string) (io.ReadCloser, int64, error) {
 }
 
 // EnsureDistro resolves a distro name to a collector binary path: "" means
-// the global default from settings, a user-registered entry is used as-is,
-// and a shipped definition is downloaded (checksum-verified) on first use,
-// reporting bytes to progress (nil = don't report) as it arrives.
+// the global default from settings (or DefaultDistro when none is set), a
+// user-registered entry is used as-is, and a shipped definition is
+// downloaded (checksum-verified) on first use, reporting bytes to progress
+// (nil = a.Progress, if set) as it arrives. A download is also reported to
+// the same in-process tracker the Settings screen polls (DownloadProgress),
+// so an automatic fetch during activation shows the same progress bar as an
+// explicit one.
 func (a *App) EnsureDistro(name string, progress distro.Progress) (string, error) {
 	if name == "" {
 		s, err := state.LoadSettings()
 		if err != nil {
 			return "", err
 		}
-		name = s.Distro
-	}
-	if name == "" {
-		return "", state.BadRequest(errors.New("no collector distro selected: run `compy distro use <name>` (or `compy distro add <name> <path>`)"))
+		name = cmp.Or(s.Distro, DefaultDistro)
 	}
 	user, err := state.LoadDistros()
 	if err != nil {
@@ -781,7 +799,32 @@ func (a *App) EnsureDistro(name string, progress distro.Progress) (string, error
 			if !distro.Available(d) {
 				return "", state.BadRequest(fmt.Errorf("distro %q has no build for this platform", name))
 			}
-			return distro.Ensure(a.Dir, d, httpFetch, progress)
+			if progress == nil && a.Progress != nil {
+				progress = func(done, total int64) { a.Progress(name, done, total) }
+			}
+			// Tracker entries begin lazily, on the first byte: an
+			// already-installed binary reports nothing. began stays false
+			// when another fetch owns the tracker slot (StartFetchDistro),
+			// which then also owns endDownload.
+			began := false
+			track := func(done, total int64) {
+				if !began {
+					began = a.beginDownload(name)
+				}
+				a.setDownloadProgress(name, done, total)
+				if progress != nil {
+					progress(done, total)
+				}
+			}
+			fetch := a.Fetch
+			if fetch == nil {
+				fetch = httpFetch
+			}
+			path, err := distro.Ensure(a.Dir, d, fetch, track)
+			if began {
+				a.endDownload(name, err)
+			}
+			return path, err
 		}
 	}
 	return "", state.BadRequest(fmt.Errorf("no such distro %q", name))
@@ -798,9 +841,10 @@ func (a *App) StartFetchDistro(name string) error {
 		return nil
 	}
 	go func() {
-		_, err := a.EnsureDistro(name, func(done, total int64) {
-			a.setDownloadProgress(name, done, total)
-		})
+		// EnsureDistro reports the bytes into the tracker itself; this
+		// goroutine owns the begin/end so pre-download errors (an unknown
+		// name) still land in the progress.
+		_, err := a.EnsureDistro(name, nil)
 		a.endDownload(name, err)
 	}()
 	return nil
@@ -833,18 +877,28 @@ func (a *App) Distros() ([]map[string]any, error) {
 	for _, d := range distro.Defs() {
 		defs[d.Name] = d
 	}
+	selected := cmp.Or(s.Distro, DefaultDistro)
 	out := make([]map[string]any, 0, len(reg))
 	for _, d := range reg {
 		def, isDef := defs[d.Name]
-		out = append(out, map[string]any{
+		row := map[string]any{
 			"name":       d.Name,
 			"path":       d.Path,
-			"selected":   d.Name == s.Distro,
+			"selected":   d.Name == selected,
 			"definition": isDef,
 			"available":  !isDef || distro.Available(def),
 			"downloaded": d.Path != "",
 			"user_entry": isUserEntry[d.Name],
-		})
+		}
+		// A download this process started without the settings screen's
+		// help (activation auto-fetching the default) rides along in the
+		// row, so the screen's periodic refresh still shows the bar.
+		a.mu.Lock()
+		if dl, ok := a.downloads[d.Name]; ok && dl.status == "downloading" {
+			row["download"] = map[string]any{"status": dl.status, "pct": dl.pct}
+		}
+		a.mu.Unlock()
+		out = append(out, row)
 	}
 	return out, nil
 }
@@ -1015,7 +1069,7 @@ func (a *App) UseDistro(name string) error {
 	// settings.json included, which puts the previous collector back — so
 	// read the setting rather than claim it stuck.
 	if after, lerr := state.LoadSettings(); lerr == nil && after.Distro != name {
-		return fmt.Errorf("%q did not start; the collector is still %q: %w", name, after.Distro, err)
+		return fmt.Errorf("%q did not start; the collector is still %q: %w", name, cmp.Or(after.Distro, DefaultDistro), err)
 	}
 	// Anything else — a plist write, a launchctl refusal — is our fault and
 	// keeps both its own message and its 500 (the collector log tail the UI
