@@ -15,9 +15,10 @@ Keychain-backed secrets, and a Windows implementation.
 
 ## Install
 
-Requires Go 1.24+. compy can download its own pinned collector binaries on
-first use (`compy distro use core|contrib|otlp`), or you can point it at
-your own `otelcol` build with `compy distro add`.
+Requires Go 1.24+. compy downloads its own pinned collector binary
+(`contrib`, checksum-verified) the first time anything needs one; switch to
+another pinned build with `compy distro use core|otlp`, or point it at your
+own `otelcol` build with `compy distro add`.
 
 ```
 go build -o compy ./cmd/compy
@@ -54,16 +55,15 @@ modified, unless you `resync` to discard your edits).
 ## Quickstart
 
 ```
-./compy distro use core
 ./compy use debug
 eval "$(./compy env)"
 ```
 
-`compy distro use core` downloads compy's pinned `otelcol` build
-(checksum-verified) on first use and makes it the global default; bring
-your own binary instead with `compy distro add <name> /path/to/otelcol`.
 `compy use <config>` validates, installs, and starts the collector on
-compy's standard ports. `eval "$(./compy env)"` exports
+compy's standard ports. The first run downloads compy's pinned
+`otelcol-contrib` build (checksum-verified, ~90MB); pick a different
+pinned build with `compy distro use core|otlp`, or bring your own binary
+with `compy distro add <name> /path/to/otelcol`. `eval "$(./compy env)"` exports
 `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_PROTOCOL` into your
 shell. For a single command instead: `./compy run -- <cmd>`.
 

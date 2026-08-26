@@ -297,16 +297,82 @@ func TestValidateConfigValidatesAnyConfig(t *testing.T) {
 	}
 }
 
-func TestActivateWithoutDistroMentionsDistroCommand(t *testing.T) {
+// contribDef returns the shipped contrib definition (the out-of-the-box
+// default collector).
+func contribDef(t *testing.T) distro.Def {
+	t.Helper()
+	for _, d := range distro.Defs() {
+		if d.Name == app.DefaultDistro {
+			return d
+		}
+	}
+	t.Fatalf("no shipped definition named %q", app.DefaultDistro)
+	return distro.Def{}
+}
+
+// A fresh home never picked a distro: the first operation that needs a
+// collector binary reaches for contrib automatically and downloads it — no
+// `compy distro use` step. The fetch is stubbed; the test asserts the
+// contrib release URL was requested.
+func TestFreshHomeDefaultsToContrib(t *testing.T) {
 	setup(t, "")
 
 	a, err := app.New()
 	if err != nil {
 		t.Fatalf("New() = %v, want nil (a distro-less compy must still run)", err)
 	}
-	err = a.Activate("debug", "")
-	if err == nil || !strings.Contains(err.Error(), "compy distro") {
-		t.Fatalf("Activate() error = %v, want a `compy distro` hint", err)
+	var fetched string
+	a.Fetch = func(url string) (io.ReadCloser, int64, error) {
+		fetched = url
+		return nil, 0, errors.New("stub: tests never download a real release")
+	}
+	if _, err := a.EnsureDistro("", nil); err == nil {
+		t.Fatal("EnsureDistro() = nil, want the stub fetch error")
+	}
+	if !strings.Contains(fetched, "otelcol-contrib") {
+		t.Fatalf("fetched %q, want the contrib release URL", fetched)
+	}
+
+	// The settings screen shows contrib as the in-use default, not a
+	// nothing-selected state — without persisting anything.
+	rows, err := a.Distros()
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(rows, func(r map[string]any) bool { return r["name"] == app.DefaultDistro })
+	if i < 0 || rows[i]["selected"] != true {
+		t.Fatalf("Distros() contrib row = %v, want selected", rows)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Distro != "" {
+		t.Fatalf("settings.Distro = %q, want still empty (default is implicit, not persisted)", s.Distro)
+	}
+}
+
+// `compy use debug` on a fresh home runs on contrib once it is installed —
+// activation resolves the implicit default end to end. The binary is
+// pre-placed at contrib's install path so nothing downloads.
+func TestFreshHomeActivateRunsOnContrib(t *testing.T) {
+	setup(t, "state = running")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := contribDef(t)
+	dir := filepath.Join(a.Dir, "distros", def.Name+"-"+def.Version)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, def.Binary), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatalf("Activate(debug) on a fresh home = %v, want nil", err)
 	}
 }
 

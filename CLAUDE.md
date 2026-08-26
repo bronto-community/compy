@@ -47,7 +47,9 @@ out on other GOOS in `internal/tray`) and `github.com/webview/webview_go`
 - `vars` — extracts `${VAR}` / `${env:VAR:-default}` references (and their
   trailing-comment descriptions) from collector YAML.
 - `distro` — pinned collector-distribution definitions, checksum-verified
-  on-demand download, and the distro registry.
+  on-demand download, and the distro registry. `contrib` is the implicit
+  default: an empty `settings.Distro` resolves to it, auto-downloaded by
+  the first operation that needs a collector binary (`app.DefaultDistro`).
 - `envvars` — computes the `OTEL_*` vars compy exposes; emits them as shell
   scripts (`compy env`), subprocess environments (`compy run`), or OS-level
   (`launchctl setenv`) settings.

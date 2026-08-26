@@ -114,6 +114,10 @@
           "user_entry": {
             "type": "boolean",
             "description": "True iff this name has an actual entry in the user distro registry (distros.json) — a custom distro, or an override of a shipped definition's path. False for a shipped definition that's merely been downloaded to its default path: there's no registry entry for DELETE /api/distros/{name} to remove."
+          },
+          "download": {
+            "$ref": "#/components/schemas/DownloadProgress",
+            "description": "Present only while a download of this distro is in flight in the serving process — including one an activation started automatically (the default collector fetched on first need), so the settings screen's periodic refresh can show a progress bar for a download it did not start."
           }
         }
       },

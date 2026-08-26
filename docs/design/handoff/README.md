@@ -554,3 +554,16 @@ with the text above.
   Check()/Uncheck() and the title suffix are gone; stopped still shows no
   icons anywhere, and a transparent blank icon stands in for "none" (systray
   cannot clear a set icon) which also keeps titles aligned.
+- **contrib is the out-of-the-box collector; ebpf-profiler is gone** (owner
+  ruling, round 10): an empty `settings.Distro` now means contrib — the
+  first operation that needs a collector binary downloads it automatically
+  (checksum-verified, ~90MB, same progress machinery), so the quickstart's
+  `compy distro use core` step no longer exists and the settings table
+  shows contrib as "in use" from first launch. An explicitly selected
+  distro is untouched. ebpf-profiler is removed entirely (no upstream
+  binaries, cannot run on macOS) — the handoff's permanent "not available
+  on macOS" ban row no longer appears; the ban treatment remains, generic,
+  for any definition without a build for the running platform (e.g. Intel
+  macs). `/api/distros` rows carry an optional `download` field so the
+  settings screen's 3s refresh shows the progress bar for a download it
+  did not start (an activation's auto-fetch).

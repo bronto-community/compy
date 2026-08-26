@@ -1694,7 +1694,10 @@ async function doFactoryReset() {
 }
 
 function distroRow(b) {
-  const d = S.dl[b.name] || {};
+  // S.dl is a fetch this screen started (polled at 300ms); b.download is
+  // one it didn't — an activation auto-fetching the default collector —
+  // carried on the row and refreshed with the 3s loadDistros cycle.
+  const d = S.dl[b.name] || b.download || {};
   const busy = d.status === "downloading";
   const failed = d.status === "failed";
   const inUse = !!b.selected;
