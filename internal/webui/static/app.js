@@ -456,11 +456,10 @@ function renderSidebar() {
 function screenConfigs() {
   const wrap = el("div", { class: "screen" });
 
+  // No subtitle: "activating restarts the collector" lives in the help
+  // strip's copy now (2026-08-26 round 2).
   wrap.appendChild(el("div", { class: "head" }, [
-    el("div", { class: "head-titles" }, [
-      span("title", "configurations"),
-      el("div", { class: "subtitle sans", text: "activating restarts the collector" }),
-    ]),
+    span("title", "configurations"),
     el("span", { class: "grow" }),
     el("span", { class: "find" }, [
       el("span", { class: "glyph" }, [icon("search", 12)]),
@@ -470,7 +469,11 @@ function screenConfigs() {
         on: { input: (e) => { S.find = e.target.value; render(); } },
       }),
     ]),
-    el("div", { attrs: { style: "display:flex; gap:18px; font-size:12px;" } }, [
+    el("div", { attrs: { style: "display:flex; align-items:center; gap:18px; font-size:12px;" } }, [
+      el("button", {
+        class: "ico help", title: "help",
+        on: { click: () => { setHelpDismissed(!helpDismissed()); render(); } },
+      }, [icon("help", 14)]),
       el("button", { class: "act", text: "sync all", on: { click: syncAll } }),
       el("button", { class: "act primary", text: "new configuration", on: { click: openNew } }),
     ]),
@@ -503,16 +506,27 @@ function screenConfigs() {
   return wrap;
 }
 
-/* Getting-started strip: three sentences, dismissible, remembered in
-   localStorage (guarded — WKWebView can run with storage blocked). */
+/* Help strip: two sentences, dismissible, remembered in localStorage
+   (guarded — WKWebView can run with storage blocked), and recoverable via
+   the header's help button (2026-08-26 round 2). */
+function helpDismissed() {
+  try { return localStorage.getItem("compy.helpDismissed") === "1"; } catch (e) { return false; }
+}
+function setHelpDismissed(on) {
+  try {
+    if (on) localStorage.setItem("compy.helpDismissed", "1");
+    else localStorage.removeItem("compy.helpDismissed");
+  } catch (e) { /* session-only */ }
+}
 function helpStrip() {
-  try { if (localStorage.getItem("compy.helpDismissed") === "1") return null; } catch (e) { /* show it */ }
+  if (helpDismissed()) return null;
   return el("div", { class: "gethelp" }, [
-    el("span", { class: "b sans", text: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. new configuration adds your own — paste yaml or fetch it from a url." }),
+    el("span", { class: "hicon" }, [icon("help", 14)]),
+    el("span", { class: "b sans", text: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play — activating restarts the collector. new configuration adds your own — paste yaml or fetch it from a url." }),
     el("span", { class: "grow" }),
     el("button", {
       class: "act x", text: "✕", title: "hide this",
-      on: { click: () => { try { localStorage.setItem("compy.helpDismissed", "1"); } catch (e) { /* session-only */ } render(); } },
+      on: { click: () => { setHelpDismissed(true); render(); } },
     }),
   ]);
 }
