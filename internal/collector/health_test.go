@@ -1,8 +1,11 @@
 package collector
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -77,6 +80,64 @@ func TestHealthUnavailableWhenNothingAnswers(t *testing.T) {
 	defer other.Close()
 	if h := health(other.URL); h.Available {
 		t.Errorf("Available = true for a %d response: %+v", http.StatusNotFound, h)
+	}
+}
+
+// closedPort returns a localhost port with nothing listening on it.
+func closedPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	return port
+}
+
+// srvPort digs the port out of an httptest server URL.
+func srvPort(t *testing.T, url string) int {
+	t.Helper()
+	p, err := strconv.Atoi(url[strings.LastIndexByte(url, ':')+1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// ScrapePorts falls back to the detected listening ports when the default
+// telemetry port does not answer — a config that moves service::telemetry
+// off :8888 still gets its numbers — and records which port answered.
+func TestScrapePortsFallsBackToDetectedPorts(t *testing.T) {
+	origDefault := defaultMetricsPort
+	defer func() { defaultMetricsPort = origDefault }()
+	defaultMetricsPort = closedPort(t) // this machine's real :8888 is not the test's business
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(sample))
+	}))
+	defer srv.Close()
+	port := srvPort(t, srv.URL)
+
+	// A dead port before the live one: first success wins, not first try.
+	h := ScrapePorts([]int{closedPort(t), port})
+	if !h.Available || h.Port != port {
+		t.Fatalf("Available=%v Port=%d, want true/%d", h.Available, h.Port, port)
+	}
+	if h.Received != 12 {
+		t.Errorf("Received = %d, want 12 (the real page was parsed)", h.Received)
+	}
+
+	// The default port answering wins without touching the detected list.
+	defaultMetricsPort = port
+	if h := ScrapePorts([]int{closedPort(t)}); !h.Available || h.Port != port {
+		t.Errorf("default port: Available=%v Port=%d, want true/%d", h.Available, h.Port, port)
+	}
+
+	// Nothing answering anywhere: no numbers, no port claim.
+	defaultMetricsPort = closedPort(t)
+	if h := ScrapePorts([]int{closedPort(t)}); h.Available || h.Port != 0 {
+		t.Errorf("nothing listening: got %+v, want zero Health", h)
 	}
 }
 

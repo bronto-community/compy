@@ -209,6 +209,13 @@ func cmdStatus(args []string) error {
 		}
 		fmt.Printf("service:  %s\nconfig:   %s\ndistro:   %s\nendpoint: http://127.0.0.1:%d (grpc %d)\n",
 			running, config, distro, st.HTTPPort, st.GRPCPort)
+		if len(st.Listening) > 0 {
+			parts := make([]string, len(st.Listening))
+			for i, p := range st.Listening {
+				parts[i] = fmt.Sprintf(":%d", p)
+			}
+			fmt.Printf("listening: %s\n", strings.Join(parts, " "))
+		}
 		return nil
 	})
 }

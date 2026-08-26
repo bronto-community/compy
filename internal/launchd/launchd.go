@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -194,14 +195,26 @@ func Kickstart() error {
 // Running reports whether the job is currently running, per
 // `launchctl print gui/<uid>/<Label>`.
 func Running() (bool, error) {
+	running, _, err := Info()
+	return running, err
+}
+
+// Info reports whether the job is currently running and, while it is, its
+// pid, both parsed from `launchctl print gui/<uid>/<Label>`. pid is 0 when
+// the job is not running or launchd printed no "pid = N" line.
+func Info() (running bool, pid int, err error) {
 	out, err := Exec("print", guiTarget()+"/"+Label)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	for _, line := range strings.Split(string(out), "\n") {
-		if strings.TrimSpace(line) == "state = running" {
-			return true, nil
+		t := strings.TrimSpace(line)
+		if t == "state = running" {
+			running = true
+		}
+		if v, ok := strings.CutPrefix(t, "pid = "); ok {
+			pid, _ = strconv.Atoi(strings.TrimSpace(v))
 		}
 	}
-	return false, nil
+	return running, pid, nil
 }

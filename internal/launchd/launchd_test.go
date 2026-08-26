@@ -206,6 +206,37 @@ func TestRunningParsesState(t *testing.T) {
 	}
 }
 
+func TestInfoParsesPid(t *testing.T) {
+	orig := Exec
+	defer func() { Exec = orig }()
+
+	Exec = func(args ...string) ([]byte, error) {
+		return []byte("io.bronto.compy.collector = {\n\tstate = running\n\tpid = 48213\n"), nil
+	}
+	running, pid, err := Info()
+	if err != nil || !running || pid != 48213 {
+		t.Fatalf("want (true, 48213), got (%v, %d, %v)", running, pid, err)
+	}
+
+	// Not running: launchd prints no pid line.
+	Exec = func(args ...string) ([]byte, error) {
+		return []byte("\tstate = not running\n"), nil
+	}
+	running, pid, err = Info()
+	if err != nil || running || pid != 0 {
+		t.Fatalf("want (false, 0), got (%v, %d, %v)", running, pid, err)
+	}
+
+	// Job not loaded at all: launchctl print fails.
+	Exec = func(args ...string) ([]byte, error) {
+		return nil, errors.New("Could not find service")
+	}
+	running, pid, err = Info()
+	if err == nil || running || pid != 0 {
+		t.Fatalf("want error with (false, 0), got (%v, %d, %v)", running, pid, err)
+	}
+}
+
 func TestPlistPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
