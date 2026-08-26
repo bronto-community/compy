@@ -77,3 +77,36 @@ func TestValidatePassesEnvToCollector(t *testing.T) {
 		t.Fatalf("Validate did not pass env through: %v", err)
 	}
 }
+
+// TestBindError uses the real otelcol 0.135.0 failure lines (from the
+// 2026-08-25 port-conflict investigation): the zap JSON-tail component
+// error, the final plain "Error:" line, the telemetry :8888 shape, and a
+// tail with no bind failure at all.
+func TestBindError(t *testing.T) {
+	receiverTail := "2026-08-25T18:00:00.000+0200\terror\tgraph/graph.go:439\tFailed to start component\t{\"error\": \"listen tcp 127.0.0.1:16317: bind: address already in use\", \"type\": \"Receiver\", \"id\": \"otlp\"}\n" +
+		"Error: cannot start pipelines: failed to start \"otlp\" receiver: listen tcp 127.0.0.1:16317: bind: address already in use\n"
+	if got, want := collector.BindError(receiverTail), "port 16317 is already in use by another process"; got != want {
+		t.Errorf("BindError(receiver tail) = %q, want %q", got, want)
+	}
+
+	// The plain final line alone (no zap line in the window) also matches.
+	plain := "Error: cannot start pipelines: failed to start \"otlp\" receiver: listen tcp 127.0.0.1:15318: bind: address already in use\n"
+	if got, want := collector.BindError(plain), "port 15318 is already in use by another process"; got != want {
+		t.Errorf("BindError(plain line) = %q, want %q", got, want)
+	}
+
+	telemetryTail := "Error: failed to create telemetry providers: failed to create SDK: binding address localhost:8888 for Prometheus exporter: listen tcp 127.0.0.1:8888: bind: address already in use\n"
+	got := collector.BindError(telemetryTail)
+	if !strings.Contains(got, "port 8888 is already in use by another process") {
+		t.Errorf("BindError(telemetry tail) = %q, want the busy port named", got)
+	}
+	if !strings.Contains(got, "telemetry") || !strings.Contains(got, "service::telemetry") {
+		t.Errorf("BindError(telemetry tail) = %q, want the :8888 own-telemetry-port explanation", got)
+	}
+
+	clean := "2026-08-25T18:00:00.000+0200\tinfo\tservice/service.go:1\tEverything is ready.\n" +
+		"2026-08-25T18:00:01.000+0200\terror\texporterhelper/queue.go:2\tsending queue is full\n"
+	if got := collector.BindError(clean); got != "" {
+		t.Errorf("BindError(no bind failure) = %q, want empty", got)
+	}
+}
