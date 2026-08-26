@@ -414,3 +414,40 @@ sans if it already standardises on some.
 - Download **otelcol-k8s** in Settings — progress, then checksum failure and retry.
 - The **⟳ / undo** icon on `otlp-to-bronto` — reset to the shipped version.
 - The menu bar's **More…** — overflow past ten.
+
+## amendments (2026-08-26 feedback)
+
+Design-owner review of the live v3 UI; these rulings win where they conflict
+with the text above.
+
+- A config with no presets shows **default** (muted) everywhere a preset is
+  named — preset selector, sidebar status, collector tile, menu-bar status —
+  never "—": it is the implicit default preset, activating with empty values.
+- The configs-row icon next to play is a **plus** (add preset, opens the
+  inline editor in new-preset mode), not a pencil — the pencil read as
+  "edit the config". Per-preset pencils stay inside the dropdown.
+- The whole config **row background opens the editor** (cursor: pointer);
+  play, plus, selector, actions and the inline editor keep their own actions.
+- A short dismissible **getting-started strip** sits above the configs table
+  (pick a shipped config → add a preset via the plus → play; "new
+  configuration" for your own). Dismissal is remembered in localStorage.
+- **Disabled controls are unmistakably muted**: every disabled button-ish
+  control fades (opacity .45), default cursor, no hover lift — the
+  explaining tooltip stays.
+- **Ports honesty**: compy only injects `COMPY_GRPC_PORT`/`COMPY_HTTP_PORT`.
+  The sidebar, collector "listening" tile and menu-bar line claim the
+  settings ports only for the ports the active config's YAML references;
+  a partial reference shows just that port (":14317 grpc"), none shows
+  "ports per config.yaml" (muted).
+- **cmd/ctrl+S saves** in the editor (same save-and-validate as the button);
+  elsewhere it is swallowed (preventDefault) and does nothing. No other
+  shortcuts.
+- The active row **says "running"** — a small pulsing accent word
+  (compyPulse) after the name, rhyming with the sidebar status — on top of
+  the amber name/dot. Stopped-but-active stays dimmed and wordless.
+- Settings gains an **otlp ports row** (grpc + http) in the app section —
+  the home of the global `COMPY_*` ports, which stay excluded from preset
+  value cards. Nothing re-applies automatically: after a save the row says
+  the new ports apply when the collector next restarts and offers the
+  restart action. The "ports live in the CLI" sentence is now "shell wiring
+  lives in the CLI".
