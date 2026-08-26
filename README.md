@@ -23,6 +23,18 @@ your own `otelcol` build with `compy distro add`.
 go build -o compy ./cmd/compy
 ```
 
+### macOS app bundle
+
+```
+sh packaging/macos/make-app.sh ./compy
+```
+
+assembles a `compy.app` next to the binary so the standalone window
+(`compy window`, and the tray's "Open compy") shows the right identity —
+app menu says compy, Dock shows the dino icon — instead of a bare
+executable's generic name. `open compy.app` opens the window directly.
+Optional; everything works without it. See `packaging/macos/README.md`.
+
 ## Configuration model
 
 compy manages **configurations**: whole collector `config.yaml` documents,
