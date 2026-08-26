@@ -11,6 +11,7 @@ import (
 
 	"github.com/bronto-io/compy/internal/app"
 	"github.com/bronto-io/compy/internal/cfgstore"
+	"github.com/bronto-io/compy/internal/vars"
 )
 
 func TestRecencyOrder(t *testing.T) {
@@ -67,22 +68,27 @@ func TestSplitInline(t *testing.T) {
 
 func TestStatusLines(t *testing.T) {
 	cases := []struct {
-		name      string
-		st        app.Status
-		warns     int
-		wantLine1 string
-		wantLine2 string
+		name             string
+		st               app.Status
+		warns            int
+		grpcRef, httpRef bool
+		wantLine1        string
+		wantLine2        string
 	}{
 		{
-			name:      "running with preset",
-			st:        app.Status{Running: true, Config: "otlp-to-bronto", Preset: "staging", GRPCPort: 4317, HTTPPort: 4318},
+			name:    "running with preset",
+			st:      app.Status{Running: true, Config: "otlp-to-bronto", Preset: "staging", GRPCPort: 4317, HTTPPort: 4318},
+			grpcRef: true, httpRef: true,
 			wantLine1: "● Running · otlp-to-bronto · staging",
 			wantLine2: ":4317 :4318",
 		},
 		{
-			name:      "running without a preset (config with no vars) omits it",
-			st:        app.Status{Running: true, Config: "debug", GRPCPort: 4317, HTTPPort: 4318},
-			wantLine1: "● Running · debug",
+			// 2026-08-26 feedback: the implicit preset is named "default",
+			// consistently with the window, rather than omitted.
+			name:    "running without a preset says default",
+			st:      app.Status{Running: true, Config: "debug", GRPCPort: 4317, HTTPPort: 4318},
+			grpcRef: true, httpRef: true,
+			wantLine1: "● Running · debug · default",
 			wantLine2: ":4317 :4318",
 		},
 		{
@@ -92,24 +98,80 @@ func TestStatusLines(t *testing.T) {
 			wantLine2: "no listeners",
 		},
 		{
-			name:      "warnings appended, warn-only (no error count)",
-			st:        app.Status{Running: true, Config: "prod", GRPCPort: 14317, HTTPPort: 14318},
-			warns:     2,
-			wantLine1: "● Running · prod",
+			name:    "warnings appended, warn-only (no error count)",
+			st:      app.Status{Running: true, Config: "prod", GRPCPort: 14317, HTTPPort: 14318},
+			warns:   2,
+			grpcRef: true, httpRef: true,
+			wantLine1: "● Running · prod · default",
 			wantLine2: ":14317 :14318 · 2 warnings",
 		},
 		{
-			name:      "zero warnings omit the tail",
-			st:        app.Status{Running: true, Config: "prod", GRPCPort: 14317, HTTPPort: 14318},
-			warns:     0,
-			wantLine1: "● Running · prod",
+			name:    "zero warnings omit the tail",
+			st:      app.Status{Running: true, Config: "prod", GRPCPort: 14317, HTTPPort: 14318},
+			warns:   0,
+			grpcRef: true, httpRef: true,
+			wantLine1: "● Running · prod · default",
 			wantLine2: ":14317 :14318",
+		},
+		{
+			// 2026-08-26 feedback: compy only injects COMPY_*_PORT — a config
+			// that doesn't reference them listens wherever its YAML says, so
+			// the settings ports must not be claimed.
+			name:      "config referencing neither port is not claimed",
+			st:        app.Status{Running: true, Config: "custom", Preset: "p", GRPCPort: 14317, HTTPPort: 14318},
+			wantLine1: "● Running · custom · p",
+			wantLine2: "ports per config.yaml",
+		},
+		{
+			name:      "grpc-only reference shows only that port",
+			st:        app.Status{Running: true, Config: "custom", Preset: "p", GRPCPort: 14317, HTTPPort: 14318},
+			grpcRef:   true,
+			wantLine1: "● Running · custom · p",
+			wantLine2: ":14317 grpc",
+		},
+		{
+			name:      "http-only reference shows only that port, warnings still appended",
+			st:        app.Status{Running: true, Config: "custom", Preset: "p", GRPCPort: 14317, HTTPPort: 14318},
+			warns:     1,
+			httpRef:   true,
+			wantLine1: "● Running · custom · p",
+			wantLine2: ":14318 http · 1 warnings",
 		},
 	}
 	for _, c := range cases {
-		line1, line2 := statusLines(c.st, c.warns)
+		line1, line2 := statusLines(c.st, c.warns, c.grpcRef, c.httpRef)
 		if line1 != c.wantLine1 || line2 != c.wantLine2 {
 			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, line1, line2, c.wantLine1, c.wantLine2)
+		}
+	}
+}
+
+func TestActivePortRefs(t *testing.T) {
+	mk := func(name string, varNames ...string) cfgstore.Info {
+		info := cfgstore.Info{Name: name}
+		for _, v := range varNames {
+			info.Vars = append(info.Vars, vars.Var{Name: v})
+		}
+		return info
+	}
+	configs := []cfgstore.Info{
+		mk("both", "COMPY_GRPC_PORT", "COMPY_HTTP_PORT", "BRONTO_KEY"),
+		mk("grpc-only", "COMPY_GRPC_PORT"),
+		mk("neither", "BRONTO_KEY"),
+	}
+	cases := []struct {
+		active             string
+		wantGRPC, wantHTTP bool
+	}{
+		{"both", true, true},
+		{"grpc-only", true, false},
+		{"neither", false, false},
+		{"ghost", false, false}, // deleted or unknown active config claims nothing
+	}
+	for _, c := range cases {
+		g, h := activePortRefs(configs, c.active)
+		if g != c.wantGRPC || h != c.wantHTTP {
+			t.Errorf("activePortRefs(%q) = (%v, %v), want (%v, %v)", c.active, g, h, c.wantGRPC, c.wantHTTP)
 		}
 	}
 }
