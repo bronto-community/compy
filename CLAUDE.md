@@ -18,7 +18,13 @@ go vet ./...
 gofmt -l .
 go test ./...
 go test -tags=integration ./integration/         # needs OTELCOL_BIN=/path/to/otelcol (real collector binary)
+GOOS=linux CGO_ENABLED=0 go build -o /dev/null ./cmd/compy   # cross-build gate
 ```
+
+The `-o /dev/null` on the linux gate is load-bearing: `./compy` in the repo
+root is the LIVE binary — the user's LaunchAgents and menu-bar tray execute
+that exact path. Never overwrite it with a non-darwin build; rebuild it only
+as `go build -o compy ./cmd/compy` when deliberately rolling out.
 
 ## Dependencies
 
