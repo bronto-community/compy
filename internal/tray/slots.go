@@ -127,9 +127,9 @@ func presetChoices(info cfgstore.Info) (names []string, multi bool) {
 // current run state — one item, never a "Stop" that can't stop anything.
 func toggleTitle(running bool) string {
 	if running {
-		return "Stop Collector"
+		return "Stop collector"
 	}
-	return "Start Collector"
+	return "Start collector"
 }
 
 // toggleBusyLine is the status block's first line while the toggle's action

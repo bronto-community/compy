@@ -157,10 +157,10 @@ func TestPendingActivationForms(t *testing.T) {
 }
 
 func TestToggleForms(t *testing.T) {
-	if got, want := toggleTitle(true), "Stop Collector"; got != want {
+	if got, want := toggleTitle(true), "Stop collector"; got != want {
 		t.Errorf("toggleTitle(running) = %q, want %q", got, want)
 	}
-	if got, want := toggleTitle(false), "Start Collector"; got != want {
+	if got, want := toggleTitle(false), "Start collector"; got != want {
 		t.Errorf("toggleTitle(stopped) = %q, want %q", got, want)
 	}
 	if got, want := toggleBusyLine(true), "Stopping…"; got != want {
