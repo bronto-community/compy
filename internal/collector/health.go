@@ -2,6 +2,7 @@ package collector
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -18,6 +19,10 @@ import (
 // about it and this address is simply where the numbers are. The Collector
 // screen names it on screen for the same reason.
 const MetricsURL = "http://localhost:8888/metrics"
+
+// defaultMetricsPort is where MetricsURL points; a var so tests can aim the
+// default probe away from a real machine's :8888.
+var defaultMetricsPort = 8888
 
 // healthTimeout bounds the scrape. It is on the path of a screen the user is
 // looking at, so a collector that is wedged must not hold the page.
@@ -36,16 +41,35 @@ const maxMetricsBytes = 4 << 20
 // error, it is dashes on screen.
 type Health struct {
 	Available bool  `json:"available"`
+	Port      int   `json:"port,omitempty"` // the localhost port that answered the scrape
 	Received  int64 `json:"received"`
 	Exported  int64 `json:"exported"`
 	Queue     int64 `json:"queue"`
 	Dropped   int64 `json:"dropped"`
 }
 
-// Scrape reads the running collector's own metrics. It never returns an
-// error: every failure — nothing listening, a timeout, something else on the
-// port — means the same thing to the caller, "no numbers".
-func Scrape() Health { return health(MetricsURL) }
+// ScrapePorts reads the running collector's own metrics: :8888 (otelcol's
+// default) first, then — only if the default did not answer — each of the
+// collector's detected listening ports, first success wins. Port records
+// which one answered, so the UI can label it. It never returns an error:
+// every failure — nothing listening, a timeout, something else on the port —
+// means the same thing to the caller, "no numbers".
+func ScrapePorts(ports []int) Health {
+	if h := health(fmt.Sprintf("http://localhost:%d/metrics", defaultMetricsPort)); h.Available {
+		h.Port = defaultMetricsPort
+		return h
+	}
+	for _, p := range ports {
+		if p == defaultMetricsPort {
+			continue // just tried
+		}
+		if h := health(fmt.Sprintf("http://localhost:%d/metrics", p)); h.Available {
+			h.Port = p
+			return h
+		}
+	}
+	return Health{}
+}
 
 // health is Scrape against an arbitrary URL, so tests can serve a captured
 // /metrics page.

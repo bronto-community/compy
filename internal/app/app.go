@@ -117,6 +117,11 @@ type Status struct {
 	Preset   string   `json:"preset"`
 	OSEnv    bool     `json:"os_env"`
 	Recent   []string `json:"recent"`
+	// Listening is the TCP ports the collector process is actually listening
+	// on, detected from the OS (launchd's pid + lsof) — never derived from
+	// settings or YAML. Empty when stopped or undetectable: no detection
+	// means no claim, not a guess.
+	Listening []int `json:"listening,omitempty"`
 }
 
 // New resolves the state dir, migrates a v1 layout if one is found, and
@@ -413,22 +418,27 @@ func (a *App) Status() (Status, error) {
 		return Status{}, err
 	}
 	// An error here means the job is not loaded, i.e. not running.
-	running, _ := launchd.Running()
+	running, pid, _ := launchd.Info()
 	preset := ""
 	if s.ActiveConfig != "" {
 		if info, _, err := cfgstore.Get(a.Dir, s.ActiveConfig); err == nil {
 			preset = info.Meta.ActivePreset
 		}
 	}
+	var listening []int
+	if running && pid > 0 {
+		listening = collector.ListeningPorts(pid)
+	}
 	return Status{
-		Running:  running,
-		Distro:   s.Distro,
-		GRPCPort: s.GRPCPort,
-		HTTPPort: s.HTTPPort,
-		Config:   s.ActiveConfig,
-		Preset:   preset,
-		OSEnv:    s.OSEnv,
-		Recent:   s.Recent,
+		Running:   running,
+		Distro:    s.Distro,
+		GRPCPort:  s.GRPCPort,
+		HTTPPort:  s.HTTPPort,
+		Config:    s.ActiveConfig,
+		Preset:    preset,
+		OSEnv:     s.OSEnv,
+		Recent:    s.Recent,
+		Listening: listening,
 	}, nil
 }
 
@@ -634,10 +644,14 @@ func (a *App) Health() (any, error) {
 	// Only our own collector's numbers are ours to show. :8888 is otelcol's
 	// default, so a second collector on the machine answers there when ours
 	// is stopped — and its throughput is not this one's.
-	if running, err := launchd.Running(); err != nil || !running {
+	running, pid, err := launchd.Info()
+	if err != nil || !running {
 		return collector.Health{}, nil
 	}
-	return collector.Scrape(), nil
+	// :8888 first (otelcol's zero-config default); if that does not answer,
+	// try the ports the process is actually listening on — a config that
+	// moves service::telemetry still gets its numbers shown.
+	return collector.ScrapePorts(collector.ListeningPorts(pid)), nil
 }
 
 // Log returns the last n lines of the collector log.
@@ -1052,6 +1066,7 @@ func (a *App) statusMap() (map[string]any, error) {
 		"preset":    st.Preset,
 		"os_env":    st.OSEnv,
 		"recent":    st.Recent,
+		"listening": st.Listening,
 	}, nil
 }
 

@@ -36,6 +36,11 @@
             "type": "array",
             "description": "Configurations that have run, most recent first (the menu bar's ordering).",
             "items": { "type": "string" }
+          },
+          "listening": {
+            "type": "array",
+            "description": "TCP ports the collector process is actually listening on, detected from the OS (launchd pid + lsof), sorted ascending. Absent when stopped or undetectable — never derived from settings or YAML.",
+            "items": { "type": "integer" }
           }
         }
       },
@@ -116,6 +121,7 @@
         "type": "object",
         "properties": {
           "available": { "type": "boolean" },
+          "port": { "type": "integer", "description": "The localhost port whose /metrics answered this scrape. Absent when unavailable." },
           "received": { "type": "integer" },
           "exported": { "type": "integer" },
           "queue": { "type": "integer" },
@@ -271,8 +277,8 @@
     },
     "/api/collector/health": {
       "get": {
-        "summary": "The collector's own metrics, scraped from localhost:8888/metrics",
-        "description": "Four numbers for the Collector screen. A stopped or unscrapable collector answers 200 with available:false and zeroes, never an error. Sources (otelcol 0.135, counters matched with or without a _total suffix): received = otelcol_receiver_accepted_{spans,metric_points,log_records}; exported = otelcol_exporter_sent_{spans,metric_points,log_records}; queue = otelcol_exporter_queue_size; dropped = otelcol_receiver_refused_*, otelcol_exporter_send_failed_*, otelcol_exporter_enqueue_failed_*.",
+        "summary": "The collector's own metrics, scraped from its telemetry endpoint",
+        "description": "Four numbers for the Collector screen. localhost:8888 (otelcol's default) is tried first; if it does not answer, the collector's detected listening ports are probed and the first parsable /metrics wins — `port` names the winner. A stopped or unscrapable collector answers 200 with available:false and zeroes, never an error. Sources (otelcol 0.135, counters matched with or without a _total suffix): received = otelcol_receiver_accepted_{spans,metric_points,log_records}; exported = otelcol_exporter_sent_{spans,metric_points,log_records}; queue = otelcol_exporter_queue_size; dropped = otelcol_receiver_refused_*, otelcol_exporter_send_failed_*, otelcol_exporter_enqueue_failed_*.",
         "responses": {
           "200": {
             "description": "OK",
