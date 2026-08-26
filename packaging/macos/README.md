@@ -15,7 +15,9 @@ time. Pipeline (same headless-Chrome CDP approach as
   squircle corners, `Page.captureScreenshot` with an exact clip).
 - Machine-verified per size: exact dimensions, corner alpha 0, opaque
   centre, both palette colours (#ECAA0D gold, #101010 ground) present.
-  At 32px and below only the body mass reads — intended per the spec.
+  (The fixed 512px width/height in the SVG mean the render must go through
+  an HTML wrapper that scales an <img> to the target size — a bare data:
+  SVG navigation renders at natural size and the screenshot crops.)
 - Name them into the Apple iconset (icon_16x16 … icon_512x512@2x, shared
   sizes duplicated), then `iconutil -c icns … -o compy.icns`.
 
