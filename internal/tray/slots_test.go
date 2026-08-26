@@ -4,6 +4,8 @@ package tray
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -285,3 +287,45 @@ func TestOpenWindowKeepsTheProcessWhenRaisingFails(t *testing.T) {
 }
 
 var errRaise = fmt.Errorf("no accessibility permission")
+
+// TestWindowExe: the tray spawns the window via the compy.app bundle next
+// to the running binary when there is one (that path carries the app
+// identity — menu name, Dock icon), and plain `exe` otherwise: no bundle,
+// or already running from inside one.
+func TestWindowExe(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "compy")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := windowExe(exe); got != exe {
+		t.Errorf("no bundle: windowExe = %q, want %q", got, exe)
+	}
+
+	macos := filepath.Join(dir, "compy.app", "Contents", "MacOS")
+	if err := os.MkdirAll(macos, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bundled := filepath.Join(macos, "compy")
+	if err := os.Symlink(exe, bundled); err != nil { // make-app.sh symlinks
+		t.Fatal(err)
+	}
+	if got := windowExe(exe); got != bundled {
+		t.Errorf("bundle beside exe: windowExe = %q, want %q", got, bundled)
+	}
+
+	// Running from inside the bundle already: nothing further to prefer.
+	if got := windowExe(bundled); got != bundled {
+		t.Errorf("exe inside bundle: windowExe = %q, want %q", got, bundled)
+	}
+
+	// A dangling symlink (binary rebuilt elsewhere, bundle left behind)
+	// must not be spawned.
+	if err := os.Remove(exe); err != nil {
+		t.Fatal(err)
+	}
+	if got := windowExe(exe); got != exe {
+		t.Errorf("dangling bundle symlink: windowExe = %q, want %q", got, exe)
+	}
+}

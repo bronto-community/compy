@@ -4,6 +4,8 @@ package tray
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -168,6 +170,21 @@ func (w *windowProc) alive() bool {
 	default:
 		return true
 	}
+}
+
+// windowExe picks the executable to spawn the standalone window with. When
+// a compy.app bundle sits next to the running binary (packaging/macos/
+// make-app.sh assembles one), the window is spawned via the bundle's copy of
+// the binary: AppKit derives app identity — menu name, Dock icon — from the
+// bundle containing the executable's path, so only that spawn gets the
+// compy name and icon (verified empirically; a symlinked bundle binary
+// works too). No bundle, or exe already inside one: exe itself, unchanged.
+func windowExe(exe string) string {
+	cand := filepath.Join(filepath.Dir(exe), "compy.app", "Contents", "MacOS", "compy")
+	if fi, err := os.Stat(cand); err == nil && fi.Mode().IsRegular() && fi.Mode()&0111 != 0 {
+		return cand
+	}
+	return exe
 }
 
 // openWindow raises the window from a previous click if it is still open,
