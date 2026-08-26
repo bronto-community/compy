@@ -268,8 +268,11 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 /* ── configurations table ─────────────────────────────────────────── */
 .table-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 24px 24px; }
+/* The preset column yields (330px → 238px min: selector + play + plus) at
+   narrow widths so rows never overflow the pane sideways at ≥ ~900px. */
 .cfg-grid {
-  display: grid; grid-template-columns: 62px minmax(170px, 1fr) 330px 112px;
+  display: grid;
+  grid-template-columns: 62px minmax(170px, 1fr) minmax(238px, 330px) 112px;
   gap: 0 14px; align-items: center;
 }
 .cfg-head { padding: 8px 10px; border-bottom: 1px solid var(--border); }
@@ -589,15 +592,18 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 }
 .tail:hover { color: var(--text); }
 .tail[disabled] { cursor: default; color: var(--muted); }
-.logs { flex: 1; min-height: 0; overflow: auto; background: var(--logbg); }
+.logs { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; background: var(--logbg); }
+/* Time and level stay fixed-width and unwrapped; the message column wraps
+   (long tokens — URLs, JSON blobs — break rather than stretch the row), so
+   the log never scrolls sideways. */
 .logline {
   display: grid; grid-template-columns: 82px 56px 1fr; gap: 14px;
   padding: 3px 24px; font-size: 11.5px; line-height: 1.75;
-  white-space: pre; min-width: max-content;
+  white-space: pre;
 }
 .logline:hover { background: var(--panel); }
 .logline .t { color: var(--border3); }
-.logline .m { color: var(--text3); }
+.logline .m { color: var(--text3); white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
 .lv-error { color: var(--err); }
 .lv-warn { color: var(--warnText); }
 .lv-info { color: var(--info); }
@@ -609,13 +615,19 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 28px;
   display: flex; flex-direction: column; gap: 22px;
 }
+/* The pane scrolls; its cards never compress. Without this, a short window
+   shrinks the flex children and .card{overflow:hidden} clips their bottom
+   rows — the settings-table border vanished and the trash icon sat on the
+   clipped corner at 960×680. */
+.settings > * { flex-shrink: 0; }
 .sec { display: flex; flex-direction: column; gap: 6px; }
 .card { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .srow {
   display: flex; align-items: center; gap: 14px; padding: 13px 14px;
   border-bottom: 1px solid var(--divider);
 }
-.srow .lbl { display: flex; flex-direction: column; gap: 3px; }
+.srow .lbl { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.srow .lbl .t, .srow .lbl .n { overflow-wrap: anywhere; }
 .srow .lbl .t { font-size: 13px; color: var(--text); }
 .srow .lbl .n { font-size: 11.5px; color: var(--dim); }
 .srow.clickable { cursor: pointer; }
