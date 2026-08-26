@@ -391,22 +391,58 @@ function render() {
 }
 
 /* ── sidebar ──────────────────────────────────────────────────────── */
-function logLines() {
-  return S.log.split("\n").filter((l) => l.trim()).map(parseLogLine);
+/* otelcol stderr is heterogeneous: zap console lines (ts \t level \t
+   [caller \t] message [\t {json attrs}]) interleaved with the debug
+   exporter's multi-line plain dumps. Group into entries: a line whose
+   first two tab fields are a timestamp and a known level starts an entry;
+   anything else is a continuation of the entry above (the dump keeps its
+   parent's level for filtering). Total: unknown shapes become a bare
+   entry, malformed JSON tails stay in the message text. */
+function logEntries() {
+  const entries = [];
+  for (const line of S.log.split("\n")) {
+    if (!line.trim()) continue;
+    const e = parseZapLine(line);
+    if (e) entries.push(e);
+    else if (entries.length) {
+      const p = entries[entries.length - 1];
+      p.cont.push(line);
+      p.raw += "\n" + line;
+    } else entries.push({ time: "", level: "", text: line, caller: "", attrs: null, cont: [], raw: line });
+  }
+  return entries;
 }
-function parseLogLine(line) {
+function parseZapLine(line) {
   const f = line.split("\t");
+  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(f[0] || "")) return null;
   const lvl = (f[1] || "").trim().toLowerCase();
-  const known = ["error", "warn", "info", "debug"].indexOf(lvl) > -1;
-  if (!known) return { time: "", level: "", text: line, raw: line };
-  const t = (f[0] || "").match(/T(\d\d:\d\d:\d\d)/);
-  return { time: t ? t[1] : (f[0] || "").slice(0, 8), level: lvl, text: f.slice(3).join(" "), raw: line };
+  if (["error", "warn", "info", "debug"].indexOf(lvl) < 0) return null;
+  let i = 2, caller = "";
+  if (/\.go:\d+$/.test(f[2] || "")) { caller = f[2]; i = 3; }
+  // A trailing {…} field is structured attrs — but only when a message
+  // field precedes it, and only if it actually parses to an object.
+  let end = f.length, attrs = null;
+  if (f.length - i >= 2 && /^\{/.test(f[f.length - 1])) {
+    attrs = parseAttrs(f[f.length - 1]);
+    if (attrs) end = f.length - 1;
+  }
+  return {
+    time: f[0].slice(11, 19), level: lvl, text: f.slice(i, end).join(" "),
+    caller, attrs, cont: [], raw: line,
+  };
 }
-// D2, per-surface literal: the sidebar badge sums warn and error lines and
+function parseAttrs(s) {
+  try {
+    const o = JSON.parse(s);
+    if (o && typeof o === "object" && !Array.isArray(o)) return o;
+  } catch (_) { /* malformed tail stays in the message text */ }
+  return null;
+}
+// D2, per-surface literal: the sidebar badge sums warn and error entries and
 // labels the total "warn" (the menu bar's own count is warn-only; that
 // surface is the tray's).
 function issueCount() {
-  return logLines().filter((l) => l.level === "warn" || l.level === "error").length;
+  return logEntries().filter((l) => l.level === "warn" || l.level === "error").length;
 }
 
 function renderSidebar() {
@@ -1398,9 +1434,13 @@ function healthStrip(stopped) {
 }
 
 function logPane(stopped) {
-  const all = logLines();
+  const all = logEntries();
   const q = S.query.trim().toLowerCase();
-  const shown = all.filter((l) => (S.level === "all" || l.level === S.level) && (!q || l.text.toLowerCase().includes(q)));
+  // Level and text filters work on whole entries, so a debug dump stays
+  // with its parent line; text matches the full raw text, continuations
+  // included.
+  const shown = all.filter((l) => (S.level === "all" || l.level === S.level) && (!q || l.raw.toLowerCase().includes(q)));
+  const lineCount = (list) => list.reduce((n, l) => n + 1 + l.cont.length, 0);
 
   const bar = el("div", { class: "logbar" }, [
     el("input", {
@@ -1417,10 +1457,10 @@ function logPane(stopped) {
     ]));
   }
   bar.appendChild(el("span", { class: "grow" }));
-  bar.appendChild(span("logcount", shown.length + " of " + all.length + " lines"));
+  bar.appendChild(span("logcount", lineCount(shown) + " of " + lineCount(all) + " lines"));
   bar.appendChild(el("button", {
-    class: "ico", title: "copy these " + shown.length + " lines",
-    on: { click: () => copyText(shown.map((l) => l.raw).join("\n"), shown.length + " log lines copied") },
+    class: "ico", title: "copy these " + lineCount(shown) + " lines",
+    on: { click: () => copyText(shown.map((l) => l.raw).join("\n"), lineCount(shown) + " log lines copied") },
   }, [icon("copy", 13)]));
   bar.appendChild(el("button", {
     class: "tail", attrs: stopped ? { disabled: "" } : null,
@@ -1432,15 +1472,39 @@ function logPane(stopped) {
 
   const logs = el("div", { class: "logs" });
   for (const l of shown) {
-    logs.appendChild(el("div", { class: "logline" }, [
+    const m = el("span", { class: "m" });
+    if (l.text) m.appendChild(span("", l.text));
+    if (l.attrs) for (const k in l.attrs) m.appendChild(kvPair(k, l.attrs[k]));
+    // The caller (service@…/file.go:123) is deliberately a row tooltip,
+    // not an inline cell — it earns no space at this density.
+    logs.appendChild(el("div", { class: "logline", title: l.caller || null }, [
       span("t", l.time),
       span(l.level ? "lv-" + l.level : "", l.level),
-      span("m", l.text),
+      m,
     ]));
+    for (const c of l.cont) {
+      // A continuation line that is itself a {…} object (the debug dump's
+      // trailing attrs) renders as pairs; everything else keeps its own
+      // whitespace verbatim.
+      const attrs = c.trimStart().startsWith("{") ? parseAttrs(c.trim()) : null;
+      const cm = el("span", { class: "m" });
+      if (attrs) for (const k in attrs) cm.appendChild(kvPair(k, attrs[k]));
+      else cm.textContent = c;
+      logs.appendChild(el("div", { class: "logline cont" }, [span("t", ""), span("", ""), cm]));
+    }
   }
   if (!shown.length) logs.appendChild(el("div", { class: "nologs", text: all.length ? "no lines match this filter." : "no output yet." }));
 
   return el("div", { attrs: { style: "flex:1; min-height:0; display:flex; flex-direction:column;" } }, [bar, logs]);
+}
+
+// One structured-attribute pair, `key=value`; nested values render as
+// compact JSON. Dimmed, and wraps as a unit (inline-block).
+function kvPair(k, v) {
+  return el("span", { class: "kv" }, [
+    span("k", k + "="),
+    span("", typeof v === "string" ? v : JSON.stringify(v)),
+  ]);
 }
 
 async function restartCollector() {

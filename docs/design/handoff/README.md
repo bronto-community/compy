@@ -492,3 +492,19 @@ with the text above.
   trash icon on the clipped corner and cutting the OTEL_* toggle row in
   half; the configs preset column yields 330px → 238px min at narrow widths
   so rows never overflow the pane sideways.
+- **The log represents otelcol's structure** (round 5): zap console lines
+  (`ts \t level \t [caller \t] message [\t {json}]` — the caller and the
+  JSON tail are both optional in real output) parse client-side. The
+  message cell shows the message text followed by the structured attrs as
+  dimmed `key=value` pairs (top level flattened, nested values as compact
+  JSON), each pair wrapping as a unit; the caller
+  (`service@…/file.go:123`) is a row tooltip, not an inline cell — it
+  earns no space at this density. Lines with no timestamp/level (the
+  debug exporter's multi-line dumps) are continuation rows of the entry
+  above: empty time/level cells, indented, dimmed, internal whitespace
+  preserved; a continuation line that is itself a `{…}` object (the
+  dump's trailing attrs) renders as pairs. Filters work on whole entries
+  — a level chip keeps a dump with its parent line, the text filter
+  matches the full raw text, continuations included — copy still copies
+  the raw lines, and a malformed JSON tail stays raw in the message.
+  Unknown shapes always fall back to a plain raw row.
