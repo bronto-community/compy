@@ -156,6 +156,21 @@ func TestPendingActivationForms(t *testing.T) {
 	}
 }
 
+func TestToggleForms(t *testing.T) {
+	if got, want := toggleTitle(true), "Stop Collector"; got != want {
+		t.Errorf("toggleTitle(running) = %q, want %q", got, want)
+	}
+	if got, want := toggleTitle(false), "Start Collector"; got != want {
+		t.Errorf("toggleTitle(stopped) = %q, want %q", got, want)
+	}
+	if got, want := toggleBusyLine(true), "Stopping…"; got != want {
+		t.Errorf("toggleBusyLine(running) = %q, want %q", got, want)
+	}
+	if got, want := toggleBusyLine(false), "Starting…"; got != want {
+		t.Errorf("toggleBusyLine(stopped) = %q, want %q", got, want)
+	}
+}
+
 func TestErrorLine(t *testing.T) {
 	if got, want := errorLine(fmt.Errorf("boom")), "error: boom"; got != want {
 		t.Errorf("errorLine = %q, want %q", got, want)

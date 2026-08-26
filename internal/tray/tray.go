@@ -53,6 +53,12 @@ type menu struct {
 	morePresets map[string]map[string]*systray.MenuItem // per overflow config: its preset submenu items
 
 	restart *systray.MenuItem
+	toggle  *systray.MenuItem // Stop/Start Collector, title tracks running state
+
+	// running mirrors the last synced Status.Running so the toggle's click
+	// handler can decide Stop vs Start at click time, under m.mu — the same
+	// discipline as slotNames.
+	running bool
 
 	// icon is the state the menu-bar icon currently shows, so sync() only
 	// calls into systray when it actually changes (not every 5s tick).
@@ -111,6 +117,7 @@ func onReady(a *app.App) {
 	m.more = systray.AddMenuItem("More…", "the rest of your configurations")
 	m.more.Hide()
 	systray.AddSeparator()
+	m.toggle = systray.AddMenuItem(toggleTitle(false), "stop or start the collector")
 	m.restart = systray.AddMenuItem("Restart collector", "restart the collector")
 	systray.AddSeparator()
 	openApp := systray.AddMenuItem("Open compy", "open the compy window")
@@ -128,6 +135,7 @@ func onReady(a *app.App) {
 			m.mu.Unlock()
 		}
 	}()
+	go m.handleToggle()
 	go m.handleRestart()
 	go handleOpenApp(openApp)
 	go func() {
@@ -152,6 +160,15 @@ func (m *menu) sync() {
 	m.status.SetTitle(line1)
 	m.statusLine2.SetTitle(line2)
 	m.setIcon(iconFor(st.Running, errs))
+	m.running = st.Running
+	m.toggle.SetTitle(toggleTitle(st.Running))
+	// Restarting a stopped collector makes no sense — the toggle's Start is
+	// the way up.
+	if st.Running {
+		m.restart.Enable()
+	} else {
+		m.restart.Disable()
+	}
 
 	if cfgErr != nil {
 		return
@@ -338,6 +355,22 @@ func (m *menu) handlePresetClicks(item *systray.MenuItem) {
 		m.act(activatingLine(target.config, target.preset), item, target.preset, func() error {
 			return m.a.Activate(target.config, target.preset)
 		})
+	}
+}
+
+// handleToggle stops the collector when it is running and starts it when it
+// is not, resolving which at click time from the last synced state (under
+// m.mu, like handleSlotClicks). doAct's closing sync() flips the title, the
+// Restart enable-state, and the menu-bar icon.
+func (m *menu) handleToggle() {
+	for range m.toggle.ClickedCh {
+		m.mu.Lock()
+		if m.running {
+			m.doAct(toggleBusyLine(true), nil, "", func() error { return m.a.Stop() })
+		} else {
+			m.doAct(toggleBusyLine(false), nil, "", func() error { return m.a.Start() })
+		}
+		m.mu.Unlock()
 	}
 }
 

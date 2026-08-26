@@ -123,6 +123,24 @@ func presetChoices(info cfgstore.Info) (names []string, multi bool) {
 	return names, true
 }
 
+// toggleTitle is the Stop/Start menu item's label for the collector's
+// current run state — one item, never a "Stop" that can't stop anything.
+func toggleTitle(running bool) string {
+	if running {
+		return "Stop Collector"
+	}
+	return "Start Collector"
+}
+
+// toggleBusyLine is the status block's first line while the toggle's action
+// is in flight: stopping when it was running, starting when it wasn't.
+func toggleBusyLine(running bool) string {
+	if running {
+		return "Stopping…"
+	}
+	return "Starting…"
+}
+
 // pendingTitle marks a clicked config/preset row while its activation is in
 // flight. Only the title carries the pending state — the checkmark itself
 // keeps meaning "this is what launchd is running" and never moves until a
