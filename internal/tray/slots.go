@@ -120,7 +120,22 @@ func presetChoices(info cfgstore.Info) (names []string, submenu bool) {
 		names = append(names, n)
 	}
 	slices.Sort(names)
-	return names, true
+	// A single preset needs no picker: clicking the config activates it
+	// directly (clickPreset), whatever its name.
+	return names, len(names) >= 2
+}
+
+// clickPreset is the preset a plain click on the config row activates: the
+// config's only preset when it has exactly one — even if it was never the
+// active one — and "" otherwise ("" keeps the config's own active preset;
+// multi-preset configs activate through their submenu instead).
+func clickPreset(info cfgstore.Info) string {
+	if len(info.Meta.Presets) == 1 {
+		for n := range info.Meta.Presets {
+			return n
+		}
+	}
+	return ""
 }
 
 // toggleTitle is the Stop/Start menu item's label for the collector's

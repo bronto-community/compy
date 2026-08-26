@@ -185,12 +185,12 @@ func TestPresetChoices(t *testing.T) {
 	}{
 		{"no presets: single-click", cfgstore.Info{}, nil, false},
 		{
-			// 2026-08-26 feedback: a single preset still gets the submenu —
-			// switching applies "if a preset is available", and the submenu
-			// shows what would run.
-			"one preset: submenu",
+			// 2026-08-26 feedback, second round: exactly one preset needs
+			// no picker — a plain click activates it (clickPreset), so the
+			// row stays a plain click target.
+			"one preset: no submenu, direct activation",
 			cfgstore.Info{Meta: cfgstore.Meta{Presets: map[string]map[string]string{"default": {}}}},
-			[]string{"default"}, true,
+			[]string{"default"}, false,
 		},
 		{
 			"two+ presets: submenu, sorted",
@@ -296,17 +296,21 @@ func TestSyncRowPresetSubmenu(t *testing.T) {
 		t.Errorf("stopped: checked row=%v eu=%v default=%v, want all false", row.Checked(), presetItems["eu"].Checked(), presetItems["default"].Checked())
 	}
 
-	// A single-preset config keeps its submenu (2026-08-26 feedback): the
-	// one preset item stays owned and checked while running.
-	single := &systray.MenuItem{}
-	singleItems := map[string]*systray.MenuItem{"default": {}}
-	singleInfo := cfgstore.Info{Meta: cfgstore.Meta{Presets: map[string]map[string]string{"default": {}}}}
-	m.syncRow(single, singleItems, "solo", singleInfo, app.Status{Running: true, Config: "solo", Preset: "default"})
-	if target, ok := m.resolvePresetClick(singleItems["default"]); !ok || target != (presetTarget{config: "solo", preset: "default"}) {
-		t.Errorf("single-preset submenu: resolves to %+v, %v; want {solo default}, true", target, ok)
+	// A single-preset config gets NO submenu (2026-08-26 feedback, second
+	// round): a plain click activates its one preset directly, whatever
+	// the preset's name.
+	singleInfo := cfgstore.Info{Meta: cfgstore.Meta{Presets: map[string]map[string]string{"staging": {}}}}
+	if names, submenu := presetChoices(singleInfo); submenu || len(names) != 1 {
+		t.Errorf("presetChoices(single) = %v, submenu %v; want the one name and no submenu", names, submenu)
 	}
-	if !singleItems["default"].Checked() {
-		t.Error("single-preset submenu: running preset must be checked")
+	if p := clickPreset(singleInfo); p != "staging" {
+		t.Errorf("clickPreset(single) = %q, want staging (even though it is not named default)", p)
+	}
+	if p := clickPreset(info); p != "" {
+		t.Errorf("clickPreset(multi) = %q, want \"\" (multi-preset activates via its submenu)", p)
+	}
+	if p := clickPreset(cfgstore.Info{}); p != "" {
+		t.Errorf("clickPreset(none) = %q, want \"\"", p)
 	}
 }
 

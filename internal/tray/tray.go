@@ -325,11 +325,25 @@ func (m *menu) removeStale(items map[string]*systray.MenuItem, seen map[string]b
 
 func (m *menu) handleConfigClicks(name string, item *systray.MenuItem) {
 	for range item.ClickedCh {
-		// Activate with the configuration's own active preset ("" keeps it).
-		// Native menus don't deliver this click at all once the row has grown
-		// a submenu (multi-preset) — picking a preset there is the activation.
-		m.act(activatingLine(name, ""), item, name, func() error { return m.a.Activate(name, "") })
+		// A single-preset config activates that preset directly (resolved
+		// fresh at click time); otherwise "" keeps the config's own active
+		// preset. Native menus don't deliver this click at all once the row
+		// has grown a submenu (multi-preset) — picking a preset there is
+		// the activation.
+		p := m.presetFor(name)
+		m.act(activatingLine(name, p), item, name, func() error { return m.a.Activate(name, p) })
 	}
+}
+
+// presetFor resolves what preset a plain click on name should activate,
+// reading the config fresh — presets may have changed since the menu was
+// drawn. Unreadable config → "" (Activate will report the real error).
+func (m *menu) presetFor(name string) string {
+	info, _, err := m.a.Config(name)
+	if err != nil {
+		return ""
+	}
+	return clickPreset(info)
 }
 
 // handleSlotClicks resolves the slot's current config at click time — the
@@ -342,7 +356,8 @@ func (m *menu) handleSlotClicks(i int, slot *systray.MenuItem) {
 			m.mu.Unlock()
 			continue
 		}
-		m.doAct(activatingLine(name, ""), slot, name, func() error { return m.a.Activate(name, "") })
+		p := m.presetFor(name)
+		m.doAct(activatingLine(name, p), slot, name, func() error { return m.a.Activate(name, p) })
 		m.mu.Unlock()
 	}
 }
