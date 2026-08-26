@@ -128,10 +128,22 @@ func TestScrapePortsFallsBackToDetectedPorts(t *testing.T) {
 		t.Errorf("Received = %d, want 12 (the real page was parsed)", h.Received)
 	}
 
-	// The default port answering wins without touching the detected list.
+	// Pid-bound: a foreign collector answering on the default port is NOT
+	// ours — with a non-empty detected list that excludes it, it must not
+	// be scraped even when every detected port is dead.
 	defaultMetricsPort = port
-	if h := ScrapePorts([]int{closedPort(t)}); !h.Available || h.Port != port {
-		t.Errorf("default port: Available=%v Port=%d, want true/%d", h.Available, h.Port, port)
+	if h := ScrapePorts([]int{closedPort(t)}); h.Available || h.Port != 0 {
+		t.Errorf("foreign default scraped despite pid-bound list: got %+v, want zero Health", h)
+	}
+
+	// The default port wins first when it IS among the detected ports.
+	if h := ScrapePorts([]int{closedPort(t), port}); !h.Available || h.Port != port {
+		t.Errorf("default in detected list: Available=%v Port=%d, want true/%d", h.Available, h.Port, port)
+	}
+
+	// Detection unavailable (empty list): the default is the fallback.
+	if h := ScrapePorts(nil); !h.Available || h.Port != port {
+		t.Errorf("no detection fallback: Available=%v Port=%d, want true/%d", h.Available, h.Port, port)
 	}
 
 	// Nothing answering anywhere: no numbers, no port claim.

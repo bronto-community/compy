@@ -648,9 +648,9 @@ func (a *App) Health() (any, error) {
 	if err != nil || !running {
 		return collector.Health{}, nil
 	}
-	// :8888 first (otelcol's zero-config default); if that does not answer,
-	// try the ports the process is actually listening on — a config that
-	// moves service::telemetry still gets its numbers shown.
+	// Pid-bound: scrape only the ports the process actually listens on
+	// (:8888 first when it is among them); the blind default probe exists
+	// only as a fallback when port detection is unavailable.
 	return collector.ScrapePorts(collector.ListeningPorts(pid)), nil
 }
 
