@@ -604,6 +604,16 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .logline:hover { background: var(--panel); }
 .logline .t { color: var(--border3); }
 .logline .m { color: var(--text3); white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+/* structured attrs: dimmed key=value pairs after the message, each an
+   inline-block so a pair wraps as a unit; a pair wider than the column
+   still breaks internally rather than scrolling. */
+.logline .kv { display: inline-block; max-width: 100%; margin-left: 12px; color: var(--dim); }
+.logline .kv .k { color: var(--dim2); }
+/* continuation rows (debug-exporter dumps): no time/level, indented,
+   dimmed, whitespace kept — visually subordinate to the entry above. */
+.logline.cont { padding-top: 0; padding-bottom: 0; }
+.logline.cont .m { color: var(--dim2); padding-left: 14px; }
+.logline.cont .kv { margin-left: 0; margin-right: 12px; }
 .lv-error { color: var(--err); }
 .lv-warn { color: var(--warnText); }
 .lv-info { color: var(--info); }
