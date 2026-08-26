@@ -451,3 +451,17 @@ with the text above.
   the new ports apply when the collector next restarts and offers the
   restart action. The "ports live in the CLI" sentence is now "shell wiring
   lives in the CLI".
+- The getting-started strip is a real **help affordance** (round 2): a
+  circle-help icon leads it, and a help icon button in the configs header
+  (title "help") reopens it when dismissed (or toggles it closed).
+  Dismissal is still remembered in localStorage; the button un-dismisses.
+  The configs subtitle "activating restarts the collector" is deleted —
+  that fact lives in the strip's copy ("…press play — activating restarts
+  the collector.").
+- The otlp ports row is replaced by a **global variables section** in
+  Settings, between app and collector (round 2): preset-style value cards
+  (the editor's card grid) for `COMPY_GRPC_PORT` and `COMPY_HTTP_PORT`,
+  subtitled with why they are global — available in every configuration's
+  yaml, so not part of presets. The honest applies-on-next-restart note
+  (with the restart action while running) stays. The grid is sized to take
+  more cards later; user-defined variables are not built yet.
