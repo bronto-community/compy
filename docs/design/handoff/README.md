@@ -527,3 +527,12 @@ with the text above.
   errors in the log tail (the same error count `LogStats` already reports);
   shipped as per-state `.icns` (16 + 16@2x black-on-transparent rasters)
   via `systray.SetTemplateIcon`, switched only when the state changes.
+- **The standalone window carries the app icon and name** (round 8): the
+  designed app icon (dark variant, `packaging/macos/`, spec in its
+  HANDOFF.md) rasterized to the full Apple set as `compy.icns`, and
+  `packaging/macos/make-app.sh` assembles a `compy.app` next to the compy
+  binary — `open compy.app` opens the window, the app menu says compy, the
+  Dock shows the dino. The tray spawns the window through the bundle when
+  it is present. The light appicon variant is vendored source-only
+  (asset-catalogue light/dark variants need Xcode tooling). The Dock never
+  shows the menu-bar glyph, nor the menu bar the app icon, per the handoff.
