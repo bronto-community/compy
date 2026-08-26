@@ -987,6 +987,57 @@ func TestLogStats(t *testing.T) {
 	}
 }
 
+// TestLogStatsCountsSinceLastStart: the tray's attention icon must reflect
+// the CURRENT collector session, not history — a persisted log keeps
+// yesterday's errors in the tail window forever, which latched the icon
+// permanently. Only lines after the last "Starting otelcol" startup marker
+// count; a window with no marker (long-running collector, marker scrolled
+// out) still counts in full — TestLogStats above pins that case.
+func TestLogStatsCountsSinceLastStart(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(a.LogPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Real marker shape, verified live against otelcol v0.135.0.
+	start := "2026-08-26T16:52:57.549+0200\tinfo\tservice@v0.135.0/service.go:211\tStarting otelcol...\t{\"Version\": \"v0.135.0\"}"
+	old := []string{
+		"2026-08-25T14:32:02.000+0200\twarn\tservice.go:2\tyesterday's warning",
+		"2026-08-25T14:32:03.000+0200\terror\tservice.go:3\tyesterday's failure",
+	}
+
+	write := func(lines ...string) {
+		if err := os.WriteFile(a.LogPath(), []byte(strings.Join(append(lines, ""), "\n")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Old errors before the marker, clean since: all zero.
+	write(old[0], old[1], start)
+	if errs, warns, err := a.LogStats(500); err != nil || errs != 0 || warns != 0 {
+		t.Fatalf("clean since restart: LogStats = %d, %d, %v, want 0, 0, nil", errs, warns, err)
+	}
+
+	// Errors after the marker count; the old ones still don't.
+	write(old[0], old[1], start,
+		"2026-08-26T16:53:01.000+0200\terror\tservice.go:9\texporter send failed",
+		"2026-08-26T16:53:02.000+0200\twarn\tservice.go:9\tqueue nearly full")
+	if errs, warns, err := a.LogStats(500); err != nil || errs != 1 || warns != 1 {
+		t.Fatalf("errors since restart: LogStats = %d, %d, %v, want 1, 1, nil", errs, warns, err)
+	}
+
+	// Two markers: only lines after the LAST one count.
+	write(start,
+		"2026-08-26T10:00:00.000+0200\terror\tservice.go:9\tfirst session failure",
+		start)
+	if errs, warns, err := a.LogStats(500); err != nil || errs != 0 || warns != 0 {
+		t.Fatalf("after second restart: LogStats = %d, %d, %v, want 0, 0, nil", errs, warns, err)
+	}
+}
+
 func TestActivateStartupFailureReportsTheLog(t *testing.T) {
 	// Bind then release a port: nothing listens there, so the probe fails
 	// (and we are not at the mercy of whatever holds the default port).
