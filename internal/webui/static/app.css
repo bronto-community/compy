@@ -323,7 +323,6 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .preset-sel.many { cursor: pointer; }
 .preset-sel.many:hover { border-color: var(--border3); }
 .preset-sel .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.preset-sel .nm.implicit { color: var(--dim2); } /* the implicit "default" preset */
 .preset-sel .caret { display: flex; color: var(--dim2); }
 .play {
   display: flex; cursor: pointer; color: var(--accent); background: none;

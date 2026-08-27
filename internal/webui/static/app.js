@@ -502,9 +502,9 @@ function renderSidebar() {
   ]));
   box.appendChild(span("name", activeName()));
   // Stopped, the card already says "nothing active"; naming the preset that
-  // is not running next to it just contradicts the line above. Running with
-  // no preset is the implicit "default" preset (empty values), not "—".
-  box.appendChild(span("preset", "preset · " + (stopped ? "—" : (S.status && S.status.preset) || "default")));
+  // is not running next to it just contradicts the line above. Running, the
+  // preset is always a real one (every config keeps at least one).
+  box.appendChild(span("preset", "preset · " + (stopped ? "—" : (S.status && S.status.preset) || "—")));
   // Only detected ports are claimed; stopped or nothing detected shows no
   // ports line at all. (The collector in use lives in settings, not here.)
   const ports = detectedPorts();
@@ -781,12 +781,10 @@ function configRow(info) {
   const selBtn = el("button", {
     class: "preset-sel" + (many ? " many" : ""),
     attrs: many ? { "aria-haspopup": "true" } : { tabindex: "-1" },
-    title: list.length ? null : "no presets yet — activates with default values",
     on: { click: () => { if (many) { S.presetsOpenId = S.presetsOpenId === name ? null : name; render(); } } },
   }, [
-    // A preset-less config runs on the implicit default preset (empty
-    // values) — say "default", muted, rather than a broken-looking "—".
-    span(sel ? "nm" : "nm implicit", sel || "default"),
+    // Every config keeps at least one preset, so sel is always real.
+    span("nm", sel),
     el("span", { class: "grow" }),
     many ? el("span", { class: "caret" }, [icon("chevron", 12)]) : null,
   ]);
@@ -795,7 +793,7 @@ function configRow(info) {
   const alreadyRunning = running && sel === (S.status && S.status.preset);
   cell.appendChild(el("button", {
     class: "play",
-    title: alreadyRunning ? "already running" : "activate " + name + (sel ? " · " + sel : ""),
+    title: alreadyRunning ? "already running" : "activate " + name + " · " + sel,
     attrs: alreadyRunning || busy ? { disabled: "" } : null,
     on: { click: () => preflightActivate(name, sel) },
   }, [icon("play", 11, true)]));
@@ -1022,11 +1020,10 @@ function preflightPanel(info) {
       class: "btn", text: "add values",
       on: {
         click: () => {
-          // The existing inline preset editor: a new preset if the config
-          // has none, else the one this activation would use.
+          // The existing inline preset editor, on the real preset this
+          // activation would use (every config keeps at least one).
           S.preflight = null;
-          if (presetsOf(info).length === 0) openInline(p.name, "", true);
-          else openInline(p.name, p.preset, false);
+          openInline(p.name, p.preset, false);
         },
       },
     }),
@@ -1227,7 +1224,7 @@ function screenEditor() {
   const locked = origin !== "user" && !S.unlocked;
   const yamlShown = origin === "user" || S.yamlOpen;
   const list = presetsOf(info);
-  if (list.length && list.indexOf(S.preset) < 0) S.preset = list[0];
+  if (list.indexOf(S.preset) < 0) S.preset = list[0];
 
   const wrap = el("div", { class: "screen" });
 
@@ -1572,7 +1569,7 @@ function tiles(stopped) {
   const listenText = ports.map((p) => (":" + p + (portLabel(p) ? " " + portLabel(p) : ""))).join(" · ");
   return el("div", { class: "tiles" }, [
     tile("configuration", el("span", { class: "v accent", text: activeName() })),
-    tile("preset", el("span", { class: "v" + (stopped || !st.preset ? " off" : ""), text: stopped ? "—" : (st.preset || "default") })),
+    tile("preset", el("span", { class: "v" + (stopped || !st.preset ? " off" : ""), text: stopped ? "—" : st.preset || "—" })),
     tile("collector", el("button", {
       class: "link", text: st.distro || "none selected",
       title: "every config runs on this one. change it in settings.",
