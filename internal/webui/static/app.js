@@ -507,7 +507,12 @@ function renderSidebar() {
     box.appendChild(portsWarning(v));
   } else {
     S.adoptAsk = false;
-    if (v && v.missing_grpc) {
+    /* The secondary port — whichever one the advertised protocol's
+       endpoint does NOT use — missing is only a soft addendum. */
+    const grpcPrimary = S.status && S.status.protocol === "grpc";
+    if (v && grpcPrimary && v.missing_http) {
+      box.appendChild(span("pw-soft", "http :" + S.status.http_port + " not among this config's listeners"));
+    } else if (v && !grpcPrimary && v.missing_grpc) {
       box.appendChild(span("pw-soft", "grpc :" + S.status.grpc_port + " not among this config's listeners"));
     }
   }
@@ -515,15 +520,20 @@ function renderSidebar() {
 
 function portsWarning(v) {
   const st = S.status;
+  /* The advertised port follows the protocol: grpc advertises the grpc
+     port, both http flavors the http one. */
+  const grpcPrimary = st.protocol === "grpc";
+  const advPort = grpcPrimary ? st.grpc_port : st.http_port;
+  const advVar = grpcPrimary ? "COMPY_GRPC_PORT" : "COMPY_HTTP_PORT";
   const listens = v.actual && v.actual.length
     ? "this config listens on " + portsCompact(v.actual)
     : "this config opens no other ports";
   const wrap = el("div", { class: "portwarn" }, [
     el("div", { class: "pw-line" }, [
       el("span", { class: "dot5", attrs: { style: "background: var(--err)" } }),
-      span("", "apps point at :" + st.http_port + " — " + listens),
+      span("", "apps point at :" + advPort + " — " + listens),
     ]),
-    el("span", { class: "pw-hint sans", text: "bind ${env:COMPY_HTTP_PORT} in the config, or:" }),
+    el("span", { class: "pw-hint sans", text: "bind ${env:" + advVar + "} in the config, or:" }),
   ]);
   if (!S.adoptAsk) {
     wrap.appendChild(el("button", {
@@ -1668,11 +1678,23 @@ function screenSettings() {
   for (const k of ["system", "dark", "light"]) {
     seg.appendChild(el("button", { class: S.theme === k ? "on" : "", text: k, on: { click: () => setTheme(k) } }));
   }
+  const proto = (S.settings && S.settings.protocol) || (S.status && S.status.protocol) || "http/protobuf";
+  const pseg = el("div", { class: "seg" });
+  for (const p of ["grpc", "http/protobuf", "http/json"]) {
+    pseg.appendChild(el("button", { class: proto === p ? "on" : "", text: p, on: { click: () => setProtocol(p) } }));
+  }
   const osEnvOn = !!(S.status && S.status.os_env);
   wrap.appendChild(el("div", { class: "card" }, [
     el("div", { class: "srow" }, [
       el("span", { class: "lbl" }, [span("t", "appearance"), el("span", { class: "n sans", text: themeNote })]),
       el("span", { class: "grow" }), seg,
+    ]),
+    el("div", { class: "srow" }, [
+      el("span", { class: "lbl" }, [
+        span("t", "protocol"),
+        el("span", { class: "n sans", text: "what the advertised endpoint speaks — http/protobuf unless your sdk needs otherwise" }),
+      ]),
+      el("span", { class: "grow" }), pseg,
     ]),
     el("div", {
       class: "srow clickable", on: { click: () => setOSEnv(!osEnvOn) },
@@ -1973,6 +1995,19 @@ async function setOSEnv(on) {
     await loadCore();
     note(on ? "OTEL_* variables set system-wide" : "OTEL_* variables cleared", 3000);
   } catch (e) { showError(e); }
+}
+/* Advertisement only — the collector serves every protocol regardless, so
+   nothing restarts. With the OS-level toggle on, the backend refreshes the
+   injected values; newly launched apps pick them up (the os-env row already
+   says so). */
+async function setProtocol(p) {
+  clearError();
+  try {
+    S.settings = await apiJSON("/api/settings", "PUT", { protocol: p });
+    await loadCore(); // endpoint + verdict follow the advertisement
+    note("advertised endpoint now speaks " + p, 3000);
+  } catch (e) { showError(e); }
+  render();
 }
 async function useDistro(name) {
   clearError();
