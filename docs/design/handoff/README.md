@@ -595,3 +595,17 @@ with the text above.
   advertisement-only — nothing restarts. Surfaces: settings app card gets
   a three-segment protocol row (appearance idiom), `compy settings set
   --protocol`, GET/PUT /api/settings, and `compy status`'s endpoint line.
+- **Help on every screen, and a copy pass** (owner ruling, 2026-08-27):
+  the configurations page's help idiom (dismissible strip, header help
+  button to bring it back, dismissal in localStorage) extends to the
+  collector, settings, and editor screens, one storage key per page.
+  Each strip is two to three fact-dense lowercase sentences: the
+  collector's says the numbers are the collector's own and restart/stop
+  live there; settings names what the page holds down to the danger
+  area; the editor's defines a configuration, states edit-protection in
+  one sentence, and notes cmd+s. In the same round every user-facing
+  string was reviewed against a prose standard: em dashes joining full
+  clauses in flowing sentences (help copy, sans explainers, error
+  sentences) became periods, commas, or colons; structural separators in
+  status lines and state labels ("· ", "not built — build.sh") are
+  design tokens and stay.
