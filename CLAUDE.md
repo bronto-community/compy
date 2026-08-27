@@ -26,6 +26,12 @@ root is the LIVE binary — the user's LaunchAgents and menu-bar tray execute
 that exact path. Never overwrite it with a non-darwin build; rebuild it only
 as `go build -o compy ./cmd/compy` when deliberately rolling out.
 
+`sh packaging/collector/build.sh` builds `otelcol-compy` (the bundled
+distro, from `packaging/collector/manifest.yaml` via OCB, builder pinned to
+the manifest's collector version) next to the compy binary, plus its
+`otelcol-compy.version` stamp. Slow (big module graph) and deliberately NOT
+part of the gates above; run it when the manifest changes.
+
 ## Dependencies
 
 Stdlib only, except `fyne.io/systray` (tray icon; darwin-only build, stubbed
@@ -47,7 +53,15 @@ out on other GOOS in `internal/tray`) and `github.com/webview/webview_go`
 - `vars` — extracts `${VAR}` / `${env:VAR:-default}` references (and their
   trailing-comment descriptions) from collector YAML.
 - `distro` — pinned collector-distribution definitions, checksum-verified
-  on-demand download, and the distro registry. `contrib` is the implicit
+  on-demand download, the distro registry, the bundled `otelcol-compy`
+  (resolved next to the compy executable, never downloaded, updates with
+  compy releases), and pulling newer upstream releases of the pinned
+  distros. Trust model: a PINNED version ships with a compiled-in sha256; a
+  PULLED update is verified against the `.sha256` asset published in the
+  same upstream release (TLS + same-origin release assets). Default distro
+  chain: explicit `settings.Distro` → bundled-if-present → `contrib`.
+  Pulled versions are recorded in settings.json (`distro_versions`) so the
+  last-good restore rolls a bad update back. `contrib` is the implicit
   default: an empty `settings.Distro` resolves to it, auto-downloaded by
   the first operation that needs a collector binary (`app.DefaultDistro`).
 - `envvars` — computes the `OTEL_*` vars compy exposes; emits them as shell

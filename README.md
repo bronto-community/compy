@@ -15,14 +15,24 @@ Keychain-backed secrets, and a Windows implementation.
 
 ## Install
 
-Requires Go 1.24+. compy downloads its own pinned collector binary
-(`contrib`, checksum-verified) the first time anything needs one; switch to
-another pinned build with `compy distro use core|otlp`, or point it at your
-own `otelcol` build with `compy distro add`.
+Requires Go 1.24+.
 
 ```
 go build -o compy ./cmd/compy
 ```
+
+### Bundled collector (otelcol-compy)
+
+`sh packaging/collector/build.sh` builds `otelcol-compy` — compy's own
+collector distribution, curated in `packaging/collector/manifest.yaml` —
+next to the compy binary via the OpenTelemetry Collector Builder. It is a
+separate, slow step (OCB downloads a large module graph), deliberately not
+part of `go build`. When it sits next to the compy executable it is the
+default collector; without it, compy falls back to downloading the pinned
+`contrib` build (checksum-verified) the first time anything needs one.
+Switch to another pinned build with `compy distro use core|contrib|otlp`,
+pull a newer upstream release of one with `compy distro update <name>`, or
+point compy at your own `otelcol` build with `compy distro add`.
 
 ### macOS app bundle
 
@@ -60,10 +70,11 @@ eval "$(./compy env)"
 ```
 
 `compy use <config>` validates, installs, and starts the collector on
-compy's standard ports. The first run downloads compy's pinned
-`otelcol-contrib` build (checksum-verified, ~90MB); pick a different
-pinned build with `compy distro use core|otlp`, or bring your own binary
-with `compy distro add <name> /path/to/otelcol`. `eval "$(./compy env)"` exports
+compy's standard ports. It runs the bundled `otelcol-compy` when one is
+built next to the compy binary (see Install); otherwise the first run
+downloads compy's pinned `otelcol-contrib` build (checksum-verified,
+~90MB). Pick a different pinned build with `compy distro use core|otlp`,
+or bring your own binary with `compy distro add <name> /path/to/otelcol`. `eval "$(./compy env)"` exports
 `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_PROTOCOL` into your
 shell. For a single command instead: `./compy run -- <cmd>`.
 
@@ -107,6 +118,7 @@ compy distro add <name> <path>
 compy distro set-path <name> <path>
 compy distro remove <name>
 compy distro use|fetch <name>
+compy distro update [--check] <name>
 compy service install|uninstall|status
 compy env [--shell sh|fish|pwsh]
 compy env set-os | unset-os

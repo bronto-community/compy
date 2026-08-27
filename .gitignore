@@ -3,3 +3,6 @@
 dist/
 .claude/
 /compy.app/
+/otelcol-compy
+/otelcol-compy.version
+packaging/collector/_build/
