@@ -1,8 +1,8 @@
 # compy
 
 A telemetry switchboard for the local dev loop. Point locally-run apps at
-one stable local OTLP endpoint once; from then on, which backends telemetry
-goes to is changed with this tool — CLI or web UI — in seconds.
+one stable local OTLP endpoint once; from then on you switch which backends
+telemetry goes to with this tool (CLI or web UI) in seconds.
 
 compy manages an OpenTelemetry Collector as an OS-supervised service (a
 per-user macOS LaunchAgent). It is a proxy and a control plane.
@@ -23,8 +23,8 @@ go build -o compy ./cmd/compy
 
 ### Bundled collector (otelcol-compy)
 
-`sh packaging/collector/build.sh` builds `otelcol-compy` — compy's own
-collector distribution, curated in `packaging/collector/manifest.yaml` —
+`sh packaging/collector/build.sh` builds `otelcol-compy`, compy's own
+collector distribution (curated in `packaging/collector/manifest.yaml`),
 next to the compy binary via the OpenTelemetry Collector Builder. It is a
 separate, slow step (OCB downloads a large module graph), deliberately not
 part of `go build`. When it sits next to the compy executable it is the
@@ -41,8 +41,8 @@ sh packaging/macos/make-app.sh ./compy
 ```
 
 assembles a `compy.app` next to the binary so the standalone window
-(`compy window`, and the tray's "Open compy") shows the right identity —
-app menu says compy, Dock shows the dino icon — instead of a bare
+(`compy window`, and the tray's "Open compy") shows the right identity
+(app menu says compy, Dock shows the dino icon) instead of a bare
 executable's generic name. `open compy.app` opens the window directly.
 Optional; everything works without it. See `packaging/macos/README.md`.
 
@@ -52,15 +52,15 @@ compy manages **configurations**: whole collector `config.yaml` documents,
 each with named **presets** (e.g. `default`, `staging`) of values for
 the `${VAR}` / `${VAR:-default}` / `${env:VAR}` / `${env:VAR:-default}`
 references it contains. Exactly one configuration, and one of its presets,
-is active at a time — activating installs and restarts the collector
+is active at a time. Activating installs and restarts the collector
 with that preset's values in its environment, so the collector expands them
 natively. If activation succeeds but the collector then fails to start,
 compy automatically restores the previously running configuration and
-preset. compy ships three configurations built in to compy (`debug`,
-`otlp`, `bronto`); edit any of them and it becomes "locally modified" and
-is skipped by future compy upgrades, or `sync`/`resync` a configuration
-created `--from-url` to pull in changes from its source (refused if locally
-modified, unless you `resync` to discard your edits).
+preset. Three configurations are built in to compy (`debug`, `otlp`,
+`bronto`). Edit one and it becomes "locally modified": future compy
+upgrades leave it alone. A configuration created `--from-url` can `sync`
+to pull in changes from its source; sync refuses a locally modified
+config, and `resync` discards your edits and pulls anyway.
 
 ## Quickstart
 
@@ -106,25 +106,25 @@ compy's advertised ports are the contract: `compy env`, `compy run`, and
 the OS-level env all export
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<http_port>` (protocol
 `http/protobuf`, and the traces/metrics/logs exporters pinned to `otlp`)
-from the ports in settings — 14318 HTTP / 14317 gRPC by
-default, stable across config switches. The advertised protocol is
-configurable (`compy settings set --protocol grpc|http/protobuf|http/json`,
+from the ports in settings (14318 HTTP / 14317 gRPC by default), stable
+across config switches. The advertised protocol is configurable
+(`compy settings set --protocol grpc|http/protobuf|http/json`,
 or the settings screen): `http/json` shares the HTTP port, `grpc` points the
-endpoint at the gRPC port instead (still in `http://host:port` form — the
+endpoint at the gRPC port instead (still in `http://host:port` form: the
 `http` scheme means plaintext for OTLP/gRPC, so no extra insecure flag is
 needed) and the conformance warning below rides the gRPC port. Switching is
 advertisement-only; the collector's receivers serve every protocol
 regardless. The shipped configurations bind
 their receivers to `${env:COMPY_GRPC_PORT}` / `${env:COMPY_HTTP_PORT}`, so
 they always conform. A configuration owns its receivers and may bind
-anywhere — but when its detected listeners don't include the advertised
-HTTP port, apps that followed compy's env would silently miss it, so every
-surface says so instead (`compy status`, the window sidebar, the menu bar's
+anywhere. But when its detected listeners don't include the advertised
+port, apps that followed compy's env would silently miss it, so every
+surface says so (`compy status`, the window sidebar, the menu bar's
 "ports mismatch"). Either make the config conform (bind the `COMPY_*_PORT`
 variables) or run `compy adopt-ports` (also in the window's warning) to
-re-point the advertisement at the config's actual OTLP ports — grpc vs.
-http is probed apart automatically, and anything ambiguous is refused with
-the candidates named (`--grpc N --http N` assigns them explicitly).
+re-point the advertisement at the config's actual OTLP ports. compy probes
+grpc and http apart automatically and refuses anything ambiguous, naming
+the candidates; `--grpc N --http N` assigns them explicitly.
 
 ## Command surface
 
@@ -133,9 +133,10 @@ compy status [--json]
 compy apply | validate | stop | start
 compy adopt-ports [--grpc N] [--http N]
 compy config list
-compy config show|edit|delete|sync|resync <name>
+compy config show|edit|delete|sync|resync|reset <name>
 compy config create <name> [--from-url URL]
 compy config copy <src> <dst>
+compy config rename <old> <new>
 compy config sync-all
 compy config set-url <config> <url|-->
 compy use <config> [<preset>]
@@ -144,7 +145,8 @@ compy presets set <config> <preset> KEY=VALUE
 compy presets use|delete <config> <preset>
 compy presets rename <config> <from> <to>
 compy settings
-compy settings set [--grpc-port N] [--http-port N]
+compy settings set [--grpc-port N] [--http-port N] [--protocol grpc|http/protobuf|http/json]
+compy factory-reset --yes
 compy distro list
 compy distro add <name> <path>
 compy distro set-path <name> <path>
