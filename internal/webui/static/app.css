@@ -311,7 +311,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 /* the active row says it in a word, rhyming with the sidebar's status line */
 .cfg-name .runword {
   flex: 0 0 auto; font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
-  color: var(--accent); animation: compyPulse 1.1s ease-in-out infinite;
+  color: var(--accent);
 }
 .cfg-name:focus-visible { outline: 1px solid var(--border3); outline-offset: 2px; }
 .cell-preset {
