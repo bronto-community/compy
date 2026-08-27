@@ -2104,7 +2104,7 @@ function distroRow(b) {
   // instead says what a download would fetch: the persisted latest, or the
   // compiled-in pin when no check has run yet.
   const avail = b.latest_available ? " · " + b.latest_available + " available" : "";
-  const fetches = b.fetch_version ? " · downloads " + b.fetch_version + (b.fetch_pinned ? " (pinned)" : "") : "";
+  const fetches = b.fetch_version ? " · downloads " + b.fetch_version : "";
 
   // A real fetch failure is a Go error with a URL in it — too long for a
   // 1fr cell. The row shows one short line; the whole thing is the tooltip.
