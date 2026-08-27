@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/bronto-io/compy/internal/cfgstore"
 	"github.com/bronto-io/compy/internal/collector"
 	"github.com/bronto-io/compy/internal/distro"
+	"github.com/bronto-io/compy/internal/envvars"
 	"github.com/bronto-io/compy/internal/launchd"
 	"github.com/bronto-io/compy/internal/state"
 )
@@ -2441,6 +2443,84 @@ func TestFactoryReset(t *testing.T) {
 	for _, sub := range []string{"configs", "logs", "last-good"} {
 		if fi, err := os.Stat(filepath.Join(a.Dir, sub)); err != nil || !fi.IsDir() {
 			t.Errorf("state dir missing %s/ after reset (err = %v)", sub, err)
+		}
+	}
+}
+
+// stubEnvExec captures the launchctl commands envvars would run.
+func stubEnvExec(t *testing.T) *[]string {
+	t.Helper()
+	orig := envvars.Exec
+	var calls []string
+	envvars.Exec = func(name string, arg ...string) *exec.Cmd {
+		calls = append(calls, name+" "+strings.Join(arg, " "))
+		return exec.Command("true")
+	}
+	t.Cleanup(func() { envvars.Exec = orig })
+	return &calls
+}
+
+// TestReapplyOSEnv: launchctl setenv does not survive a reboot, so the tray
+// re-applies at login — but only when the setting is on.
+func TestReapplyOSEnv(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	calls := stubEnvExec(t)
+	if err := a.ReapplyOSEnv(); err != nil {
+		t.Fatalf("ReapplyOSEnv (off): %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("os-env off: launchctl called: %v", *calls)
+	}
+
+	if err := a.SetOSEnv(true); err != nil {
+		t.Fatalf("SetOSEnv: %v", err)
+	}
+	*calls = nil
+	if err := a.ReapplyOSEnv(); err != nil {
+		t.Fatalf("ReapplyOSEnv (on): %v", err)
+	}
+	if !slices.Contains(*calls, "launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT http://127.0.0.1:14318") {
+		t.Errorf("os-env on: setenv not re-applied, calls = %v", *calls)
+	}
+}
+
+// TestPutSettingsRefreshesOSEnv: with the OS env on, a port change must
+// update the injected endpoint rather than leave the old one behind.
+func TestPutSettingsRefreshesOSEnv(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := stubEnvExec(t)
+	if err := a.SetOSEnv(true); err != nil {
+		t.Fatal(err)
+	}
+	*calls = nil
+	port := 25999
+	if err := a.PutSettings(nil, &port); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+	if !slices.Contains(*calls, "launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT http://127.0.0.1:25999") {
+		t.Errorf("port change with os-env on did not refresh the OS env: %v", *calls)
+	}
+
+	if err := a.SetOSEnv(false); err != nil {
+		t.Fatal(err)
+	}
+	*calls = nil
+	port = 26000
+	if err := a.PutSettings(nil, &port); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range *calls {
+		if strings.Contains(c, "setenv") {
+			t.Errorf("os-env off: port change ran setenv: %v", *calls)
 		}
 	}
 }
