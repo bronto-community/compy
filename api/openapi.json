@@ -141,7 +141,7 @@
         "properties": {
           "name": { "type": "string" },
           "path": { "type": "string" },
-          "version": { "type": "string", "description": "The version in effect: a pinned definition's compiled-in version or its pulled update, the bundled collector's build stamp (\"unknown\" when the stamp file is missing). Empty for user-managed entries and for the bundled collector when it is not built." },
+          "version": { "type": "string", "description": "The INSTALLED version: a downloaded definition's version in effect (compiled-in pin or pulled update), the bundled collector's build stamp (\"unknown\" when the stamp file is missing). Empty for user-managed entries, for the bundled collector when it is not built, and for undownloaded definitions (nothing is installed — see fetch_version for what a download would fetch)." },
           "selected": { "type": "boolean" },
           "definition": { "type": "boolean" },
           "bundled": { "type": "boolean", "description": "True for the collector shipped with compy (otelcol-compy, resolved next to the compy executable, never downloaded — it updates with compy releases), unless a user entry overrides the name." },
@@ -157,7 +157,15 @@
           },
           "latest_available": {
             "type": "string",
-            "description": "The newest upstream release, present only when it is newer than this row's version in effect, per the persisted release check (the tray's ~12h background check, or an on-demand GET /api/distros/{name}/update — both record the same result). Read from disk, never fetched during this request. Only on updatable rows: never on the bundled collector (it updates with compy releases) or user-managed entries, and a malformed/unknown current version never claims."
+            "description": "The newest upstream release, present only when it is newer than this row's INSTALLED version, per the persisted release check (the tray's ~12h background check, or an on-demand GET /api/distros/{name}/update — both record the same result). Read from disk, never fetched during this request. Only on installed updatable rows: never on an undownloaded definition (nothing exists to update — its first download fetches the newest release directly), the bundled collector (it updates with compy releases), or user-managed entries, and a malformed/unknown current version never claims."
+          },
+          "fetch_version": {
+            "type": "string",
+            "description": "What a download of this row would fetch: the newest release the persisted check knows, or the compiled-in pin when no check has run yet (fetch_pinned). Only on undownloaded, platform-available definitions."
+          },
+          "fetch_pinned": {
+            "type": "boolean",
+            "description": "Present (true) when fetch_version is the compiled-in pin because no release check result exists yet, rather than a checked latest release."
           },
           "checked_at": {
             "type": "string",
@@ -1196,7 +1204,7 @@
     "/api/distros/{name}/update": {
       "get": {
         "summary": "Check the latest upstream release for a pinned distro (core, contrib, otlp) \u2014 on demand, downloads nothing",
-        "description": "The version in effect and the newest upstream release of open-telemetry/opentelemetry-collector-releases. A successful check is recorded in the state dir (the same record the tray's background check writes), so every distro row's latest_available/checked_at refreshes with it. 400 for the bundled collector (it updates with compy releases), a user-managed entry, or an unknown name; a network failure or rate limit is an honest error, never a claim about versions.",
+        "description": "The version in effect and the newest upstream release of open-telemetry/opentelemetry-collector-releases. A successful check is recorded in the state dir (the same record the tray's background check writes), so every distro row's latest_available/checked_at refreshes with it. 400 for the bundled collector (it updates with compy releases), a user-managed entry, an undownloaded distro (nothing installed to update — a download fetches the newest release directly), or an unknown name; a network failure or rate limit is an honest error, never a claim about versions.",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],

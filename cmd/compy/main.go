@@ -631,7 +631,14 @@ func cmdDistro(args []string) error {
 					case d["downloaded"] == true:
 						note = "downloaded (" + ver + ")"
 					default:
-						note = "available (downloads on first use, " + ver + ")"
+						// Undownloaded: nothing installed — say what a
+						// download would fetch (persisted latest, or the
+						// compiled-in pin when no release check has run).
+						fv, _ := d["fetch_version"].(string)
+						if d["fetch_pinned"] == true {
+							fv += ", pinned"
+						}
+						note = "available (downloads " + fv + ")"
 					}
 				}
 				if la, _ := d["latest_available"].(string); la != "" {

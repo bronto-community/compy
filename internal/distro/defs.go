@@ -1,56 +1,56 @@
 package distro
 
-// Pinned collector distribution definitions, version v0.135.0 of
-// open-telemetry/opentelemetry-collector-releases. URLs follow the GitHub
+// Pinned collector distribution definitions, version v0.159.0 of
+// open-telemetry/opentelemetry-collector-releases — the same release the
+// bundled otelcol-compy manifest builds from. URLs follow the GitHub
 // release-asset naming for that repo:
 //
-//	https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.135.0/<asset>
+//	https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.159.0/<asset>
 //
-// SHA256 values below were taken from the release's published
-// opentelemetry-collector-releases_<distro>_checksums.txt files and
-// independently cross-checked by downloading the darwin_arm64 tarballs and
-// running `shasum -a 256` on them (see task-4-report.md for the exact
-// commands and output) — both matched exactly.
-const releaseBase = "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.135.0/"
+// SHA256 values below were taken from the release's published per-asset
+// <asset>.sha256 files and independently cross-checked by downloading the
+// otlp darwin_arm64 tarball and running `shasum -a 256` on it (2026-08-27)
+// — matched exactly.
+const releaseBase = "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.159.0/"
 
 var defs = []Def{
 	{
 		Name:    "core",
-		Version: "0.135.0",
+		Version: "0.159.0",
 		Binary:  "otelcol",
 		URLs: map[string]string{
-			"darwin_arm64": releaseBase + "otelcol_0.135.0_darwin_arm64.tar.gz",
-			"linux_amd64":  releaseBase + "otelcol_0.135.0_linux_amd64.tar.gz",
+			"darwin_arm64": releaseBase + "otelcol_0.159.0_darwin_arm64.tar.gz",
+			"linux_amd64":  releaseBase + "otelcol_0.159.0_linux_amd64.tar.gz",
 		},
 		SHA256: map[string]string{
-			"darwin_arm64": "47d72b142bb7479101044439fc0bdadcd529f6dbb08f6eb729c8dedb840374ec",
-			"linux_amd64":  "bf6e97a6674b8e672350ac954fa230def35c1a25a5f28977348822032e15ec86",
+			"darwin_arm64": "267d62245baeb00f78c44ac97036bb27cb99d9217b55875c831fd60b6cb7f309",
+			"linux_amd64":  "d56f84c3e7a67c3b8e4f4e25734ec5456be1271fab233a70486ebf1cf181a1e8",
 		},
 	},
 	{
 		Name:    "contrib",
-		Version: "0.135.0",
+		Version: "0.159.0",
 		Binary:  "otelcol-contrib",
 		URLs: map[string]string{
-			"darwin_arm64": releaseBase + "otelcol-contrib_0.135.0_darwin_arm64.tar.gz",
-			"linux_amd64":  releaseBase + "otelcol-contrib_0.135.0_linux_amd64.tar.gz",
+			"darwin_arm64": releaseBase + "otelcol-contrib_0.159.0_darwin_arm64.tar.gz",
+			"linux_amd64":  releaseBase + "otelcol-contrib_0.159.0_linux_amd64.tar.gz",
 		},
 		SHA256: map[string]string{
-			"darwin_arm64": "a6c6b21b85d469b7fcbade017b3e8d39cd88580f3ed5c972542a223771b2f485",
-			"linux_amd64":  "43132748eb0effb56b9d508ca789149684bf7ab6ade5d65cd0b22c4d265a30c0",
+			"darwin_arm64": "7e317b75b1b087ba2150bf95d79e39a394d0d091f1231af6bbebee895d200375",
+			"linux_amd64":  "9d589f6349f01179957a2052bc7307a99db2efc971e14e00575941a77122eaaf",
 		},
 	},
 	{
 		Name:    "otlp",
-		Version: "0.135.0",
+		Version: "0.159.0",
 		Binary:  "otelcol-otlp",
 		URLs: map[string]string{
-			"darwin_arm64": releaseBase + "otelcol-otlp_0.135.0_darwin_arm64.tar.gz",
-			"linux_amd64":  releaseBase + "otelcol-otlp_0.135.0_linux_amd64.tar.gz",
+			"darwin_arm64": releaseBase + "otelcol-otlp_0.159.0_darwin_arm64.tar.gz",
+			"linux_amd64":  releaseBase + "otelcol-otlp_0.159.0_linux_amd64.tar.gz",
 		},
 		SHA256: map[string]string{
-			"darwin_arm64": "aeb17e692e8d3d3fcffa91c92e5937b871bf82558ff4765fcb13766989fe7033",
-			"linux_amd64":  "435b3931dc2243fd99234cc956117079731ce3fe81782c57fbca85d5f51278cf",
+			"darwin_arm64": "990e9d8be19cb77949be3f347c67a213d5b2174213b0c077d62b1a17d11c7057",
+			"linux_amd64":  "73d442ba0c041f288bc410fcdd15618a8610767aff383702489bbca503bba82b",
 		},
 	},
 }
