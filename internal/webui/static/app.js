@@ -1661,7 +1661,7 @@ function screenSettings() {
     }, [
       el("span", { class: "lbl" }, [
         span("t", "set OTEL_* variables system-wide"),
-        el("span", { class: "n sans", text: "new shells and apps point at compy automatically" }),
+        el("span", { class: "n sans", text: "apps launched from now on point at compy — already-running ones (your terminal included) pick it up after a relaunch" }),
       ]),
       el("span", { class: "grow" }),
       el("span", { class: "switch" + (osEnvOn ? " on" : "") }, [el("i")]),
