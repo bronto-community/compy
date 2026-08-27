@@ -660,7 +660,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .switch.on > i { background: var(--accent); }
 
 .bin-grid {
-  display: grid; grid-template-columns: 54px minmax(170px, 1fr) 1fr 132px;
+  display: grid; grid-template-columns: 54px minmax(170px, 1fr) 1fr 160px;
   gap: 0 14px; align-items: center;
 }
 .bin-head {

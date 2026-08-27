@@ -147,6 +147,7 @@ const S = {
   // settings
   theme: "system",
   dl: {},                  // { distroName: {status, pct, error} }
+  up: {},                  // { distroName: true } while its release check runs
   addName: "", addPath: "",
   settings: null,          // { grpc_port, http_port }
   portsSaved: false,       // "applies on the next restart" line showing
@@ -1576,7 +1577,7 @@ function screenSettings() {
 
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
     span("title", "collector"),
-    el("div", { class: "subtitle sans", text: "one collector runs every configuration. compy ships with contrib; add others if you need them." }),
+    el("div", { class: "subtitle sans", text: "one collector runs every configuration. compy ships with its own (otelcol-compy); core, contrib, and otlp can be downloaded, or add your own." }),
   ]));
 
   const table = el("div", { class: "card" }, [
@@ -1683,7 +1684,7 @@ async function doFactoryReset() {
       newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
       confirm: null, confirmVerb: null, confirmId: null, confirmKind: null,
       presetSel: {}, presetsOpenId: null, inline: null, inlineName: "",
-      dl: {}, addName: "", addPath: "", settings: null, portsSaved: false,
+      dl: {}, up: {}, addName: "", addPath: "", settings: null, portsSaved: false,
       resetArm: false, resetTyped: "",
     });
     await Promise.all([loadCore(), loadDistros(), loadSettings()]);
@@ -1704,6 +1705,9 @@ function distroRow(b) {
   const here = !!b.downloaded;
   const blocked = b.definition && !b.available;
   const mine = b.user_entry && !b.definition;
+  const bundled = !!b.bundled;
+  const checking = !!S.up[b.name];
+  const ver = b.version ? " · " + b.version : "";
 
   // A real fetch failure is a Go error with a URL in it — too long for a
   // 1fr cell. The row shows one short line; the whole thing is the tooltip.
@@ -1711,16 +1715,29 @@ function distroRow(b) {
   const short = reason.length > 46 ? reason.slice(0, 45) + "…" : reason;
   const state = busy ? "downloading… " + (d.pct == null ? "" : d.pct + "%")
     : failed ? (short ? "download failed · " + short : "download failed")
-      : inUse ? "in use"
-        : blocked ? "not available on macOS"
-          : here ? (mine ? "added by you" : "installed")
-            : "available to download";
-  const stateCls = busy || inUse ? " accent" : failed ? " bad" : blocked ? " off" : mine ? " mine" : "";
-  const glyph = inUse ? "dot" : blocked ? "ban" : here ? "circle" : "download";
+      : checking ? "checking for a newer release…"
+        : bundled ? (here ? "shipped with compy" + ver : "not built — packaging/collector/build.sh")
+          : inUse ? "in use" + ver
+            : blocked ? "not available on macOS"
+              : here ? (mine ? "added by you" : "installed" + ver)
+                : "available to download" + ver;
+  const stateCls = busy || checking || inUse ? " accent" : failed ? " bad" : blocked || (bundled && !here) ? " off" : mine ? " mine" : "";
+  const glyph = inUse ? "dot" : blocked || (bundled && !here) ? "ban" : here ? "circle" : "download";
+
+  // The update affordance belongs to the pinned upstream definitions only:
+  // the bundled collector updates with compy releases, and a user-managed
+  // path is the user's to update — each disabled title says so.
+  const canUpdate = b.definition && !b.user_entry && !blocked;
+  const updateTitle = bundled ? "updates with compy releases"
+    : !b.definition || b.user_entry ? "user-managed — update the binary at its path yourself"
+      : blocked ? "not available on macOS"
+        : busy ? "downloading…"
+          : checking ? "checking…"
+            : "check for a newer release and update " + b.name;
 
   const row = el("div", { class: "bin-grid bin-row" + (inUse ? " on" : "") }, [
-    el("span", { class: "ic" + (blocked ? " off" : ""), title: state }, [icon(glyph, 13)]),
-    el("span", { class: "nm", text: b.name, title: b.path || (blocked ? "not available on macOS" : "not downloaded yet") }),
+    el("span", { class: "ic" + (blocked || (bundled && !here) ? " off" : ""), title: state }, [icon(glyph, 13)]),
+    el("span", { class: "nm", text: b.name, title: b.path || (blocked ? "not available on macOS" : bundled ? "not built — packaging/collector/build.sh" : "not downloaded yet") }),
     el("span", { class: "bin-state" }, [
       el("span", { class: "s" + stateCls, text: state, title: failed ? d.error : null }),
       busy && d.pct != null ? el("span", { class: "pbar" }, [el("i", { attrs: { style: "width:" + d.pct + "%" } })]) : null,
@@ -1728,16 +1745,21 @@ function distroRow(b) {
     el("span", { class: "bin-actions" }, [
       el("button", {
         class: "ico" + (!inUse && here ? " accent" : ""),
-        title: inUse ? "already in use" : here ? "run every config on " + b.name : "download it first",
+        title: inUse ? "already in use" : here ? "run every config on " + b.name : bundled ? "not built — packaging/collector/build.sh" : "download it first",
         attrs: inUse || !here ? { disabled: "" } : null,
         on: { click: () => useDistro(b.name) },
       }, [icon("play", 11, true)]),
       el("button", {
-        class: "ico" + (!here && !blocked ? " accent" : ""),
-        title: busy ? "downloading…" : failed ? "try again" : blocked ? "not available on macOS" : here ? "already installed" : "download and verify " + b.name,
-        attrs: here || blocked || busy ? { disabled: "" } : null,
+        class: "ico" + (!here && !blocked && !bundled ? " accent" : ""),
+        title: bundled ? "never downloaded — built with compy" : busy ? "downloading…" : failed ? "try again" : blocked ? "not available on macOS" : here ? "already installed" : "download and verify " + b.name,
+        attrs: here || blocked || busy || bundled ? { disabled: "" } : null,
         on: { click: () => fetchDistro(b.name) },
       }, [icon("download", 13)]),
+      el("button", {
+        class: "ico", title: updateTitle,
+        attrs: canUpdate && !busy && !checking ? null : { disabled: "" },
+        on: { click: () => updateDistro(b.name) },
+      }, [icon("refresh", 13)]),
       el("button", {
         class: "ico", title: here || mine ? "change path" : "nothing installed yet",
         attrs: here || mine ? null : { disabled: "" },
@@ -1876,6 +1898,39 @@ async function fetchDistro(name) {
     render();
     if (p.status === "downloading" || p.status === "idle") { setTimeout(poll, 300); return; }
     if (p.status === "done") { S.dl[name] = null; await loadDistros(); render(); }
+  };
+  setTimeout(poll, 300);
+}
+// The update checks upstream synchronously (started false with current ==
+// latest means already newest), then downloads like a fetch: same progress
+// route, same polling.
+async function updateDistro(name) {
+  clearError();
+  S.up[name] = true;
+  render();
+  let r;
+  try { r = await api("/api/distros/" + enc(name) + "/update", { method: "POST" }); }
+  catch (e) { delete S.up[name]; showError(e); render(); return; }
+  delete S.up[name];
+  if (!r.started) {
+    note(name + " is already the newest release (" + r.current + ")", 3200);
+    render();
+    return;
+  }
+  S.dl[name] = { status: "downloading", pct: 0 };
+  render();
+  const poll = async () => {
+    let p;
+    try { p = await api("/api/distros/" + enc(name) + "/progress"); } catch (e) { S.dl[name] = null; showError(e); render(); return; }
+    S.dl[name] = p;
+    render();
+    if (p.status === "downloading" || p.status === "idle") { setTimeout(poll, 300); return; }
+    if (p.status === "done") {
+      S.dl[name] = null;
+      await loadDistros(); await loadCore();
+      note(name + " updated to " + r.latest, 3200);
+      render();
+    }
   };
   setTimeout(poll, 300);
 }
