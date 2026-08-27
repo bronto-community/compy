@@ -160,7 +160,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .side-status .portwarn .pw-line .dot5 { margin-top: 4px; }
 .side-status .pw-hint { font-size: 10.5px; color: var(--dim); }
 .side-status .pw-soft { font-size: 10.5px; color: var(--dim2); }
-.side-status .portwarn .act { align-self: flex-start; padding: 0; }
+.side-status .portwarn .act { align-self: flex-start; padding: 0; text-align: left; }
 .side-status .portwarn .act.adopt { color: var(--accent); }
 .side-status .portwarn .act.adopt[disabled] { color: var(--faint); }
 .side-status .portwarn .pw-row { display: flex; gap: 6px; align-items: center; }
