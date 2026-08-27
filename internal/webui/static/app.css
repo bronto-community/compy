@@ -308,11 +308,16 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 }
 .cfg-row.on .cfg-name { color: var(--accent); }
 .cfg-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* the active row says it in a word, rhyming with the sidebar's status line */
+/* the active row says it in a word, rhyming with the sidebar's status line.
+   Static on purpose: steady running is a state, not a transition — the
+   pulse belongs to in-flight indicators only (owner ruling, 2026-08-27). */
 .cfg-name .runword {
   flex: 0 0 auto; font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
   color: var(--accent);
 }
+/* the row's single status slot (after the name): steady = RUNNING above,
+   in-flight = the busy word + bar here — never in the preset cell */
+.cfg-name .busy { flex: 0 0 auto; }
 .cfg-name:focus-visible { outline: 1px solid var(--border3); outline-offset: 2px; }
 .cell-preset {
   position: relative; display: flex; align-items: center; gap: 9px; font-size: 12px;
@@ -332,6 +337,10 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   border: 1px solid var(--accentLine); border-radius: 4px; padding: 5px 11px;
 }
 .play:hover { background: var(--accentBg); }
+/* the running row's play becomes a stop: destructive-ish, so err-toned on
+   the same footprint (the delete icon's idiom, button-shaped) */
+.play.stop { color: var(--err); border-color: var(--errLine); }
+.play.stop:hover { background: var(--errHover); }
 .play[disabled] { color: var(--faint); border-color: var(--border); cursor: default; }
 .play[disabled]:hover { background: none; }
 .addp { /* row-level "add preset" (was a pencil, which read as edit-the-config) */
