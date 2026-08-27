@@ -134,6 +134,8 @@ const S = {
   presetsOpenId: null,
   inline: null,            // { name, preset, isNew }
   inlineName: "",
+  preflight: null,         // { name, preset, missing } — activation held for missing required values
+  helpOpen: {},            // { page: true } while its help strip is open (opt-in, not persisted)
 
   // editor
   unlocked: false, unlockAsk: false, yamlOpen: false,
@@ -204,6 +206,16 @@ function selectedPreset(info) {
   return list.indexOf(want) > -1 ? want : list[0] || "";
 }
 function byName(name) { return S.configs.find((c) => c.name === name) || null; }
+/* The activation pre-flight rule, shared with the CLI's warning (cfgstore.
+   MissingRequired): required means the yaml has no `:-fallback`
+   (has_default false), the name isn't compy-injected (COMPY_*), and the
+   preset holds no non-empty value. */
+function missingRequired(info, preset) {
+  const values = ((info.meta && info.meta.presets) || {})[preset] || {};
+  return (info.vars || [])
+    .filter((v) => !v.has_default && !/^COMPY_/.test(v.name) && !(values[v.name] || "").trim())
+    .map((v) => v.name);
+}
 function isRunningCfg(name) {
   return !!(S.status && S.status.running && S.status.config === name);
 }
@@ -647,59 +659,44 @@ function screenConfigs() {
   return wrap;
 }
 
-/* Help strips: one per screen, dismissible, remembered per page in
-   localStorage (guarded — WKWebView can run with storage blocked), and
-   recoverable via that screen's header help button (2026-08-26 round 2).
-   The configs key predates the per-page ones, so it keeps its old name. */
+/* Help strips: one per screen, OPT-IN — hidden until the header's help
+   button opens it; the button (or the ✕) closes it again. Open state is
+   in-memory only, so every load starts with no strips (2026-08-27,
+   supersedes the shown-by-default rule from the copy round; the old
+   compy.helpDismissed localStorage keys are simply ignored). */
 const HELP_COPY = {
   configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml or fetch it from a url.",
   collector: "these numbers are the collector's own, scraped from its telemetry endpoint, and listening shows only ports the process actually has open. the log below is the collector's output, grouped by level and filterable. restart and stop live here; the configurations screen picks what runs.",
   settings: "appearance, and how apps find compy: the advertised endpoint, its protocol, and the system-wide OTEL_* toggle. global variables are values every configuration's yaml can reference; the collector table downloads, updates, or replaces the binary every config runs on. the danger area at the bottom deletes everything compy manages.",
   editor: "a configuration is one whole collector config.yaml plus its presets: named sets of values for the ${VAR} references in the yaml. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. cmd+s saves.",
 };
-function helpKey(page) { return page === "configs" ? "compy.helpDismissed" : "compy.helpDismissed." + page; }
-function helpDismissed(page) {
-  try { return localStorage.getItem(helpKey(page)) === "1"; } catch (e) { return false; }
-}
-function setHelpDismissed(page, on) {
-  try {
-    if (on) localStorage.setItem(helpKey(page), "1");
-    else localStorage.removeItem(helpKey(page));
-  } catch (e) { /* session-only */ }
-}
 function helpButton(page) {
   return el("button", {
     class: "ico help", title: "help",
-    on: { click: () => { setHelpDismissed(page, !helpDismissed(page)); render(); } },
+    on: { click: () => { S.helpOpen[page] = !S.helpOpen[page]; render(); } },
   }, [icon("help", 14)]);
 }
 function helpStrip(page) {
-  if (helpDismissed(page)) return null;
+  if (!S.helpOpen[page]) return null;
   return el("div", { class: "gethelp" }, [
     el("span", { class: "hicon" }, [icon("help", 14)]),
     el("span", { class: "b sans", text: HELP_COPY[page] }),
     el("span", { class: "grow" }),
     el("button", {
       class: "act x", text: "✕", title: "hide this",
-      on: { click: () => { setHelpDismissed(page, true); render(); } },
+      on: { click: () => { S.helpOpen[page] = false; render(); } },
     }),
   ]);
 }
 
 function nothingActiveStrip() {
-  // D1: the prototype's wording wins over the README's prose.
-  const suggest = (S.status && S.status.config) || (S.configs[0] && S.configs[0].name) || "";
-  return el("div", { class: "empty" }, [
-    el("div", { attrs: { style: "display:flex; flex-direction:column; gap:4px;" } }, [
-      span("h", "nothing active"),
-      el("div", { class: "b sans", text: "no collector is running. activate a config and it starts." }),
-    ]),
-    el("span", { class: "grow" }),
-    suggest ? el("button", {
-      class: "btn accent", text: "activate " + suggest,
-      on: { click: () => activate(suggest, selectedPreset(byName(suggest) || { name: suggest, meta: {} })) },
-    }) : null,
-  ]);
+  // One quiet line, no box, no suggestion button: a deliberately stopped
+  // collector is a state, not a problem to nag about — the sidebar's
+  // stopped card already carries it (2026-08-27, supersedes D1).
+  return el("div", {
+    class: "quietline sans",
+    text: "nothing active. press play on a config to start the collector.",
+  });
 }
 
 function failurePanel() {
@@ -800,7 +797,7 @@ function configRow(info) {
     class: "play",
     title: alreadyRunning ? "already running" : "activate " + name + (sel ? " · " + sel : ""),
     attrs: alreadyRunning || busy ? { disabled: "" } : null,
-    on: { click: () => activate(name, sel) },
+    on: { click: () => preflightActivate(name, sel) },
   }, [icon("play", 11, true)]));
   // A pencil here read as "edit the config"; the row-level icon is now a
   // plus that adds a preset (the per-preset pencil lives in the dropdown).
@@ -846,6 +843,7 @@ function configRow(info) {
   ]));
 
   const wrap = el("div", { class: "cfg-row-wrap" }, [row]);
+  if (S.preflight && S.preflight.name === name) wrap.appendChild(preflightPanel(info));
   if (S.inline && S.inline.name === name) wrap.appendChild(inlinePresetEditor(info));
   return wrap;
 }
@@ -885,7 +883,7 @@ function presetMenu(info, list) {
       }),
       el("button", {
         class: "mini accent", title: "activate this preset",
-        on: { click: () => { S.presetsOpenId = null; activate(info.name, p); } },
+        on: { click: () => { S.presetsOpenId = null; preflightActivate(info.name, p); } },
       }, [icon("play", 11, true)]),
       el("button", {
         class: "mini", title: "edit this preset",
@@ -998,10 +996,50 @@ function yamlLineOf(yaml, key) {
 }
 
 /* ── configurations: actions ──────────────────────────────────────── */
+/* Every activation on this screen goes through the pre-flight: a config
+   whose required values are missing would start a collector that silently
+   drops everything (its exporter has nowhere to send), so ask first — an
+   inline panel under the row, never a dialog. Nothing missing → activate
+   immediately, zero friction. */
+function preflightActivate(name, preset) {
+  const info = byName(name);
+  const missing = info ? missingRequired(info, preset) : [];
+  if (!missing.length) { activate(name, preset); return; }
+  S.preflight = { name, preset, missing };
+  S.presetsOpenId = null;
+  render();
+}
+function preflightPanel(info) {
+  const p = S.preflight;
+  const names = p.missing;
+  const list = names.length === 1 ? names[0]
+    : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+  return el("div", { class: "preflight" }, [
+    el("span", { class: "q sans", text: p.name + " needs " + list + " before it can send anywhere. add a preset with values, or activate anyway." }),
+    el("span", { class: "grow" }),
+    el("button", { class: "act", text: "cancel", on: { click: () => { S.preflight = null; render(); } } }),
+    el("button", {
+      class: "btn", text: "add values",
+      on: {
+        click: () => {
+          // The existing inline preset editor: a new preset if the config
+          // has none, else the one this activation would use.
+          S.preflight = null;
+          if (presetsOf(info).length === 0) openInline(p.name, "", true);
+          else openInline(p.name, p.preset, false);
+        },
+      },
+    }),
+    el("button", {
+      class: "btn accent", text: "activate anyway",
+      on: { click: () => { S.preflight = null; activate(p.name, p.preset); } },
+    }),
+  ]);
+}
 async function activate(name, preset) {
   if (S.busyId) return; // further activations are ignored until this settles
   S.busyId = name;
-  S.err = null; S.presetsOpenId = null;
+  S.err = null; S.presetsOpenId = null; S.preflight = null;
   clearError();
   render();
   const info = byName(name);
@@ -1270,10 +1308,9 @@ function screenEditor() {
   /* Row three appears only when something is wrong, and it is a real "is
      any required value missing" check — the key's own name, not a
      name-specific special case. */
-  const missing = (info.vars || []).filter((v) => !v.has_default && !/^COMPY_/.test(v.name) && !(values[v.name] || "").trim());
+  const missing = missingRequired(info, S.preset);
   if (S.preset && missing.length) {
-    const what = missing.map((v) => v.name).join(", ");
-    band.appendChild(el("div", { class: "warn sans", text: S.preset + " has no " + what + ". activating with it will fail." }));
+    band.appendChild(el("div", { class: "warn sans", text: S.preset + " has no " + missing.join(", ") + ". activating with it will fail." }));
   }
   wrap.appendChild(band);
 
@@ -1509,13 +1546,16 @@ function screenCollector() {
         on: { click: stopCollector },
       }) : null,
     ]),
-    tiles(stopped),
   ]));
 
+  // The help strip sits in the same slot on every screen: directly under
+  // the header line, above the content — so the tiles moved out of the
+  // header block (2026-08-27 feedback).
   const chelp = helpStrip("collector");
   if (chelp) wrap.appendChild(el("div", { class: "strip-wrap" }, [chelp]));
   const cn = noteStrip();
   if (cn) wrap.appendChild(cn);
+  wrap.appendChild(el("div", { class: "tiles-wrap" }, [tiles(stopped)]));
   wrap.appendChild(healthStrip(stopped));
   wrap.appendChild(logPane(stopped));
   if (lastError) wrap.appendChild(el("div", { class: "strip-wrap" }, [errorStrip()]));
@@ -1682,11 +1722,6 @@ function envGuide() {
 
 function screenSettings() {
   const wrap = el("div", { class: "settings" });
-  const shelp = helpStrip("settings");
-  if (shelp) wrap.appendChild(el("div", { class: "strip-wrap" }, [shelp]));
-  const sn = noteStrip();
-  if (sn) wrap.appendChild(sn);
-
   wrap.appendChild(el("div", { class: "sec" }, [
     el("div", { attrs: { style: "display:flex; align-items:center; gap:12px;" } }, [
       span("title", "app"),
@@ -1695,6 +1730,13 @@ function screenSettings() {
     ]),
     el("div", { class: "subtitle sans", text: "appearance, and how apps find compy." }),
   ]));
+
+  // Help under the header, above the content — the same slot as every
+  // other screen (it used to sit above the title; 2026-08-27 feedback).
+  const shelp = helpStrip("settings");
+  if (shelp) wrap.appendChild(el("div", { class: "strip-wrap" }, [shelp]));
+  const sn = noteStrip();
+  if (sn) wrap.appendChild(sn);
 
   const themeNote = S.theme === "system" ? "following macOS — currently " + osTheme() : "always " + S.theme;
   const seg = el("div", { class: "seg" });
@@ -2127,7 +2169,7 @@ function refreshBlocked() {
   const a = document.activeElement;
   const inField = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
   return inField || S.busyId || S.saving || S.restarting || S.presetsOpenId || S.inline
-    || S.confirm || S.newOpen || S.unlockAsk || S.resetArm || S.resetBusy
+    || S.confirm || S.preflight || S.newOpen || S.unlockAsk || S.resetArm || S.resetBusy
     || document.querySelector("dialog[open]")
     || (S.screen === "editor" && cmDirty);
 }
@@ -2158,6 +2200,7 @@ document.addEventListener("click", (e) => {
 // preventDefault always, so the browser's save dialog never opens; outside
 // the editor the shortcut otherwise does nothing. No other shortcuts.
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && S.preflight) { S.preflight = null; render(); return; }
   if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
     e.preventDefault();
     if (S.screen !== "editor") return;
