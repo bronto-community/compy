@@ -2440,8 +2440,9 @@ func TestFactoryReset(t *testing.T) {
 		if info.Provenance != "shipped" || info.Modified {
 			t.Errorf("config %s: provenance=%s modified=%v, want pristine shipped", info.Name, info.Provenance, info.Modified)
 		}
-		if len(info.Meta.Presets) != 0 {
-			t.Errorf("config %s kept presets %v", info.Name, info.Meta.Presets)
+		// Fresh configs start with exactly the empty default preset.
+		if len(info.Meta.Presets) != 1 || len(info.Meta.Presets["default"]) != 0 || info.Meta.ActivePreset != "default" {
+			t.Errorf("config %s presets = %+v active=%q, want just an empty default", info.Name, info.Meta.Presets, info.Meta.ActivePreset)
 		}
 	}
 	if want := []string{"bronto", "debug", "otlp"}; !slices.Equal(names, want) {
@@ -2622,5 +2623,78 @@ func TestPutSettingsProtocolSwitchOSEnv(t *testing.T) {
 		if strings.Contains(c, "INSECURE") {
 			t.Errorf("OTEL_EXPORTER_OTLP_INSECURE must not be set (http:// scheme already means plaintext): %v", c)
 		}
+	}
+}
+
+// Activate with an empty preset resolves the config's real active preset —
+// the guaranteed default — and records it. An empty default preset produces
+// exactly the environment a preset-less activation used to: compy's port
+// variables, nothing else.
+func TestActivateEmptyPresetUsesDefault(t *testing.T) {
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	port := listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatalf("Activate(debug, \"\") = %v, want nil", err)
+	}
+	name, preset, err := a.ActiveConfig()
+	if err != nil || name != "debug" || preset != "default" {
+		t.Errorf("ActiveConfig() = %q,%q,%v, want debug,default", name, preset, err)
+	}
+	if st, err := a.Status(); err != nil || st.Preset != "default" {
+		t.Errorf("Status().Preset = %q (%v), want default", st.Preset, err)
+	}
+
+	// activationEnv equivalence: the plist's environment dict holds exactly
+	// compy's two port variables — what the old no-preset activation set.
+	plist := readPlist(t)
+	i := strings.Index(plist, "<key>EnvironmentVariables</key>")
+	if i < 0 {
+		t.Fatalf("plist has no EnvironmentVariables:\n%s", plist)
+	}
+	env := plist[i:]
+	if j := strings.Index(env, "</dict>"); j >= 0 {
+		env = env[:j]
+	}
+	if got := strings.Count(env, "<key>") - 1; got != 2 { // -1 for the dict's own key
+		t.Errorf("env dict has %d keys, want exactly COMPY_GRPC_PORT and COMPY_HTTP_PORT:\n%s", got, env)
+	}
+	if !strings.Contains(env, "<key>COMPY_GRPC_PORT</key><string>"+strconv.Itoa(port)+"</string>") ||
+		!strings.Contains(env, "<key>COMPY_HTTP_PORT</key>") {
+		t.Errorf("env dict missing compy's ports:\n%s", env)
+	}
+}
+
+// app.New backfills the every-config-has-a-preset invariant onto a
+// pre-invariant config found on disk.
+func TestNewBackfillsPresetlessConfig(t *testing.T) {
+	setup(t, "")
+	home := os.Getenv("COMPY_HOME")
+	dir := filepath.Join(home, "configs", "old")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("receivers: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(`{"presets":{},"active_preset":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, _, err := a.Config("old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Meta.Presets) != 1 || len(info.Meta.Presets["default"]) != 0 || info.Meta.ActivePreset != "default" {
+		t.Errorf("backfilled meta = %+v, want an empty active default preset", info.Meta)
 	}
 }

@@ -937,7 +937,7 @@
         }
       },
       "delete": {
-        "summary": "Delete a preset (never the active one)",
+        "summary": "Delete a preset (never the last one, nor the active one)",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
           { "name": "preset", "in": "path", "required": true, "schema": { "type": "string" } }

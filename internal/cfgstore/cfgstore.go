@@ -48,10 +48,9 @@ type Info struct {
 // this preset would leave without a value: no `${VAR:-default}` fallback in
 // the yaml (vars.Var.HasDefault false), not compy-injected (COMPY_*), and
 // empty or absent in the preset. An empty preset name resolves to the
-// config's active preset, exactly as Activate does; a config with no
-// presets checks against no values at all. Callers decide what to do with
-// the answer: the window asks before activating, the CLI warns and
-// proceeds.
+// config's active preset, exactly as Activate does — and every config has
+// one (EnsurePresets). Callers decide what to do with the answer: the
+// window asks before activating, the CLI warns and proceeds.
 func MissingRequired(info Info, preset string) []string {
 	if preset == "" {
 		preset = info.Meta.ActivePreset
@@ -183,6 +182,70 @@ func readMeta(root, name string) (Meta, error) {
 	return m, nil
 }
 
+// DefaultPreset is the preset every configuration starts with. Its empty
+// values make activation behave exactly as a preset-less config once did:
+// no variables in the environment beyond compy's own COMPY_* ports.
+const DefaultPreset = "default"
+
+// ensureDefaultPreset enforces the invariant that a configuration always
+// has at least one preset and an active_preset naming one of them: an empty
+// preset map gains {"default": {}}, and an active_preset naming no existing
+// preset is repointed ("default" when present, else the first name in
+// sorted order — deterministic). Reports whether m changed.
+func ensureDefaultPreset(m *Meta) bool {
+	changed := false
+	if len(m.Presets) == 0 {
+		m.Presets = map[string]map[string]string{DefaultPreset: {}}
+		changed = true
+	}
+	if _, ok := m.Presets[m.ActivePreset]; !ok {
+		if _, ok := m.Presets[DefaultPreset]; ok {
+			m.ActivePreset = DefaultPreset
+		} else {
+			m.ActivePreset = slices.Min(slices.Collect(maps.Keys(m.Presets)))
+		}
+		changed = true
+	}
+	return changed
+}
+
+// withDefaultPreset is ensureDefaultPreset for the meta a creation path is
+// about to write.
+func withDefaultPreset(m Meta) Meta {
+	ensureDefaultPreset(&m)
+	return m
+}
+
+// EnsurePresets backfills the every-config-has-a-preset invariant onto
+// configs written before it existed (app.New runs it once per start): any
+// config on disk with no presets gets presets {"default": {}} and
+// active_preset "default". Deterministic and idempotent; a repair, not an
+// event, so nothing is logged.
+func EnsurePresets(root string) error {
+	entries, err := os.ReadDir(Dir(root))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !exists(root, e.Name()) {
+			continue
+		}
+		m, err := readMeta(root, e.Name())
+		if err != nil {
+			return err
+		}
+		if ensureDefaultPreset(&m) {
+			if err := writeMeta(root, e.Name(), m); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func writeMeta(root, name string, m Meta) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -301,7 +364,7 @@ func Create(root, name, yaml string) error {
 	if err := writeYAMLFile(root, name, yaml); err != nil {
 		return err
 	}
-	return writeMeta(root, name, Meta{Presets: map[string]map[string]string{}})
+	return writeMeta(root, name, withDefaultPreset(Meta{}))
 }
 
 // CreateFromURL fetches yaml from url and creates a new remote configuration,
@@ -326,11 +389,10 @@ func CreateFromURL(root, name, url string, fetch Fetch) error {
 	if err := writeYAMLFile(root, name, yaml); err != nil {
 		return err
 	}
-	return writeMeta(root, name, Meta{
+	return writeMeta(root, name, withDefaultPreset(Meta{
 		RemoteURL:      url,
 		PristineSHA256: hashOf(yaml),
-		Presets:        map[string]map[string]string{},
-	})
+	}))
 }
 
 // Copy duplicates src's YAML and presets into a new local
@@ -360,10 +422,10 @@ func Copy(root, src, dst string) error {
 	for name, kv := range srcMeta.Presets {
 		presets[name] = maps.Clone(kv)
 	}
-	return writeMeta(root, dst, Meta{
+	return writeMeta(root, dst, withDefaultPreset(Meta{
 		Presets:      presets,
 		ActivePreset: srcMeta.ActivePreset,
-	})
+	}))
 }
 
 // Delete removes a configuration entirely.
@@ -558,8 +620,9 @@ func WritePreset(root, name, preset string, values map[string]string) error {
 	return writeMeta(root, name, m)
 }
 
-// DeletePreset removes a preset. It errors if the preset is the active preset
-// or does not exist.
+// DeletePreset removes a preset. It errors if the preset does not exist, is
+// the last one (every configuration keeps at least one preset), or is the
+// active preset.
 func DeletePreset(root, name, preset string) error {
 	if err := validateName(name); err != nil {
 		return err
@@ -573,6 +636,9 @@ func DeletePreset(root, name, preset string) error {
 	}
 	if _, ok := m.Presets[preset]; !ok {
 		return userErrf("config %q has no preset %q", name, preset)
+	}
+	if len(m.Presets) == 1 {
+		return userErrf("a configuration keeps at least one preset; edit it or add another first")
 	}
 	if preset == m.ActivePreset {
 		return userErrf("cannot delete active preset %q", preset)
@@ -748,10 +814,9 @@ func MaterializeDefaults(root string) error {
 			if err := writeYAMLFile(root, name, embedYAML); err != nil {
 				return err
 			}
-			if err := writeMeta(root, name, Meta{
+			if err := writeMeta(root, name, withDefaultPreset(Meta{
 				PristineSHA256: hashOf(embedYAML),
-				Presets:        map[string]map[string]string{},
-			}); err != nil {
+			})); err != nil {
 				return err
 			}
 			continue

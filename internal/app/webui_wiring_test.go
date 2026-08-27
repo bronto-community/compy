@@ -169,3 +169,39 @@ func TestWebUIWiring(t *testing.T) {
 		t.Fatalf("config detail = %v, want preset \"staging\" with HOST intact after rename", detail)
 	}
 }
+
+// Deleting a configuration's last preset is refused end-to-end — 400 with
+// the keeps-at-least-one message. This closes the old API/UI divergence:
+// the API allowed deleting the last preset while the UI refused it.
+func TestWebUIDeleteLastPresetRefused(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(webui.Handler(a.WebUIAPI()))
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/api/configs/debug/presets/default", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("DELETE last preset = %d, want 400", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	msg, _ := body["error"].(string)
+	if !strings.Contains(msg, "at least one preset") {
+		t.Fatalf("error = %q, want the keeps-at-least-one message", msg)
+	}
+}

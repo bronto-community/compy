@@ -860,3 +860,159 @@ func TestMissingRequired(t *testing.T) {
 		t.Errorf("no presets: got %v, want BRONTO_KEY and OTLP_ENDPOINT", got)
 	}
 }
+
+// Every creation path yields a config with the default preset present and
+// active — the every-config-has-a-preset invariant.
+func TestCreationPathsWriteDefaultPreset(t *testing.T) {
+	wantDefault := func(t *testing.T, root, name string) {
+		t.Helper()
+		info, _, err := Get(root, name)
+		if err != nil {
+			t.Fatalf("Get %s: %v", name, err)
+		}
+		if len(info.Meta.Presets) == 0 {
+			t.Fatalf("%s has no presets: %+v", name, info.Meta)
+		}
+		if _, ok := info.Meta.Presets[info.Meta.ActivePreset]; !ok {
+			t.Fatalf("%s active preset %q does not exist: %+v", name, info.Meta.ActivePreset, info.Meta.Presets)
+		}
+	}
+
+	root := t.TempDir()
+	if err := Create(root, "local", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	wantDefault(t, root, "local")
+	info, _, _ := Get(root, "local")
+	if len(info.Meta.Presets) != 1 || len(info.Meta.Presets["default"]) != 0 || info.Meta.ActivePreset != "default" {
+		t.Fatalf("Create meta = %+v, want just an empty active default preset", info.Meta)
+	}
+
+	fetch := func(url string) ([]byte, error) { return []byte("content: v1\n"), nil }
+	if err := CreateFromURL(root, "remote", "https://example.com/c.yaml", fetch); err != nil {
+		t.Fatal(err)
+	}
+	wantDefault(t, root, "remote")
+
+	if err := Copy(root, "local", "copied"); err != nil {
+		t.Fatal(err)
+	}
+	wantDefault(t, root, "copied")
+
+	// Copy guarantees the invariant even from a hand-broken source.
+	if err := os.WriteFile(metaPath(root, "local"), []byte(`{"presets":{},"active_preset":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Copy(root, "local", "copied-from-broken"); err != nil {
+		t.Fatal(err)
+	}
+	wantDefault(t, root, "copied-from-broken")
+
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"debug", "otlp", "bronto"} {
+		wantDefault(t, root, name)
+	}
+}
+
+// EnsurePresets repairs configs written before the invariant: zero presets
+// gain {"default": {}} with active_preset "default", a dangling
+// active_preset is repointed, and healthy configs are left byte-identical.
+// Running it twice changes nothing (idempotent).
+func TestEnsurePresetsBackfill(t *testing.T) {
+	root := t.TempDir()
+
+	write := func(name, meta string) {
+		t.Helper()
+		if err := os.MkdirAll(configDir(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(yamlPath(root, name), []byte("receivers: {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if meta != "" {
+			if err := os.WriteFile(metaPath(root, name), []byte(meta), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write("empty", `{"presets":{},"active_preset":""}`)
+	write("nometa", "")
+	write("dangling", `{"presets":{"prod":{"K":"v"}},"active_preset":"gone"}`)
+	write("healthy", `{"presets":{"prod":{"K":"v"}},"active_preset":"prod"}`)
+	healthyBefore, err := os.ReadFile(metaPath(root, "healthy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsurePresets(root); err != nil {
+		t.Fatalf("EnsurePresets: %v", err)
+	}
+
+	for _, name := range []string{"empty", "nometa"} {
+		info, _, err := Get(root, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(info.Meta.Presets) != 1 || len(info.Meta.Presets["default"]) != 0 || info.Meta.ActivePreset != "default" {
+			t.Errorf("%s after backfill = %+v, want an empty active default preset", name, info.Meta)
+		}
+	}
+	info, _, err := Get(root, "dangling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Meta.ActivePreset != "prod" || info.Meta.Presets["prod"]["K"] != "v" {
+		t.Errorf("dangling after backfill = %+v, want active repointed to prod", info.Meta)
+	}
+	if after, _ := os.ReadFile(metaPath(root, "healthy")); string(after) != string(healthyBefore) {
+		t.Errorf("healthy meta rewritten by backfill:\n%s", after)
+	}
+
+	// Idempotent: a second run changes no file.
+	before := map[string]string{}
+	for _, name := range []string{"empty", "nometa", "dangling", "healthy"} {
+		data, err := os.ReadFile(metaPath(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[name] = string(data)
+	}
+	if err := EnsurePresets(root); err != nil {
+		t.Fatalf("EnsurePresets (second run): %v", err)
+	}
+	for name, want := range before {
+		if got, _ := os.ReadFile(metaPath(root, name)); string(got) != want {
+			t.Errorf("%s changed on the second run:\n%s", name, got)
+		}
+	}
+}
+
+// The last preset cannot be deleted: a configuration keeps at least one.
+func TestDeleteLastPresetRefused(t *testing.T) {
+	root := t.TempDir()
+	if err := Create(root, "cfg", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := DeletePreset(root, "cfg", "default")
+	if err == nil || !strings.Contains(err.Error(), "at least one preset") {
+		t.Fatalf("DeletePreset last = %v, want the keeps-at-least-one refusal", err)
+	}
+	if !state.IsBadRequest(err) {
+		t.Errorf("DeletePreset last: not marked BadRequest: %v", err)
+	}
+
+	// With a second preset the non-active one deletes fine, and the survivor
+	// is then refused again.
+	if err := WritePreset(root, "cfg", "extra", map[string]string{"K": "v"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeletePreset(root, "cfg", "extra"); err != nil {
+		t.Fatalf("DeletePreset non-last: %v", err)
+	}
+	if err := DeletePreset(root, "cfg", "default"); err == nil {
+		t.Fatal("DeletePreset survivor: want refusal, got nil")
+	}
+}
