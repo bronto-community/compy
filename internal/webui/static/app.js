@@ -688,7 +688,18 @@ function screenConfigs() {
     ]),
     el("div", { attrs: { style: "display:flex; align-items:center; gap:18px; font-size:12px;" } }, [
       helpButton("configs"),
-      el("button", { class: "act", text: "sync all", on: { click: syncAll } }),
+      // Mirrors the app layer's SyncAll rule exactly: only an unmodified
+      // config with a remote URL qualifies. Zero qualifying → disabled,
+      // like the per-row sync icons.
+      (() => {
+        const any = S.configs.some((c) => (c.meta && c.meta.remote_url) && !c.modified);
+        return el("button", {
+          class: "act", text: "sync all",
+          title: any ? "re-fetch every unmodified remote config" : "nothing to sync — no unmodified remote configs",
+          attrs: any ? null : { disabled: "" },
+          on: { click: syncAll },
+        });
+      })(),
       el("button", { class: "act primary", text: "new configuration", on: { click: openNew } }),
     ]),
   ]));
