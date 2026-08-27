@@ -15,6 +15,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -124,6 +126,12 @@ func EnsureVersion(root string, base Def, version string, fetch Fetch, progress 
 		return Ensure(root, base, fetch, progress)
 	}
 	d := DefForVersion(base, version)
+	// Already installed: done — before the .sha256 fetch, so the idempotent
+	// path stays offline like Ensure's.
+	binPath := filepath.Join(root, "distros", d.Name+"-"+d.Version, d.Binary)
+	if _, err := os.Stat(binPath); err == nil {
+		return binPath, nil
+	}
 	plat := platformKey()
 	url, ok := d.URLs[plat]
 	if !ok {

@@ -854,9 +854,40 @@ func (a *App) EnsureDistro(name string, progress distro.Progress) (string, error
 					progress(done, total)
 				}
 			}
-			path, err := distro.EnsureVersion(a.Dir, d, distro.EffectiveVersion(d, s), a.fetchFn(), track)
+			// A first download goes straight to the newest release the
+			// persisted check knows — one download, no install-then-update
+			// hop. An already-installed binary is returned as-is: switching
+			// versions is UpdateDistro's job, never a fetch side effect.
+			//
+			// Trust model: the compiled-in pin is verified against its
+			// compiled-in sha256; any other release is verified against the
+			// .sha256 asset published next to its tarball in the same
+			// upstream release (TLS, same origin) — the pulled-update path.
+			target := distro.EffectiveVersion(d, s)
+			if distro.InstalledPath(a.Dir, d, s) == "" {
+				if chk, _ := state.LoadUpdateCheck(); distro.NewerVersion(chk.Latest, target) {
+					target = chk.Latest
+				}
+			}
+			path, err := distro.EnsureVersion(a.Dir, d, target, a.fetchFn(), track)
 			if began {
 				a.endDownload(name, err)
+			}
+			if err == nil && target != distro.EffectiveVersion(d, s) {
+				// Record the pulled version so the registry, later
+				// resolutions, and update checks all agree on what is
+				// installed (fresh load: settings may have moved meanwhile).
+				cur, lerr := state.LoadSettings()
+				if lerr != nil {
+					return "", lerr
+				}
+				if cur.DistroVersions == nil {
+					cur.DistroVersions = map[string]string{}
+				}
+				cur.DistroVersions[d.Name] = target
+				if serr := state.SaveSettings(cur); serr != nil {
+					return "", serr
+				}
 			}
 			return path, err
 		}
@@ -936,16 +967,33 @@ func (a *App) Distros() ([]map[string]any, error) {
 			"downloaded": d.Path != "",
 			"user_entry": isUserEntry[d.Name],
 		}
-		// Availability rides only on the updatable rows — pinned definitions
-		// not overridden by a user entry. The bundled collector updates with
-		// compy and user paths are the user's to update; NewerVersion never
-		// claims on a malformed/unknown current version.
+		// An update claim rides only on INSTALLED updatable rows — pinned
+		// definitions, downloaded, not overridden by a user entry. The
+		// bundled collector updates with compy, user paths are the user's to
+		// update, and an undownloaded row has nothing to update: it instead
+		// advertises what a download would fetch (fetch_version — the
+		// persisted latest when a check has run, else the compiled-in pin,
+		// flagged fetch_pinned so the UI can say which it is). NewerVersion
+		// never claims on a malformed/unknown version on either side.
 		if isDef && !isUserEntry[d.Name] {
 			if !chk.CheckedAt.IsZero() {
 				row["checked_at"] = chk.CheckedAt.Format(time.RFC3339)
 			}
-			if distro.NewerVersion(chk.Latest, version) {
-				row["latest_available"] = chk.Latest
+			if d.Path != "" {
+				if distro.NewerVersion(chk.Latest, version) {
+					row["latest_available"] = chk.Latest
+				}
+			} else {
+				row["version"] = "" // nothing installed — no version claim
+				if distro.Available(def) {
+					fv := version
+					if chk.Latest == "" {
+						row["fetch_pinned"] = true
+					} else if distro.NewerVersion(chk.Latest, fv) {
+						fv = chk.Latest
+					}
+					row["fetch_version"] = fv
+				}
 			}
 		}
 		// A download this process started without the settings screen's
@@ -1136,8 +1184,10 @@ func (a *App) UseDistro(name string) error {
 }
 
 // updatableDef returns the shipped definition behind name when `compy
-// distro update` applies to it. The bundled collector and user-managed
-// entries are refused with a message the UI shows verbatim.
+// distro update` applies to it. The bundled collector, user-managed
+// entries, and undownloaded definitions (nothing installed to update — a
+// download fetches the newest release directly) are refused with a message
+// the UI shows verbatim.
 func (a *App) updatableDef(name string) (distro.Def, error) {
 	if name == distro.BundledName {
 		return distro.Def{}, state.BadRequest(errors.New("the bundled collector updates with compy releases"))
@@ -1153,6 +1203,13 @@ func (a *App) updatableDef(name string) (distro.Def, error) {
 		if d.Name == name {
 			if !distro.Available(d) {
 				return distro.Def{}, state.BadRequest(fmt.Errorf("distro %q has no build for this platform", name))
+			}
+			s, err := state.LoadSettings()
+			if err != nil {
+				return distro.Def{}, err
+			}
+			if distro.InstalledPath(a.Dir, d, s) == "" {
+				return distro.Def{}, state.BadRequest(fmt.Errorf("distro %q is not downloaded — a download fetches the newest release directly", name))
 			}
 			return d, nil
 		}
@@ -1215,7 +1272,12 @@ func (a *App) UpdateAvailable() (string, error) {
 		if slices.ContainsFunc(user, func(u state.Distro) bool { return u.Name == d.Name }) {
 			continue // user-managed override: theirs to update
 		}
-		if distro.Available(d) && distro.NewerVersion(chk.Latest, distro.EffectiveVersion(d, s)) {
+		// Only an INSTALLED distro can be outdated: an undownloaded one has
+		// nothing to update (its first download fetches the latest directly).
+		if distro.InstalledPath(a.Dir, d, s) == "" {
+			continue
+		}
+		if distro.NewerVersion(chk.Latest, distro.EffectiveVersion(d, s)) {
 			return chk.Latest, nil
 		}
 	}

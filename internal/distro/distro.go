@@ -166,6 +166,16 @@ func EffectiveVersion(d Def, s state.Settings) string {
 	return d.Version
 }
 
+// InstalledPath returns the path of d's binary as installed under root at
+// its version in effect, "" when that version is not downloaded there.
+func InstalledPath(root string, d Def, s state.Settings) string {
+	p := filepath.Join(root, "distros", d.Name+"-"+EffectiveVersion(d, s), d.Binary)
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	return p
+}
+
 // Registry returns the bundled distro (BundledName, Path "" when not built
 // next to the executable) followed by state.LoadDistros() merged with
 // Defs(): definition entries appear with Path set to their installed path
@@ -200,12 +210,7 @@ func Registry(root string) ([]state.Distro, error) {
 			out = append(out, u)
 			continue
 		}
-		ver := EffectiveVersion(d, s)
-		path := filepath.Join(root, "distros", d.Name+"-"+ver, d.Binary)
-		if _, err := os.Stat(path); err != nil {
-			path = ""
-		}
-		out = append(out, state.Distro{Name: d.Name, Path: path})
+		out = append(out, state.Distro{Name: d.Name, Path: InstalledPath(root, d, s)})
 	}
 	for _, u := range user {
 		if !seen[u.Name] {
