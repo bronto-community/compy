@@ -21,6 +21,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/bronto-io/compy/internal/app"
+	"github.com/bronto-io/compy/internal/cfgstore"
 	"github.com/bronto-io/compy/internal/envvars"
 	"github.com/bronto-io/compy/internal/launchd"
 	"github.com/bronto-io/compy/internal/state"
@@ -121,7 +122,18 @@ func run(args []string) error {
 		if len(rest) == 2 {
 			preset = rest[1]
 		}
-		return withApp(func(a *app.App) error { return a.Activate(rest[0], preset) })
+		return withApp(func(a *app.App) error {
+			// Activation pre-flight, warn-only: a required var (no yaml
+			// fallback) with no preset value starts a collector that
+			// silently drops everything its exporter can't send. The
+			// window asks first; the CLI names each gap and proceeds.
+			if info, _, err := a.Config(rest[0]); err == nil {
+				for _, v := range cfgstore.MissingRequired(info, preset) {
+					fmt.Fprintf(os.Stderr, "warning: no value for %s (no default in the yaml)\n", v)
+				}
+			}
+			return a.Activate(rest[0], preset)
+		})
 	case "vars":
 		if len(rest) != 1 {
 			return errors.New("vars: need <config>")

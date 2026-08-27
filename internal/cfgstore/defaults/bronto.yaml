@@ -9,7 +9,7 @@ exporters:
   otlphttp:
     endpoint: ${env:BRONTO_ENDPOINT:-https://ingestion.eu.bronto.io}  # Bronto ingestion endpoint
     headers:
-      X-BRONTO-API-KEY: ${env:BRONTO_API_KEY:-}  # Bronto API key
+      X-BRONTO-API-KEY: ${env:BRONTO_API_KEY}  # Bronto API key (required)
 service:
   pipelines:
     traces: {receivers: [otlp], exporters: [otlphttp]}
