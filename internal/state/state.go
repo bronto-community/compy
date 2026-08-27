@@ -24,6 +24,13 @@ type Settings struct {
 	// Recent is the configurations that have run, most recent first. The
 	// menu bar orders by it (the window sorts alphabetically everywhere).
 	Recent []string `json:"recent,omitempty"`
+
+	// DistroVersions records pulled-update versions per shipped distro name
+	// (`compy distro update`); a missing entry means the pinned version.
+	// It lives in settings.json so the last-good snapshot/restore covers it:
+	// an update whose collector fails to start rolls back with the rest of
+	// the setup.
+	DistroVersions map[string]string `json:"distro_versions,omitempty"`
 }
 
 // recentCap is how many configurations Recent keeps. The menu shows ten and

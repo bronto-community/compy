@@ -2,6 +2,7 @@ package webui
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,6 +56,9 @@ func fakeAPI() API {
 		UseDistro:        func(name string) error { return nil },
 		FetchDistro:      func(name string) error { return nil },
 		DownloadProgress: func(name string) (any, error) { return map[string]any{"status": "idle", "pct": 0}, nil },
+
+		CheckDistroUpdate: func(name string) (string, string, error) { return "0.135.0", "0.135.0", nil },
+		UpdateDistro:      func(name string) (string, string, bool, error) { return "0.135.0", "0.135.0", false, nil },
 	}
 }
 
@@ -1099,6 +1103,62 @@ func TestDownloadProgressRoute(t *testing.T) {
 	}
 	if gotName != "otelcol-k8s" || body["status"] != "downloading" || body["pct"] != float64(51) {
 		t.Fatalf("progress for %q = %v", gotName, body)
+	}
+}
+
+// TestDistroUpdateRoutes: GET checks, POST pulls — the no-op answer
+// (started false, current == latest) is a 200 the screen turns into an
+// "already newest" note, and a refusal (the bundled collector, a
+// user-managed entry) is a 400 whose message is the whole answer.
+func TestDistroUpdateRoutes(t *testing.T) {
+	api := fakeAPI()
+	api.CheckDistroUpdate = func(name string) (string, string, error) {
+		if name == "compy" {
+			return "", "", markBadRequest(fmt.Errorf("the bundled collector updates with compy releases"))
+		}
+		return "0.135.0", "0.160.0", nil
+	}
+	var started string
+	api.UpdateDistro = func(name string) (string, string, bool, error) {
+		started = name
+		return "0.135.0", "0.160.0", true, nil
+	}
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/distros/otlp/update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || body["current"] != "0.135.0" || body["latest"] != "0.160.0" {
+		t.Fatalf("GET update = %d %v", resp.StatusCode, body)
+	}
+
+	resp, err = http.Post(srv.URL+"/api/distros/otlp/update", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = nil
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || body["started"] != true || started != "otlp" {
+		t.Fatalf("POST update = %d %v (started %q)", resp.StatusCode, body, started)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/distros/compy/update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("GET update compy = %d, want 400", resp.StatusCode)
 	}
 }
 

@@ -171,8 +171,9 @@ func (a *App) installedDistro() string {
 	if err != nil {
 		return ""
 	}
+	want := effectiveDistro(s)
 	for _, d := range reg {
-		if d.Name != s.Distro || d.Path == "" {
+		if d.Name != want || d.Path == "" {
 			continue
 		}
 		if _, err := os.Stat(d.Path); err == nil {

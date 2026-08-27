@@ -107,8 +107,10 @@
         "properties": {
           "name": { "type": "string" },
           "path": { "type": "string" },
+          "version": { "type": "string", "description": "The version in effect: a pinned definition's compiled-in version or its pulled update, the bundled collector's build stamp (\"unknown\" when the stamp file is missing). Empty for user-managed entries and for the bundled collector when it is not built." },
           "selected": { "type": "boolean" },
           "definition": { "type": "boolean" },
+          "bundled": { "type": "boolean", "description": "True for the collector shipped with compy (otelcol-compy, resolved next to the compy executable, never downloaded — it updates with compy releases), unless a user entry overrides the name." },
           "available": { "type": "boolean" },
           "downloaded": { "type": "boolean" },
           "user_entry": {
@@ -1107,6 +1109,59 @@
           "200": {
             "description": "Accepted \u2014 the download has started (or the binary was already present). Nothing else is reported here: an unknown name, a checksum mismatch or a network failure all surface through .../progress as status \"failed\", since this request is long gone by then."
           }
+        }
+      }
+    },
+    "/api/distros/{name}/update": {
+      "get": {
+        "summary": "Check the latest upstream release for a pinned distro (core, contrib, otlp) \u2014 on demand, downloads nothing",
+        "description": "The version in effect and the newest upstream release of open-telemetry/opentelemetry-collector-releases. 400 for the bundled collector (it updates with compy releases), a user-managed entry, or an unknown name; a network failure or rate limit is an honest error, never a claim about versions.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "current": { "type": "string" },
+                    "latest": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Not updatable: the bundled collector, a user-managed entry, or an unknown name", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "500": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "post": {
+        "summary": "Pull the latest upstream release of a pinned distro (returns at once when newer; poll .../progress)",
+        "description": "Checks synchronously; started false with current == latest means already newest (nothing to do). Otherwise the tarball downloads in the background \u2014 verified against the .sha256 checksum asset published in the same upstream release \u2014 into its own versioned directory, becomes the version in effect, and, when this distro is the collector in use and the job is running, the service re-applies onto it (a new collector that fails to start rolls the update back with the last-good restore; a stopped collector stays stopped).",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "current": { "type": "string" },
+                    "latest": { "type": "string" },
+                    "started": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Not updatable: the bundled collector, a user-managed entry, or an unknown name", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "500": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     }

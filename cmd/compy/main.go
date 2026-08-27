@@ -54,6 +54,7 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy distro set-path <name> <path>
   compy distro remove <name>
   compy distro use|fetch <name>
+  compy distro update [--check] <name>
   compy service install|uninstall|status
   compy env [--shell sh|fish|pwsh]
   compy env set-os | unset-os
@@ -530,15 +531,22 @@ func cmdDistro(args []string) error {
 				if d["selected"] == true {
 					mark = "*"
 				}
+				ver, _ := d["version"].(string)
 				note := "user"
-				if d["definition"] == true {
+				if d["bundled"] == true {
+					if d["downloaded"] == true {
+						note = "shipped with compy (" + ver + ")"
+					} else {
+						note = "not built — packaging/collector/build.sh"
+					}
+				} else if d["definition"] == true {
 					switch {
 					case d["available"] != true:
 						note = "unavailable on this platform"
 					case d["downloaded"] == true:
-						note = "downloaded"
+						note = "downloaded (" + ver + ")"
 					default:
-						note = "available (downloads on first use)"
+						note = "available (downloads on first use, " + ver + ")"
 					}
 				}
 				fmt.Fprintf(w, "%s %s\t%s\t%s\n", mark, d["name"], note, d["path"])
@@ -610,6 +618,53 @@ func cmdDistro(args []string) error {
 				return err
 			}
 			fmt.Println(path)
+			return nil
+		})
+	case "update":
+		check := false
+		rest := args[1:]
+		if len(rest) > 0 && rest[0] == "--check" {
+			check = true
+			rest = rest[1:]
+		}
+		if len(rest) != 1 {
+			return errors.New("distro update: need [--check] <name>")
+		}
+		name := rest[0]
+		return withApp(func(a *app.App) error {
+			if check {
+				current, latest, err := a.CheckDistroUpdate(name)
+				if err != nil {
+					return err
+				}
+				if current == latest {
+					fmt.Printf("%s is already the newest release (%s)\n", name, current)
+				} else {
+					fmt.Printf("%s %s → %s available (run `compy distro update %s`)\n", name, current, latest, name)
+				}
+				return nil
+			}
+			last := -1
+			current, latest, updated, err := a.UpdateDistro(name, func(done, total int64) {
+				if total <= 0 {
+					return
+				}
+				if pct := int(done * 100 / total); pct != last {
+					last = pct
+					fmt.Fprintf(os.Stderr, "\rdownloading %s… %d%%", name, pct)
+				}
+			})
+			if last >= 0 {
+				fmt.Fprintln(os.Stderr)
+			}
+			if err != nil {
+				return err
+			}
+			if !updated {
+				fmt.Printf("%s is already the newest release (%s)\n", name, current)
+			} else {
+				fmt.Printf("%s updated %s → %s\n", name, current, latest)
+			}
 			return nil
 		})
 	default:
