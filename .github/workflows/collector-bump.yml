@@ -1,0 +1,69 @@
+# Weekly check for a newer upstream collector release. When one exists,
+# .github/scripts/bump-collector.py rewrites the OCB manifest and the
+# pinned distro definitions (fetching the real per-asset sha256 values) and
+# the job opens a PR with the result. No newer release means a clean exit.
+#
+# Note: PRs opened with the default GITHUB_TOKEN do not trigger CI (GitHub
+# blocks workflow-on-workflow recursion). Set the BUMP_PR_TOKEN secret to a
+# PAT with contents+pull-requests write to get CI on bump PRs, or nudge the
+# PR manually (close/reopen, or push an empty commit).
+name: Collector bump
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find the latest collector release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Plain v0.x.y tags only: the repo also tags cmd/builder/v0.x.y
+          # and cmd/opampsupervisor/v0.x.y in the same listing.
+          tag=$(gh api 'repos/open-telemetry/opentelemetry-collector-releases/releases?per_page=30' \
+            --jq '[.[] | select(.prerelease | not) | .tag_name | select(startswith("v"))][0]')
+          new=${tag#v}
+          cur=$(sed -n 's/^  version: //p' packaging/collector/manifest.yaml)
+          echo "current $cur, latest $new"
+          if [ -z "$new" ] || [ "$new" = "$cur" ] || \
+             [ "$(printf '%s\n%s\n' "$cur" "$new" | sort -V | tail -n1)" != "$new" ]; then
+            echo "nothing to bump"
+            echo "new=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          echo "cur=$cur" >> "$GITHUB_OUTPUT"
+      - name: Apply the bump
+        if: steps.latest.outputs.new != ''
+        run: python3 .github/scripts/bump-collector.py '${{ steps.latest.outputs.new }}'
+      - name: Open PR
+        if: steps.latest.outputs.new != ''
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.BUMP_PR_TOKEN || github.token }}
+          branch: collector-bump/v${{ steps.latest.outputs.new }}
+          commit-message: "chore: bump collector to v${{ steps.latest.outputs.new }}"
+          title: "Bump collector to v${{ steps.latest.outputs.new }}"
+          body: |
+            Automated bump of the pinned OpenTelemetry Collector from
+            v${{ steps.latest.outputs.cur }} to v${{ steps.latest.outputs.new }}.
+
+            - `packaging/collector/manifest.yaml`: every component pin,
+              including the paired 1.x confmap-provider line read from the
+              upstream otelcol manifest at the new tag.
+            - `internal/distro/defs.go`: pinned versions, download URLs, and
+              per-asset sha256 values fetched from the release's published
+              `.sha256` assets.
+
+            CI validates this like any PR. Release tags:
+            https://github.com/open-telemetry/opentelemetry-collector-releases/releases/tag/v${{ steps.latest.outputs.new }}
