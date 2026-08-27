@@ -20,10 +20,20 @@ import (
 var Exec = exec.Command
 
 // Vars computes the OTEL_* environment variables for the given settings.
+//
+// PROTOCOL stays explicit because SDK protocol defaults vary (the spec
+// prefers http/protobuf, but several stable SDKs kept grpc). The per-signal
+// exporters mostly default to otlp already, BUT some zero-code agents
+// default logs to "none" — pinning all three makes "point your app at
+// compy" hold for traces, metrics, AND logs. A process's own environment
+// always shadows these.
 func Vars(s state.Settings) map[string]string {
 	return map[string]string{
 		"OTEL_EXPORTER_OTLP_ENDPOINT": fmt.Sprintf("http://127.0.0.1:%d", s.HTTPPort),
 		"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+		"OTEL_TRACES_EXPORTER":        "otlp",
+		"OTEL_METRICS_EXPORTER":       "otlp",
+		"OTEL_LOGS_EXPORTER":          "otlp",
 	}
 }
 

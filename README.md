@@ -75,8 +75,13 @@ built next to the compy binary (see Install); otherwise the first run
 downloads compy's pinned `otelcol-contrib` build (checksum-verified,
 ~90MB). Pick a different pinned build with `compy distro use core|otlp`,
 or bring your own binary with `compy distro add <name> /path/to/otelcol`. `eval "$(./compy env)"` exports
-`OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_PROTOCOL` into your
-shell. For a single command instead: `./compy run -- <cmd>`.
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, and
+`OTEL_TRACES_EXPORTER` / `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER`
+(all pinned to `otlp` — some zero-code agents default logs to `none`) into
+your current shell. Add that `eval` line to `~/.zshrc` (or your shell's rc)
+to wire every new shell, or for a single command instead:
+`./compy run -- <cmd>`. A process's own environment always wins over
+anything compy sets.
 
 Check it worked:
 
@@ -100,7 +105,8 @@ call; `compy use <config> <preset>` both selects and activates a preset.)
 compy's advertised ports are the contract: `compy env`, `compy run`, and
 the OS-level env all export
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<http_port>` (protocol
-`http/protobuf`) from the ports in settings — 14318 HTTP / 14317 gRPC by
+`http/protobuf`, and the traces/metrics/logs exporters pinned to `otlp`)
+from the ports in settings — 14318 HTTP / 14317 gRPC by
 default, stable across config switches. The shipped configurations bind
 their receivers to `${env:COMPY_GRPC_PORT}` / `${env:COMPY_HTTP_PORT}`, so
 they always conform. A configuration owns its receivers and may bind
