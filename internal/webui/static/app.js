@@ -917,9 +917,19 @@ function presetMenu(info, list) {
 }
 
 /* ── inline preset editor (the pencil, under its row) ─────────────── */
+/* The generated new-preset name: "default" is every config's invariant
+   first preset, so the scheme continues it — preset-2, preset-3, … —
+   first free wins. Never random; the field stays editable. */
+function freePresetName(list) {
+  for (let i = 2; ; i++) if (list.indexOf("preset-" + i) < 0) return "preset-" + i;
+}
 function openInline(name, preset, isNew) {
-  S.inline = { name, preset, isNew };
-  S.inlineName = isNew ? "" : preset;
+  // A new preset opens with a generated available name already in the
+  // field, so plus → save works with zero typing; gen is what the name
+  // field opened with, which is what dirtiness is measured against.
+  const gen = isNew ? freePresetName(presetsOf(byName(name) || { meta: {} })) : "";
+  S.inline = { name, preset, isNew, gen };
+  S.inlineName = isNew ? gen : preset;
   S.inlineDraft = null; // never inherit another preset's half-edited draft
   S.presetsOpenId = null;
   render();
@@ -932,7 +942,7 @@ function inlineDirty() {
   if (!p || !S.inlineDraft) return false;
   const info = byName(p.name);
   if (!info) return false;
-  if (S.inlineName !== (p.isNew ? "" : p.preset)) return true;
+  if (S.inlineName !== (p.isNew ? p.gen : p.preset)) return true;
   const base = ((info.meta.presets || {})[p.isNew ? selectedPreset(info) : p.preset]) || {};
   const keys = Object.keys(Object.assign({}, base, S.inlineDraft));
   return keys.some((k) => (base[k] || "") !== (S.inlineDraft[k] || ""));
@@ -944,9 +954,12 @@ function inlineSaveSync() {
   const b = document.querySelector(".inline .inline-save");
   if (!b) return;
   const dirty = inlineDirty();
-  b.textContent = dirty || (S.inline && S.inline.isNew) ? "save preset" : "saved";
+  const isNew = !!(S.inline && S.inline.isNew);
+  b.textContent = dirty || isNew ? "save preset" : "saved";
   b.classList.toggle("accent", dirty);
-  if (dirty) b.removeAttribute("disabled"); else b.setAttribute("disabled", "");
+  // A new preset is saveable as opened (the generated name is real);
+  // amber only once something is actually changed, per the save model.
+  if (dirty || isNew) b.removeAttribute("disabled"); else b.setAttribute("disabled", "");
 }
 function inlinePresetEditor(info) {
   const p = S.inline;
@@ -966,11 +979,12 @@ function inlinePresetEditor(info) {
       el("button", { class: "act", text: "cancel", on: { click: () => { S.inline = null; S.inlineDraft = null; render(); } } }),
       el("button", {
         // Accent "save preset" while the draft differs from the stored
-        // values; muted, disabled "saved" once they match (a new preset
-        // keeps the verb — nothing is saved until it has a name).
+        // values; muted, disabled "saved" once they match. A new preset is
+        // saveable from the start — the generated name is a real one — but
+        // only goes amber once something is edited (the save model).
         class: "btn inline-save" + (dirty ? " accent" : ""),
         text: dirty || p.isNew ? "save preset" : "saved",
-        attrs: dirty ? null : { disabled: "" },
+        attrs: dirty || p.isNew ? null : { disabled: "" },
         on: { click: () => saveInline(info) },
       }),
     ]),
@@ -1517,9 +1531,7 @@ async function headerResync(info, origin) {
 }
 
 async function addPreset(info) {
-  const list = presetsOf(info);
-  let n = "preset", i = 2;
-  while (list.indexOf(n) > -1) { n = "preset-" + i; i++; }
+  const n = freePresetName(presetsOf(info)); // same scheme as the configs-row plus
   try {
     await apiJSON(cfgURL(info.name) + "/presets/" + enc(n), "PUT", { values: {} });
     await loadCore();
