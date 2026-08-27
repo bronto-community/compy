@@ -567,3 +567,15 @@ with the text above.
   macs). `/api/distros` rows carry an optional `download` field so the
   settings screen's 3s refresh shows the progress bar for a download it
   did not start (an activation's auto-fetch).
+- **Five OTEL_* vars, and the shell alternatives on the settings page**
+  (owner rulings, 2026-08-27): the exposed env set grows to five —
+  `OTEL_TRACES_EXPORTER` / `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER`,
+  all pinned to `otlp`, join endpoint+protocol (some zero-code agents
+  default logs to "none"; a process's own env always shadows). Every
+  surface (env, run, OS-level set/unset, reboot reapply, port-change
+  refresh) derives from the one Vars function. Under the OS-env toggle a
+  compact guidance block offers the shell-side alternatives — three ways,
+  one line each, click-to-copy per the log-toolbar idiom: eval now, append
+  to the shell rc, `compy run -- <cmd>` — closing with "an app's own
+  environment always wins over the system-wide toggle". The app-section
+  subtitle ("shell wiring lives in the CLI") folded into it.
