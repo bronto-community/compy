@@ -47,7 +47,7 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy presets use|delete <config> <preset>
   compy presets rename <config> <from> <to>
   compy settings
-  compy settings set [--grpc-port N] [--http-port N]
+  compy settings set [--grpc-port N] [--http-port N] [--protocol grpc|http/protobuf|http/json]
   compy factory-reset --yes
   compy distro list
   compy distro add <name> <path>
@@ -247,22 +247,34 @@ func cmdStatus(args []string) error {
 		if distro == "" {
 			distro = "(none)"
 		}
-		fmt.Printf("service:  %s\nconfig:   %s\ndistro:   %s\nendpoint: http://127.0.0.1:%d (grpc %d)\n",
-			running, config, distro, st.HTTPPort, st.GRPCPort)
+		// The endpoint line follows the advertised protocol: grpc points at
+		// the gRPC port, both http flavors at the HTTP port.
+		endPort, otherLine := st.HTTPPort, fmt.Sprintf("grpc %d", st.GRPCPort)
+		if st.Protocol == "grpc" {
+			endPort, otherLine = st.GRPCPort, fmt.Sprintf("http %d", st.HTTPPort)
+		}
+		fmt.Printf("service:  %s\nconfig:   %s\ndistro:   %s\nendpoint: http://127.0.0.1:%d (%s; %s)\n",
+			running, config, distro, endPort, st.Protocol, otherLine)
 		if len(st.Listening) > 0 {
 			fmt.Printf("listening: %s\n", portsLine(st.Listening))
 		}
 		// The verdict warns when an app following compy's advertised env
-		// would miss this collector; a missing grpc port alone is only a
-		// note (the exported endpoint is the HTTP one).
+		// would miss this collector; the secondary port missing alone is
+		// only a note (the exported endpoint uses the primary one).
 		if v := st.Conformance; v != nil {
+			advVar := "COMPY_HTTP_PORT"
+			if st.Protocol == "grpc" {
+				advVar = "COMPY_GRPC_PORT"
+			}
 			if !v.Conforming {
 				listens := "no other ports"
 				if len(v.Actual) > 0 {
 					listens = portsLine(v.Actual)
 				}
-				fmt.Printf("warning: apps point at :%d; this config listens on %s (run `compy adopt-ports`, or bind ${env:COMPY_HTTP_PORT} in the config)\n", st.HTTPPort, listens)
-			} else if v.MissingGRPC {
+				fmt.Printf("warning: apps point at :%d; this config listens on %s (run `compy adopt-ports`, or bind ${env:%s} in the config)\n", endPort, listens, advVar)
+			} else if st.Protocol == "grpc" && v.MissingHTTP {
+				fmt.Printf("note: http port :%d is not among this config's listeners\n", st.HTTPPort)
+			} else if st.Protocol != "grpc" && v.MissingGRPC {
 				fmt.Printf("note: grpc port :%d is not among this config's listeners\n", st.GRPCPort)
 			}
 		}
@@ -523,7 +535,7 @@ func cmdSettings(args []string) error {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("grpc-port: %d\nhttp-port: %d\n", s.GRPCPort, s.HTTPPort)
+			fmt.Printf("grpc-port: %d\nhttp-port: %d\nprotocol: %s\n", s.GRPCPort, s.HTTPPort, s.EffectiveProtocol())
 			return nil
 		})
 	}
@@ -532,21 +544,26 @@ func cmdSettings(args []string) error {
 	}
 	fs := flag.NewFlagSet("settings set", flag.ContinueOnError)
 	var grpcPort, httpPort int
+	var protocol string
 	fs.IntVar(&grpcPort, "grpc-port", 0, "gRPC port")
 	fs.IntVar(&httpPort, "http-port", 0, "HTTP port")
+	fs.StringVar(&protocol, "protocol", "", "advertised OTLP protocol: grpc, http/protobuf, or http/json")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	var grpcP, httpP *int
+	var protoP *string
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "grpc-port":
 			grpcP = &grpcPort
 		case "http-port":
 			httpP = &httpPort
+		case "protocol":
+			protoP = &protocol
 		}
 	})
-	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP) })
+	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, protoP) })
 }
 
 // cmdFactoryReset wipes the state directory and starts over. The CLI has no

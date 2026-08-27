@@ -107,7 +107,14 @@ the OS-level env all export
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<http_port>` (protocol
 `http/protobuf`, and the traces/metrics/logs exporters pinned to `otlp`)
 from the ports in settings — 14318 HTTP / 14317 gRPC by
-default, stable across config switches. The shipped configurations bind
+default, stable across config switches. The advertised protocol is
+configurable (`compy settings set --protocol grpc|http/protobuf|http/json`,
+or the settings screen): `http/json` shares the HTTP port, `grpc` points the
+endpoint at the gRPC port instead (still in `http://host:port` form — the
+`http` scheme means plaintext for OTLP/gRPC, so no extra insecure flag is
+needed) and the conformance warning below rides the gRPC port. Switching is
+advertisement-only; the collector's receivers serve every protocol
+regardless. The shipped configurations bind
 their receivers to `${env:COMPY_GRPC_PORT}` / `${env:COMPY_HTTP_PORT}`, so
 they always conform. A configuration owns its receivers and may bind
 anywhere — but when its detected listeners don't include the advertised

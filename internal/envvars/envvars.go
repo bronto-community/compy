@@ -21,16 +21,36 @@ var Exec = exec.Command
 
 // Vars computes the OTEL_* environment variables for the given settings.
 //
-// PROTOCOL stays explicit because SDK protocol defaults vary (the spec
-// prefers http/protobuf, but several stable SDKs kept grpc). The per-signal
-// exporters mostly default to otlp already, BUT some zero-code agents
-// default logs to "none" — pinning all three makes "point your app at
-// compy" hold for traces, metrics, AND logs. A process's own environment
-// always shadows these.
+// PROTOCOL follows settings (default http/protobuf) because SDK protocol
+// defaults vary (the spec prefers http/protobuf, but several stable SDKs
+// kept grpc). http/protobuf and http/json share the HTTP port — both are
+// served by the collector's OTLP/HTTP receiver; grpc points the endpoint at
+// the gRPC port instead.
+//
+// The gRPC endpoint keeps the URL form http://127.0.0.1:<port>: that is the
+// OTLP exporter spec's own default shape for grpc (http://localhost:4317),
+// and per that spec the http scheme already means plaintext — the insecure
+// option "only applies to OTLP/gRPC when an endpoint is provided without
+// the http or https scheme". So OTEL_EXPORTER_OTLP_INSECURE is deliberately
+// NOT set, which also keeps the key set identical across protocols: an
+// OS-env refresh on a protocol switch overwrites every key and can never
+// strand a stale one (TestVarsKeySetConstantAcrossProtocols locks this — if
+// a protocol ever gains an extra key, the refresh in app.PutSettings must
+// learn to unset removed keys).
+//
+// The per-signal exporters mostly default to otlp already, BUT some
+// zero-code agents default logs to "none" — pinning all three makes "point
+// your app at compy" hold for traces, metrics, AND logs. A process's own
+// environment always shadows these.
 func Vars(s state.Settings) map[string]string {
+	proto := s.EffectiveProtocol()
+	port := s.HTTPPort
+	if proto == "grpc" {
+		port = s.GRPCPort
+	}
 	return map[string]string{
-		"OTEL_EXPORTER_OTLP_ENDPOINT": fmt.Sprintf("http://127.0.0.1:%d", s.HTTPPort),
-		"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+		"OTEL_EXPORTER_OTLP_ENDPOINT": fmt.Sprintf("http://127.0.0.1:%d", port),
+		"OTEL_EXPORTER_OTLP_PROTOCOL": proto,
 		"OTEL_TRACES_EXPORTER":        "otlp",
 		"OTEL_METRICS_EXPORTER":       "otlp",
 		"OTEL_LOGS_EXPORTER":          "otlp",
