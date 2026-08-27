@@ -10,17 +10,62 @@ import (
 	"github.com/bronto-io/compy/internal/state"
 )
 
+// TestVars: the endpoint follows the advertised protocol (grpc → gRPC port,
+// both http flavors → HTTP port), the three signal exporters stay otlp
+// regardless, and no protocol adds OTEL_EXPORTER_OTLP_INSECURE — the grpc
+// endpoint's http:// scheme already means plaintext per the OTLP exporter
+// spec.
 func TestVars(t *testing.T) {
-	got := Vars(state.Settings{GRPCPort: 14317, HTTPPort: 14318})
-	want := map[string]string{
-		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:14318",
-		"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
-		"OTEL_TRACES_EXPORTER":        "otlp",
-		"OTEL_METRICS_EXPORTER":       "otlp",
-		"OTEL_LOGS_EXPORTER":          "otlp",
+	base := map[string]string{
+		"OTEL_TRACES_EXPORTER":  "otlp",
+		"OTEL_METRICS_EXPORTER": "otlp",
+		"OTEL_LOGS_EXPORTER":    "otlp",
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Vars() = %#v, want %#v", got, want)
+	cases := []struct {
+		protocol     string // as stored in settings; "" = default
+		wantProtocol string
+		wantEndpoint string
+	}{
+		{"", "http/protobuf", "http://127.0.0.1:14318"},
+		{"http/protobuf", "http/protobuf", "http://127.0.0.1:14318"},
+		{"http/json", "http/json", "http://127.0.0.1:14318"},
+		{"grpc", "grpc", "http://127.0.0.1:14317"},
+	}
+	for _, c := range cases {
+		got := Vars(state.Settings{GRPCPort: 14317, HTTPPort: 14318, Protocol: c.protocol})
+		want := map[string]string{
+			"OTEL_EXPORTER_OTLP_ENDPOINT": c.wantEndpoint,
+			"OTEL_EXPORTER_OTLP_PROTOCOL": c.wantProtocol,
+		}
+		for k, v := range base {
+			want[k] = v
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Vars(protocol=%q) = %#v, want %#v", c.protocol, got, want)
+		}
+	}
+}
+
+// TestVarsKeySetConstantAcrossProtocols locks the invariant app.PutSettings'
+// OS-env refresh relies on: every protocol yields the same key set, so
+// overwriting on a protocol switch can never strand a stale key in the OS
+// environment. If a protocol ever needs an extra key (e.g. an INSECURE
+// flag), that refresh must learn to unset removed keys first.
+func TestVarsKeySetConstantAcrossProtocols(t *testing.T) {
+	keysOf := func(m map[string]string) []string {
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		return keys
+	}
+	ref := keysOf(Vars(state.Settings{GRPCPort: 14317, HTTPPort: 14318}))
+	for _, p := range []string{"grpc", "http/protobuf", "http/json"} {
+		got := keysOf(Vars(state.Settings{GRPCPort: 14317, HTTPPort: 14318, Protocol: p}))
+		if !slices.Equal(got, ref) {
+			t.Errorf("Vars(protocol=%q) keys = %v, want %v — see app.PutSettings before changing this", p, got, ref)
+		}
 	}
 }
 

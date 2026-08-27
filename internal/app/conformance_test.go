@@ -12,13 +12,15 @@ import (
 )
 
 // TestPortsVerdict is the verdict matrix: conforming, http-miss, grpc-only
-// miss, stopped, no detection, telemetry excluded.
+// miss, stopped, no detection, telemetry excluded — plus the grpc-primary
+// mirror, where the verdict rides the gRPC port instead.
 func TestPortsVerdict(t *testing.T) {
 	cases := []struct {
-		name      string
-		running   bool
-		listening []int
-		want      *PortsVerdict
+		name        string
+		running     bool
+		listening   []int
+		grpcPrimary bool
+		want        *PortsVerdict
 	}{
 		{
 			name: "conforming", running: true, listening: []int{14317, 14318, 8888},
@@ -47,9 +49,21 @@ func TestPortsVerdict(t *testing.T) {
 			name: "telemetry excluded from actual", running: true, listening: []int{8888},
 			want: &PortsVerdict{Conforming: false, MissingHTTP: true, MissingGRPC: true},
 		},
+		{
+			// grpc advertised: the verdict rides the gRPC port; the HTTP
+			// port missing is only the softer addendum.
+			name: "grpc primary: http-only miss still conforms", running: true, listening: []int{14317}, grpcPrimary: true,
+			want: &PortsVerdict{Conforming: true, MissingHTTP: true, Actual: []int{14317}},
+		},
+		{
+			// grpc advertised, only the http port bound: apps following the
+			// grpc endpoint would miss it — warn.
+			name: "grpc primary: grpc missing warns", running: true, listening: []int{14318}, grpcPrimary: true,
+			want: &PortsVerdict{Conforming: false, MissingGRPC: true, Actual: []int{14318}},
+		},
 	}
 	for _, c := range cases {
-		got := portsVerdict(c.running, c.listening, 14317, 14318, 8888)
+		got := portsVerdict(c.running, c.listening, 14317, 14318, 8888, c.grpcPrimary)
 		if fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", c.want) {
 			t.Errorf("%s: portsVerdict = %+v, want %+v", c.name, got, c.want)
 		}
@@ -77,6 +91,7 @@ func TestClassifyCandidates(t *testing.T) {
 	cases := []struct {
 		name           string
 		cands          []int
+		grpcPrimary    bool
 		wantGRPC       int // 0 = nil
 		wantHTTP       int
 		wantErrMention string
@@ -87,9 +102,16 @@ func TestClassifyCandidates(t *testing.T) {
 		{name: "zero http-ish is ambiguous", cands: []int{6000, 7000}, wantErrMention: ":6000 :7000"},
 		{name: "more candidates than slots", cands: []int{6000, 6001, 7001}, wantErrMention: ":6000 :6001 :7001"},
 		{name: "nothing detected", cands: nil, wantErrMention: "nothing to adopt"},
+		// Under a grpc advertisement a single non-HTTP listener adopts as
+		// the grpc port — the mirror of the http-only case above…
+		{name: "grpc primary: grpc-only config leaves http alone", cands: []int{6000}, grpcPrimary: true, wantGRPC: 6000},
+		// …but two non-HTTP candidates stay ambiguous, and a lone non-HTTP
+		// candidate without the grpc advertisement still refuses.
+		{name: "grpc primary: two non-http still ambiguous", cands: []int{6000, 7000}, grpcPrimary: true, wantErrMention: ":6000 :7000"},
+		{name: "http primary: lone non-http refuses", cands: []int{6000}, wantErrMention: ":6000"},
 	}
 	for _, c := range cases {
-		g, h, err := classifyCandidates(c.cands)
+		g, h, err := classifyCandidates(c.cands, c.grpcPrimary)
 		if c.wantErrMention != "" {
 			if err == nil || !strings.Contains(err.Error(), c.wantErrMention) {
 				t.Errorf("%s: err = %v, want mention of %q", c.name, err, c.wantErrMention)
@@ -182,6 +204,55 @@ func TestAdoptPorts(t *testing.T) {
 	}
 	if st.Conformance == nil || !st.Conformance.Conforming {
 		t.Errorf("Status().Conformance after adopt = %+v, want conforming", st.Conformance)
+	}
+}
+
+// TestAdoptPortsGRPCPrimary: with the advertised protocol grpc, the verdict
+// rides the gRPC port, and a grpc-only config (one non-HTTP listener)
+// adopts without needing an http candidate.
+func TestAdoptPortsGRPCPrimary(t *testing.T) {
+	adoptSetup(t, true)
+	a, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	proto := "grpc"
+	if err := a.PutSettings(nil, nil, &proto); err != nil {
+		t.Fatal(err)
+	}
+	grpcPort := listen(t)
+	stubProbe(t) // nothing http-ish
+
+	st, err := a.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Conformance == nil || st.Conformance.Conforming {
+		t.Fatalf("Status().Conformance = %+v, want nonconforming (grpc advertised, listener elsewhere)", st.Conformance)
+	}
+
+	if err := a.AdoptPorts(nil, nil); err != nil {
+		t.Fatalf("AdoptPorts = %v", err)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.GRPCPort != grpcPort {
+		t.Errorf("settings after adopt = grpc %d, want %d", s.GRPCPort, grpcPort)
+	}
+	if s.HTTPPort != 14318 {
+		t.Errorf("http port changed to %d by a grpc-only adopt, want untouched 14318", s.HTTPPort)
+	}
+	st, err = a.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Conformance == nil || !st.Conformance.Conforming {
+		t.Errorf("Status().Conformance after adopt = %+v, want conforming on the grpc port", st.Conformance)
+	}
+	if !st.Conformance.MissingHTTP {
+		t.Errorf("verdict = %+v, want missing_http as the soft addendum", st.Conformance)
 	}
 }
 

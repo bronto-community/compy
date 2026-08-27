@@ -28,6 +28,11 @@
           "distro": { "type": "string" },
           "grpc_port": { "type": "integer" },
           "http_port": { "type": "integer" },
+          "protocol": {
+            "type": "string",
+            "enum": ["grpc", "http/protobuf", "http/json"],
+            "description": "The advertised OTLP protocol; endpoint points at the port it uses (the gRPC port for grpc, the HTTP port otherwise)."
+          },
           "endpoint": { "type": "string" },
           "config": { "type": "string" },
           "preset": { "type": "string" },
@@ -50,11 +55,11 @@
       },
       "PortsVerdict": {
         "type": "object",
-        "description": "The advertised-ports verdict. conforming rides on the HTTP port alone — that is what OTEL_EXPORTER_OTLP_ENDPOINT uses; missing_grpc is reported but never fails the verdict by itself.",
+        "description": "The advertised-ports verdict. conforming rides on the primary port alone — the port OTEL_EXPORTER_OTLP_ENDPOINT actually uses under the advertised protocol (the HTTP port for http/protobuf and http/json, the gRPC port for grpc); the other port missing is reported but never fails the verdict by itself.",
         "properties": {
           "conforming": { "type": "boolean" },
-          "missing_http": { "type": "boolean", "description": "The advertised HTTP port is not among the detected listeners." },
-          "missing_grpc": { "type": "boolean", "description": "The advertised gRPC port is not among the detected listeners (a softer addendum, never a warning on its own)." },
+          "missing_http": { "type": "boolean", "description": "The advertised HTTP port is not among the detected listeners (a softer addendum when the advertised protocol is grpc)." },
+          "missing_grpc": { "type": "boolean", "description": "The advertised gRPC port is not among the detected listeners (a softer addendum unless the advertised protocol is grpc)." },
           "actual": {
             "type": "array",
             "description": "Detected non-telemetry listeners — the ports POST /api/service/adopt-ports would adopt.",
@@ -67,15 +72,25 @@
         "type": "object",
         "properties": {
           "grpc_port": { "type": "integer" },
-          "http_port": { "type": "integer" }
+          "http_port": { "type": "integer" },
+          "protocol": {
+            "type": "string",
+            "enum": ["grpc", "http/protobuf", "http/json"],
+            "description": "The advertised OTLP protocol (default http/protobuf)."
+          }
         }
       },
       "SettingsUpdate": {
         "type": "object",
-        "description": "Partial: an absent field leaves that setting unchanged. Port changes take effect on next apply.",
+        "description": "Partial: an absent field leaves that setting unchanged. Port changes take effect on next apply; a protocol change is advertisement-only and needs no restart.",
         "properties": {
           "grpc_port": { "type": "integer" },
-          "http_port": { "type": "integer" }
+          "http_port": { "type": "integer" },
+          "protocol": {
+            "type": "string",
+            "enum": ["grpc", "http/protobuf", "http/json"],
+            "description": "What the advertised endpoint speaks. Any other value is a 400."
+          }
         }
       },
       "Var": {

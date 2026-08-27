@@ -21,7 +21,7 @@ func fakeAPI() API {
 		SetOSEnv: func(on bool) error { return nil },
 
 		GetSettings: func() (map[string]any, error) { return map[string]any{}, nil },
-		PutSettings: func(grpcPort, httpPort *int) error { return nil },
+		PutSettings: func(grpcPort, httpPort *int, protocol *string) error { return nil },
 		AdoptPorts:  func(grpcPort, httpPort *int) error { return nil },
 
 		Health:       func() (any, error) { return map[string]any{"available": false}, nil },
@@ -290,8 +290,9 @@ func call(h http.HandlerFunc, method, body string, pathValues map[string]string)
 func TestPutSettingsRoute(t *testing.T) {
 	api := fakeAPI()
 	var gotGRPC, gotHTTP *int
-	api.PutSettings = func(grpcPort, httpPort *int) error {
-		gotGRPC, gotHTTP = grpcPort, httpPort
+	var gotProto *string
+	api.PutSettings = func(grpcPort, httpPort *int, protocol *string) error {
+		gotGRPC, gotHTTP, gotProto = grpcPort, httpPort, protocol
 		return nil
 	}
 	api.GetSettings = func() (map[string]any, error) {
@@ -302,8 +303,16 @@ func TestPutSettingsRoute(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if gotGRPC == nil || *gotGRPC != 5000 || gotHTTP != nil {
-		t.Fatalf("PutSettings got grpc=%v http=%v, want grpc=5000 http=nil", gotGRPC, gotHTTP)
+	if gotGRPC == nil || *gotGRPC != 5000 || gotHTTP != nil || gotProto != nil {
+		t.Fatalf("PutSettings got grpc=%v http=%v proto=%v, want grpc=5000 http=nil proto=nil", gotGRPC, gotHTTP, gotProto)
+	}
+
+	rec = call(handlePutSettings(api), http.MethodPut, `{"protocol":"grpc"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("protocol update status = %d, want 200", rec.Code)
+	}
+	if gotProto == nil || *gotProto != "grpc" || gotGRPC != nil || gotHTTP != nil {
+		t.Fatalf("PutSettings got grpc=%v http=%v proto=%v, want only proto=grpc", gotGRPC, gotHTTP, gotProto)
 	}
 	var body map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
@@ -318,7 +327,7 @@ func TestPutSettingsRoute(t *testing.T) {
 		t.Fatalf("malformed body status = %d, want 400", rec.Code)
 	}
 
-	api.PutSettings = func(grpcPort, httpPort *int) error {
+	api.PutSettings = func(grpcPort, httpPort *int, protocol *string) error {
 		return errWithMessage("port out of range")
 	}
 	rec = call(handlePutSettings(api), http.MethodPut, `{"grpc_port":0}`, nil)

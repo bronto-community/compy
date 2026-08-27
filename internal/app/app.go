@@ -143,6 +143,7 @@ type Status struct {
 	Distro   string   `json:"distro"`
 	GRPCPort int      `json:"grpc_port"`
 	HTTPPort int      `json:"http_port"`
+	Protocol string   `json:"protocol"` // effective advertised protocol, never ""
 	Config   string   `json:"config"`
 	Preset   string   `json:"preset"`
 	OSEnv    bool     `json:"os_env"`
@@ -513,14 +514,16 @@ func (a *App) Status() (Status, error) {
 		Distro:    effectiveDistro(s),
 		GRPCPort:  s.GRPCPort,
 		HTTPPort:  s.HTTPPort,
+		Protocol:  s.EffectiveProtocol(),
 		Config:    s.ActiveConfig,
 		Preset:    preset,
 		OSEnv:     s.OSEnv,
 		Recent:    s.Recent,
 		Listening: listening,
 		// The telemetry port (otelcol's :8888 default, health's knowledge)
-		// is excluded from the verdict's OTLP candidates.
-		Conformance: portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, collector.TelemetryPort()),
+		// is excluded from the verdict's OTLP candidates. The primary port is
+		// whichever the advertised protocol's endpoint uses.
+		Conformance: portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, collector.TelemetryPort(), s.EffectiveProtocol() == "grpc"),
 	}, nil
 }
 
@@ -1376,13 +1379,15 @@ func (a *App) settingsMap() (map[string]any, error) {
 	return map[string]any{
 		"grpc_port": s.GRPCPort,
 		"http_port": s.HTTPPort,
+		"protocol":  s.EffectiveProtocol(),
 	}, nil
 }
 
 // PutSettings partially updates compy's global settings (nil = unchanged);
-// grpcP/httpP must be in 1-65535. Port changes take effect on the next
-// Apply/Activate, not immediately.
-func (a *App) PutSettings(grpcP, httpP *int) error {
+// grpcP/httpP must be in 1-65535, protocol one of grpc, http/protobuf,
+// http/json. Port changes take effect on the next Apply/Activate, not
+// immediately; a protocol change is advertisement-only and needs no restart.
+func (a *App) PutSettings(grpcP, httpP *int, protocol *string) error {
 	s, err := state.LoadSettings()
 	if err != nil {
 		return err
@@ -1400,12 +1405,22 @@ func (a *App) PutSettings(grpcP, httpP *int) error {
 		}
 		s.HTTPPort = *httpP
 	}
+	if protocol != nil {
+		if !state.ValidProtocol(*protocol) {
+			return state.BadRequest(fmt.Errorf("protocol %q is not one of grpc, http/protobuf, http/json", *protocol))
+		}
+		s.Protocol = *protocol
+	}
 	if err := state.SaveSettings(s); err != nil {
 		return err
 	}
-	// With OS-level env on, the OTEL_* values derive from these ports —
+	// With OS-level env on, the OTEL_* values derive from these settings —
 	// refresh them so the OS environment doesn't keep pointing at the old
-	// endpoint until the toggle is flipped.
+	// endpoint until the toggle is flipped. Overwriting is enough: Vars()
+	// keeps one key set for every protocol (locked by
+	// TestVarsKeySetConstantAcrossProtocols), so no key can go stale on a
+	// protocol switch. If that invariant ever breaks, this refresh must
+	// unset the keys the old settings had that the new ones don't.
 	if s.OSEnv {
 		return envvars.SetOS(envvars.Vars(s))
 	}
@@ -1456,12 +1471,19 @@ func (a *App) statusMap() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The displayed endpoint follows the advertised protocol: grpc points at
+	// the gRPC port, both http flavors at the HTTP port.
+	endPort := st.HTTPPort
+	if st.Protocol == "grpc" {
+		endPort = st.GRPCPort
+	}
 	m := map[string]any{
 		"running":   st.Running,
 		"distro":    st.Distro,
 		"grpc_port": st.GRPCPort,
 		"http_port": st.HTTPPort,
-		"endpoint":  fmt.Sprintf("http://127.0.0.1:%d", st.HTTPPort),
+		"protocol":  st.Protocol,
+		"endpoint":  fmt.Sprintf("http://127.0.0.1:%d", endPort),
 		"config":    st.Config,
 		"preset":    st.Preset,
 		"os_env":    st.OSEnv,

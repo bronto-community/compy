@@ -703,7 +703,7 @@ func TestGetPutSettings(t *testing.T) {
 	}
 
 	grpc := 5000
-	if err := a.PutSettings(&grpc, nil); err != nil {
+	if err := a.PutSettings(&grpc, nil, nil); err != nil {
 		t.Fatalf("PutSettings: %v", err)
 	}
 	s, err = a.GetSettings()
@@ -715,7 +715,7 @@ func TestGetPutSettings(t *testing.T) {
 	}
 
 	bad := 70000
-	if err := a.PutSettings(&bad, nil); err == nil {
+	if err := a.PutSettings(&bad, nil, nil); err == nil {
 		t.Fatal("PutSettings with out-of-range port: want error, got nil")
 	}
 	s, err = a.GetSettings()
@@ -727,8 +727,41 @@ func TestGetPutSettings(t *testing.T) {
 	}
 
 	zero := 0
-	if err := a.PutSettings(nil, &zero); err == nil {
+	if err := a.PutSettings(nil, &zero, nil); err == nil {
 		t.Fatal("PutSettings with port 0: want error, got nil")
+	}
+
+	// Protocol: exactly grpc, http/protobuf, http/json; anything else is the
+	// caller's mistake, and the stored value round-trips.
+	if s.EffectiveProtocol() != "http/protobuf" {
+		t.Errorf("default EffectiveProtocol() = %q, want http/protobuf", s.EffectiveProtocol())
+	}
+	for _, p := range []string{"grpc", "http/protobuf", "http/json"} {
+		p := p
+		if err := a.PutSettings(nil, nil, &p); err != nil {
+			t.Fatalf("PutSettings(protocol=%q): %v", p, err)
+		}
+		s, err = a.GetSettings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Protocol != p {
+			t.Errorf("Protocol after set = %q, want %q", s.Protocol, p)
+		}
+	}
+	for _, p := range []string{"", "http", "HTTP/PROTOBUF", "grpc "} {
+		p := p
+		err := a.PutSettings(nil, nil, &p)
+		if err == nil || !state.IsBadRequest(err) {
+			t.Errorf("PutSettings(protocol=%q) = %v, want a BadRequest", p, err)
+		}
+	}
+	s, err = a.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Protocol != "http/json" {
+		t.Errorf("Protocol = %q after rejected updates, want unchanged http/json", s.Protocol)
 	}
 }
 
@@ -1581,7 +1614,8 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 		{"AddDistro missing binary", func() error { return a.AddDistro("fresh", missing) }},
 		{"UseDistro unknown", func() error { return a.UseDistro(nosuch) }},
 		{"EnsureDistro unknown", func() error { _, err := a.EnsureDistro(nosuch, nil); return err }},
-		{"PutSettings port out of range", func() error { p := 99999; return a.PutSettings(&p, nil) }},
+		{"PutSettings port out of range", func() error { p := 99999; return a.PutSettings(&p, nil, nil) }},
+		{"PutSettings unknown protocol", func() error { p := "http/proto"; return a.PutSettings(nil, nil, &p) }},
 	}
 	for _, tc := range cases {
 		err := tc.fn()
@@ -2503,7 +2537,7 @@ func TestPutSettingsRefreshesOSEnv(t *testing.T) {
 	}
 	*calls = nil
 	port := 25999
-	if err := a.PutSettings(nil, &port); err != nil {
+	if err := a.PutSettings(nil, &port, nil); err != nil {
 		t.Fatalf("PutSettings: %v", err)
 	}
 	if !slices.Contains(*calls, "launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT http://127.0.0.1:25999") {
@@ -2515,12 +2549,78 @@ func TestPutSettingsRefreshesOSEnv(t *testing.T) {
 	}
 	*calls = nil
 	port = 26000
-	if err := a.PutSettings(nil, &port); err != nil {
+	if err := a.PutSettings(nil, &port, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range *calls {
 		if strings.Contains(c, "setenv") {
 			t.Errorf("os-env off: port change ran setenv: %v", *calls)
+		}
+	}
+}
+
+// setenvKeys extracts the var names from captured "launchctl setenv K V"
+// calls.
+func setenvKeys(calls []string) map[string]bool {
+	keys := map[string]bool{}
+	for _, c := range calls {
+		if f := strings.Fields(c); len(f) >= 3 && f[1] == "setenv" {
+			keys[f[2]] = true
+		}
+	}
+	return keys
+}
+
+// TestPutSettingsProtocolSwitchOSEnv: with the OS env on, switching the
+// advertised protocol re-points the injected endpoint — and, because Vars()
+// keeps one key set for every protocol, a grpc→http/protobuf switch leaves
+// no stale key (no OTEL_EXPORTER_OTLP_INSECURE, no key set under grpc that
+// the http refresh doesn't overwrite).
+func TestPutSettingsProtocolSwitchOSEnv(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := stubEnvExec(t)
+	if err := a.SetOSEnv(true); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	proto := "grpc"
+	if err := a.PutSettings(nil, nil, &proto); err != nil {
+		t.Fatalf("PutSettings(grpc): %v", err)
+	}
+	grpcCalls := append([]string(nil), *calls...)
+	if !slices.Contains(grpcCalls, "launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT http://127.0.0.1:14317") {
+		t.Errorf("grpc switch: endpoint not re-pointed at the grpc port, calls = %v", grpcCalls)
+	}
+	if !slices.Contains(grpcCalls, "launchctl setenv OTEL_EXPORTER_OTLP_PROTOCOL grpc") {
+		t.Errorf("grpc switch: protocol not refreshed, calls = %v", grpcCalls)
+	}
+
+	*calls = nil
+	proto = "http/protobuf"
+	if err := a.PutSettings(nil, nil, &proto); err != nil {
+		t.Fatalf("PutSettings(http/protobuf): %v", err)
+	}
+	httpCalls := append([]string(nil), *calls...)
+	if !slices.Contains(httpCalls, "launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT http://127.0.0.1:14318") {
+		t.Errorf("http switch: endpoint not re-pointed at the http port, calls = %v", httpCalls)
+	}
+
+	// Every key the grpc refresh set must be overwritten by the http one —
+	// nothing from the grpc advertisement may linger in the OS env.
+	httpKeys := setenvKeys(httpCalls)
+	for k := range setenvKeys(grpcCalls) {
+		if !httpKeys[k] {
+			t.Errorf("stale key: grpc set %s but the http/protobuf refresh did not overwrite it", k)
+		}
+	}
+	for _, c := range append(grpcCalls, httpCalls...) {
+		if strings.Contains(c, "INSECURE") {
+			t.Errorf("OTEL_EXPORTER_OTLP_INSECURE must not be set (http:// scheme already means plaintext): %v", c)
 		}
 	}
 }

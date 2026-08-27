@@ -11,11 +11,12 @@ import (
 )
 
 // PortsVerdict answers one question: would an app following compy's
-// advertised env (OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<http_port>)
-// reach the running collector? Conforming rides on the HTTP port alone —
-// that is what the exported endpoint uses; a missing gRPC port is reported
-// (MissingGRPC) but never fails the verdict by itself. Actual is the
-// detected non-telemetry listeners, what an "adopt" would adopt.
+// advertised env (OTEL_EXPORTER_OTLP_ENDPOINT) reach the running collector?
+// Conforming rides on the primary port alone — the port the advertised
+// protocol's endpoint actually uses (the HTTP port for http/protobuf and
+// http/json, the gRPC port for grpc); the other port missing is reported
+// (MissingHTTP/MissingGRPC) but never fails the verdict by itself. Actual
+// is the detected non-telemetry listeners, what an "adopt" would adopt.
 //
 // A verdict exists only while the collector runs with port detection
 // available: stopped or undetectable is nil — no detection, no claim.
@@ -27,9 +28,11 @@ type PortsVerdict struct {
 }
 
 // portsVerdict computes the verdict from detected listeners and the
-// advertised ports. telemetryPort (0 = unknown) is excluded from Actual —
-// the collector's own /metrics endpoint is not an OTLP candidate.
-func portsVerdict(running bool, listening []int, grpcPort, httpPort, telemetryPort int) *PortsVerdict {
+// advertised ports. grpcPrimary says the advertised protocol is grpc, making
+// the gRPC port the one the verdict rides on. telemetryPort (0 = unknown) is
+// excluded from Actual — the collector's own /metrics endpoint is not an
+// OTLP candidate.
+func portsVerdict(running bool, listening []int, grpcPort, httpPort, telemetryPort int, grpcPrimary bool) *PortsVerdict {
 	if !running || len(listening) == 0 {
 		return nil
 	}
@@ -45,7 +48,11 @@ func portsVerdict(running bool, listening []int, grpcPort, httpPort, telemetryPo
 			v.Actual = append(v.Actual, p)
 		}
 	}
-	v.Conforming = !v.MissingHTTP
+	if grpcPrimary {
+		v.Conforming = !v.MissingGRPC
+	} else {
+		v.Conforming = !v.MissingHTTP
+	}
 	return v
 }
 
@@ -82,7 +89,7 @@ func (a *App) AdoptPorts(grpcP, httpP *int) error {
 		return state.BadRequest(errors.New("no listeners detected: the collector must be running to adopt its ports"))
 	}
 	if grpcP == nil && httpP == nil {
-		grpcP, httpP, err = classifyCandidates(v.Actual)
+		grpcP, httpP, err = classifyCandidates(v.Actual, st.Protocol == "grpc")
 		if err != nil {
 			return err
 		}
@@ -93,14 +100,16 @@ func (a *App) AdoptPorts(grpcP, httpP *int) error {
 			}
 		}
 	}
-	return a.PutSettings(grpcP, httpP)
+	return a.PutSettings(grpcP, httpP, nil)
 }
 
 // classifyCandidates sorts a config's detected non-telemetry listeners into
 // the grpc and http slots by probing which of them speak HTTP/1.1. nil for
 // a slot means "leave that setting unchanged" (a config with only an http
-// receiver has no grpc port to adopt).
-func classifyCandidates(cands []int) (grpcP, httpP *int, err error) {
+// receiver has no grpc port to adopt — and, mirrored under a grpc
+// advertisement, grpcPrimary lets a single non-HTTP listener adopt as the
+// grpc port with no http candidate at all).
+func classifyCandidates(cands []int, grpcPrimary bool) (grpcP, httpP *int, err error) {
 	if len(cands) == 0 {
 		return nil, nil, state.BadRequest(errors.New("nothing to adopt: no non-telemetry listeners detected"))
 	}
@@ -116,6 +125,11 @@ func classifyCandidates(cands []int) (grpcP, httpP *int, err error) {
 		}
 	}
 	if len(httpish) != 1 {
+		// A grpc-only config under a grpc advertisement: exactly one
+		// candidate, and it doesn't speak HTTP — adopt it as the grpc port.
+		if grpcPrimary && len(httpish) == 0 && len(rest) == 1 {
+			return &rest[0], nil, nil
+		}
 		return nil, nil, state.BadRequest(fmt.Errorf("can't tell which of %s is the otlp/http port — say which is which, e.g. `compy adopt-ports --grpc N --http N`", portList(cands)))
 	}
 	httpP = &httpish[0]

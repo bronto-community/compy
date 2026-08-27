@@ -22,6 +22,12 @@ type Settings struct {
 	ActiveConfig string `json:"active_config"` // active configuration, "" = none
 	OSEnv        bool   `json:"os_env"`        // OS-level env injection active
 
+	// Protocol is what the advertised OTLP endpoint speaks: "grpc",
+	// "http/protobuf", or "http/json". "" means the default, http/protobuf.
+	// It changes only the advertisement (env vars, status, conformance) —
+	// the collector's receivers serve all of them regardless.
+	Protocol string `json:"protocol,omitempty"`
+
 	// Recent is the configurations that have run, most recent first. The
 	// menu bar orders by it (the window sorts alphabetically everywhere).
 	Recent []string `json:"recent,omitempty"`
@@ -53,6 +59,23 @@ func Remember(recent []string, name string) []string {
 		out = out[:recentCap]
 	}
 	return out
+}
+
+// DefaultProtocol is what the advertised endpoint speaks unless settings say
+// otherwise.
+const DefaultProtocol = "http/protobuf"
+
+// ValidProtocol reports whether p is a protocol the advertisement can speak.
+func ValidProtocol(p string) bool {
+	return p == "grpc" || p == "http/protobuf" || p == "http/json"
+}
+
+// EffectiveProtocol resolves the empty default to http/protobuf.
+func (s Settings) EffectiveProtocol() string {
+	if s.Protocol == "" {
+		return DefaultProtocol
+	}
+	return s.Protocol
 }
 
 // Distro describes a selectable collector distribution.
