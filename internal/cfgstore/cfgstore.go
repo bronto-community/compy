@@ -378,6 +378,22 @@ func CreateFromURL(root, name, url string, fetch Fetch) error {
 	if exists(root, name) {
 		return userErrf("config %q already exists", name)
 	}
+	if IsOTelBinURL(url) {
+		// otelbin links are snapshots, not syncable sources: the decoded
+		// YAML becomes a plain LOCAL config — no remote_url, no pristine
+		// hash. See otelbin.go.
+		yaml, err := FetchOTelBinYAML(url)
+		if err != nil {
+			return state.BadRequest(err)
+		}
+		if err := createDir(root, name); err != nil {
+			return err
+		}
+		if err := writeYAMLFile(root, name, yaml); err != nil {
+			return err
+		}
+		return writeMeta(root, name, withDefaultPreset(Meta{}))
+	}
 	content, err := fetch(url)
 	if err != nil {
 		return state.BadRequest(err) // the URL is the user's; a log tail says nothing about it

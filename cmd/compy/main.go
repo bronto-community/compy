@@ -38,6 +38,8 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy config list
   compy config show|edit|delete|sync|resync|reset <name>
   compy config create <name> [--from-url URL]
+    (otelbin.io share links import as local configs; quote fragment URLs:
+     --from-url 'https://www.otelbin.io/#config=...')
   compy config copy <src> <dst>
   compy config rename <old> <new>
   compy config sync-all
@@ -366,7 +368,7 @@ func cmdConfig(args []string) error {
 		}
 		name := rest[0]
 		fs := flag.NewFlagSet("config create", flag.ContinueOnError)
-		fromURL := fs.String("from-url", "", "fetch the configuration from this URL")
+		fromURL := fs.String("from-url", "", "fetch the configuration from this URL (otelbin.io share links import as local configs)")
 		if err := fs.Parse(rest[1:]); err != nil {
 			return err
 		}
