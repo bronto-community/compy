@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-io/compy/internal/vars"
 )
 
 func TestCreateGetListDelete(t *testing.T) {
@@ -814,5 +815,48 @@ func TestReadMetaAcceptsLegacyKeys(t *testing.T) {
 	}
 	if s := string(data); !strings.Contains(s, `"presets"`) || strings.Contains(s, "distro") || strings.Contains(s, "variable_sets") {
 		t.Fatalf("rewritten meta.json = %s, want presets/active_preset and no distro", s)
+	}
+}
+
+func TestMissingRequired(t *testing.T) {
+	// The activation pre-flight rule: required means has_default false,
+	// not COMPY_-prefixed, and no non-empty value in the resolved preset.
+	info := Info{
+		Meta: Meta{
+			ActivePreset: "staging",
+			Presets: map[string]map[string]string{
+				"staging": {"BRONTO_KEY": "bro_live_1"},
+				"empty":   {"BRONTO_KEY": "   "}, // whitespace is not a value
+				"full":    {"BRONTO_KEY": "k", "OTLP_ENDPOINT": "e"},
+			},
+		},
+		Vars: []vars.Var{
+			{Name: "BRONTO_KEY"},    // required
+			{Name: "OTLP_ENDPOINT"}, // required
+			{Name: "DATASET", Default: "default", HasDefault: true}, // yaml fallback
+			{Name: "COMPY_HTTP_PORT"},                               // compy-injected
+		},
+	}
+	cases := []struct {
+		name, preset string
+		want         []string
+	}{
+		{"explicit preset with one value", "staging", []string{"OTLP_ENDPOINT"}},
+		{"whitespace values count as missing", "empty", []string{"BRONTO_KEY", "OTLP_ENDPOINT"}},
+		{"all values present", "full", nil},
+		{"empty preset resolves to the active one", "", []string{"OTLP_ENDPOINT"}},
+		{"unknown preset has no values", "nope", []string{"BRONTO_KEY", "OTLP_ENDPOINT"}},
+	}
+	for _, tc := range cases {
+		got := MissingRequired(info, tc.preset)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("%s: MissingRequired(%q) = %v, want %v", tc.name, tc.preset, got, tc.want)
+		}
+	}
+
+	// No presets at all: nothing has a value, everything required is missing.
+	bare := Info{Vars: info.Vars, Meta: Meta{Presets: map[string]map[string]string{}}}
+	if got := MissingRequired(bare, ""); strings.Join(got, ",") != "BRONTO_KEY,OTLP_ENDPOINT" {
+		t.Errorf("no presets: got %v, want BRONTO_KEY and OTLP_ENDPOINT", got)
 	}
 }

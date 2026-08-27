@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bronto-io/compy/internal/state"
@@ -41,6 +42,31 @@ type Info struct {
 	Modified   bool       `json:"modified"`   // hash != pristine (always false for "local")
 	Meta       Meta       `json:"meta"`
 	Vars       []vars.Var `json:"vars"`
+}
+
+// MissingRequired names the variables an activation of this config with
+// this preset would leave without a value: no `${VAR:-default}` fallback in
+// the yaml (vars.Var.HasDefault false), not compy-injected (COMPY_*), and
+// empty or absent in the preset. An empty preset name resolves to the
+// config's active preset, exactly as Activate does; a config with no
+// presets checks against no values at all. Callers decide what to do with
+// the answer: the window asks before activating, the CLI warns and
+// proceeds.
+func MissingRequired(info Info, preset string) []string {
+	if preset == "" {
+		preset = info.Meta.ActivePreset
+	}
+	values := info.Meta.Presets[preset]
+	var missing []string
+	for _, v := range info.Vars {
+		if v.HasDefault || strings.HasPrefix(v.Name, "COMPY_") {
+			continue
+		}
+		if strings.TrimSpace(values[v.Name]) == "" {
+			missing = append(missing, v.Name)
+		}
+	}
+	return missing
 }
 
 // Fetch retrieves the bytes at url. Production code should use HTTPFetch;
