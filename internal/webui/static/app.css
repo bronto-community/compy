@@ -204,6 +204,9 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .btn[disabled], .act[disabled] { color: var(--faint); cursor: default; }
 .btn[disabled]:hover { border-color: var(--border3); color: var(--faint); }
 
+/* the brief "saved" an auto-saving control leaves beside itself */
+.savedmark { font-size: 10.5px; letter-spacing: .04em; color: var(--muted); white-space: nowrap; }
+
 /* Icon actions: dim → text on hover, → err for destructive. Disabled
    greys to faint, keeps the default cursor, and keeps its title. */
 .ico {
@@ -447,6 +450,9 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 }
 .ed-name:hover { border-color: var(--border); }
 .ed-name:focus { border-color: var(--border3); background: var(--panel); }
+/* pending rename: the field differs from the current name (applies on
+   enter / focus out) — the same accent treatment every unsaved state gets */
+.ed-name.pending, .ed-name.pending:focus { border-color: var(--accentLine); color: var(--accent); }
 .ed-url {
   flex: 20 1 auto; min-width: 120px; text-overflow: ellipsis;
   font-family: inherit; font-size: 12px; color: var(--text3);

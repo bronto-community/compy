@@ -128,6 +128,7 @@ const S = {
   busyId: null,            // config being activated
   err: null, errName: null, errKept: null,
   note: null, noteTimer: null,
+  flash: null,             // key of the control showing its brief "saved" mark
   newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
   confirm: null, confirmVerb: null, confirmId: null, confirmKind: null,
   presetSel: {},           // { configName: presetName }
@@ -261,6 +262,21 @@ function note(text, ms) {
   render();
 }
 
+/* ── the auto-save residue ────────────────────────────────────────────
+   Controls that save on change (settings toggles, ports, a preset's value
+   cards in the editor band) leave a brief muted "saved" beside the control
+   that just PUT — one shared helper so timing and look are identical
+   everywhere. Success paths only: a failed save shows its error and never
+   the mark. */
+let flashTimer = null;
+function flashSaved(key) {
+  S.flash = key;
+  if (flashTimer) clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { S.flash = null; flashTimer = null; render(); }, 1600);
+  render();
+}
+function savedMark(key) { return S.flash === key ? span("savedmark sans", "saved") : null; }
+
 /* ── failures with nowhere else to go ─────────────────────────────────
    The design gives activation and save failures their own panels, which is
    where the collector's diagnostic belongs. Everything else — a rename that
@@ -358,17 +374,21 @@ async function enterRoute() {
   render();
 }
 
-/* Unsaved-changes guard: hashchange fires after the fact, so leaving the
-   editor with unsaved YAML either gets confirmed inline or the hash goes
-   back (which re-fires hashchange — the first line swallows that one). */
+/* Unsaved-changes guard: hashchange fires after the fact, so leaving with
+   unsaved YAML (or an unsaved preset draft in the inline editor) either
+   gets confirmed inline or the hash goes back (which re-fires hashchange —
+   the first line swallows that one). */
 let navHash = location.hash;
 window.addEventListener("hashchange", async () => {
   if (location.hash === navHash) return;
-  if (editorDirty()) {
+  if (editorDirty() || inlineDirty()) {
     const target = location.hash;
     location.hash = navHash;
-    if (!(await ask("leave this configuration? unsaved changes are lost.", null))) return;
+    const q = editorDirty() ? "leave this configuration? unsaved changes are lost."
+      : "leave this screen? the unsaved preset draft is lost.";
+    if (!(await ask(q, null))) return;
     cm && (cmDirty = false);
+    S.inline = null; S.inlineDraft = null;
     location.hash = target;
     return;
   }
@@ -376,7 +396,7 @@ window.addEventListener("hashchange", async () => {
   enterRoute();
 });
 window.addEventListener("beforeunload", (e) => {
-  if (!editorDirty()) return;
+  if (!editorDirty() && !inlineDirty()) return;
   e.preventDefault();
   e.returnValue = "leave this configuration? unsaved changes are lost.";
 });
@@ -668,7 +688,7 @@ const HELP_COPY = {
   configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml or fetch it from a url.",
   collector: "these numbers are the collector's own, scraped from its telemetry endpoint, and listening shows only ports the process actually has open. the log below is the collector's output, grouped by level and filterable. restart and stop live here; the configurations screen picks what runs.",
   settings: "appearance, and how apps find compy: the advertised endpoint, its protocol, and the system-wide OTEL_* toggle. global variables are values every configuration's yaml can reference; the collector table downloads, updates, or replaces the binary every config runs on. the danger area at the bottom deletes everything compy manages.",
-  editor: "a configuration is one whole collector config.yaml plus its presets: named sets of values for the ${VAR} references in the yaml. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. cmd+s saves.",
+  editor: "a configuration is one whole collector config.yaml plus its presets: named sets of values for the ${VAR} references in the yaml. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. cmd+s saves, and the save button shows amber while anything is unsaved.",
 };
 function helpButton(page) {
   return el("button", {
@@ -900,13 +920,39 @@ function presetMenu(info, list) {
 function openInline(name, preset, isNew) {
   S.inline = { name, preset, isNew };
   S.inlineName = isNew ? "" : preset;
+  S.inlineDraft = null; // never inherit another preset's half-edited draft
   S.presetsOpenId = null;
   render();
+}
+/* Dirty = the draft differs from what the store holds: a value changed, or
+   the name field left its opening state. Drives the save button's accent
+   and the navigation guard. */
+function inlineDirty() {
+  const p = S.inline;
+  if (!p || !S.inlineDraft) return false;
+  const info = byName(p.name);
+  if (!info) return false;
+  if (S.inlineName !== (p.isNew ? "" : p.preset)) return true;
+  const base = ((info.meta.presets || {})[p.isNew ? selectedPreset(info) : p.preset]) || {};
+  const keys = Object.keys(Object.assign({}, base, S.inlineDraft));
+  return keys.some((k) => (base[k] || "") !== (S.inlineDraft[k] || ""));
+}
+/* Typing in the draft doesn't re-render (the render would rebuild the
+   focused field), so the save button is flipped in place — the same idiom
+   as the factory-reset confirm field. */
+function inlineSaveSync() {
+  const b = document.querySelector(".inline .inline-save");
+  if (!b) return;
+  const dirty = inlineDirty();
+  b.textContent = dirty || (S.inline && S.inline.isNew) ? "save preset" : "saved";
+  b.classList.toggle("accent", dirty);
+  if (dirty) b.removeAttribute("disabled"); else b.setAttribute("disabled", "");
 }
 function inlinePresetEditor(info) {
   const p = S.inline;
   const values = ((info.meta.presets || {})[p.isNew ? selectedPreset(info) : p.preset]) || {};
   const draft = S.inlineDraft || (S.inlineDraft = Object.assign({}, values));
+  const dirty = inlineDirty();
   return el("div", { class: "inline" }, [
     el("div", { class: "top" }, [
       span("colhead", p.isNew ? "new preset" : "preset"),
@@ -914,13 +960,21 @@ function inlinePresetEditor(info) {
         class: "field sm",
         attrs: { placeholder: "preset name", spellcheck: "false", "data-fk": "inline-name", style: "width:180px", "aria-label": "preset name" },
         props: { value: S.inlineName },
-        on: { input: (e) => { S.inlineName = e.target.value; } },
+        on: { input: (e) => { S.inlineName = e.target.value; inlineSaveSync(); } },
       }),
       el("span", { class: "grow" }),
       el("button", { class: "act", text: "cancel", on: { click: () => { S.inline = null; S.inlineDraft = null; render(); } } }),
-      el("button", { class: "btn", text: "save preset", on: { click: () => saveInline(info) } }),
+      el("button", {
+        // Accent "save preset" while the draft differs from the stored
+        // values; muted, disabled "saved" once they match (a new preset
+        // keeps the verb — nothing is saved until it has a name).
+        class: "btn inline-save" + (dirty ? " accent" : ""),
+        text: dirty || p.isNew ? "save preset" : "saved",
+        attrs: dirty ? null : { disabled: "" },
+        on: { click: () => saveInline(info) },
+      }),
     ]),
-    valueCards(info, draft, (k, v) => { draft[k] = v; }, "inline"),
+    valueCards(info, draft, (k, v) => { draft[k] = v; inlineSaveSync(); }, "inline"),
     el("div", { class: "hint sans", text: p.isNew
       ? "starts from the current values. saving does not activate it."
       : "saving does not restart the collector unless this preset is running." }),
@@ -961,6 +1015,9 @@ function valueCards(info, values, onEdit, scope) {
       el("div", { class: "k" }, [
         el("span", { class: "name", text: v.name, title: v.description || v.name }),
         el("span", { class: "grow" }),
+        // The editor band auto-saves (queueValue); its card carries the
+        // brief "saved" mark. The inline editor saves via its button.
+        scope === "ed" ? savedMark("ed:" + v.name) : null,
         span("origin", v.has_default ? "default" : yamlLineOf(yaml, v.name)),
       ]),
       el("div", { class: "v" }, [
@@ -1214,6 +1271,15 @@ async function copyText(text, confirmation) {
 let cm = null, cmDirty = false;
 function destroyEditor() { cm = null; cmDirty = false; }
 function editorDirty() { return S.screen === "editor" && !!cm && cmDirty; }
+// Flip the header save button in place on a cm keystroke — re-rendering the
+// screen would rebuild CodeMirror under the caret.
+function edSaveSync() {
+  const b = document.querySelector(".ed-save");
+  if (!b || S.saving) return;
+  b.textContent = cmDirty ? "save" : "saved";
+  b.classList.toggle("accent", cmDirty);
+  if (cmDirty) b.removeAttribute("disabled"); else b.setAttribute("disabled", "");
+}
 
 function screenEditor() {
   const info = byName(S.editId);
@@ -1242,7 +1308,12 @@ function screenEditor() {
       class: "ed-name",
       attrs: { spellcheck: "false", "data-fk": "ed-name", "aria-label": "configuration name" },
       props: { value: info.name },
-      on: { change: (e) => renameConfig(info, e.target.value) },
+      on: {
+        // Pending rename is visible: the field goes accent while it differs
+        // from the current name; enter or focus-out applies it (change).
+        input: (e) => e.target.classList.toggle("pending", slug(e.target.value) !== info.name),
+        change: (e) => renameConfig(info, e.target.value),
+      },
     }),
     origin === "url" ? el("input", {
       class: "ed-url", title: "source URL",
@@ -1259,8 +1330,13 @@ function screenEditor() {
       on: { click: () => headerResync(info, origin) },
     }, [icon(origin === "builtin" ? "undo" : "refresh", 12), span("", resetLabel)]) : null,
     el("button", {
-      class: "btn", text: S.saving ? "checking…" : "save",
-      attrs: S.saving ? { disabled: "" } : null,
+      // The button carries the yaml's save state: accent "save" while the
+      // editor is dirty, muted disabled "saved" while there is nothing to
+      // save, "checking…" while the collector is asked. Keystrokes flip it
+      // in place via edSaveSync (a cm change doesn't re-render).
+      class: "btn ed-save" + (cmDirty && !S.saving ? " accent" : ""),
+      text: S.saving ? "checking…" : cmDirty ? "save" : "saved",
+      attrs: S.saving || !cmDirty ? { disabled: "" } : null,
       on: { click: () => saveConfig(info) },
     }),
   ]));
@@ -1381,7 +1457,7 @@ function screenEditor() {
       mode: "yaml", lineNumbers: true, readOnly: !editable, lineWrapping: false, viewportMargin: 20,
     });
     cmDirty = dirty;
-    cm.on("change", () => { cmDirty = true; });
+    cm.on("change", () => { cmDirty = true; edSaveSync(); });
   });
   return wrap;
 }
@@ -1400,6 +1476,7 @@ function queueValue(info, key, value) {
     try {
       await apiJSON(cfgURL(info.name) + "/presets/" + enc(preset), "PUT", { values });
       await loadCore();
+      flashSaved("ed:" + key);
     } catch (e) { showError(e); }
   }, 500);
 }
@@ -1420,7 +1497,7 @@ async function setRemoteURL(info, url) {
   try {
     await apiJSON(cfgURL(info.name) + "/meta", "PUT", { remote_url: url });
     await loadCore();
-    note("source url updated", 3000);
+    note("source url saved", 3000);
   } catch (e) { showError(e); }
 }
 async function headerResync(info, origin) {
@@ -1491,7 +1568,7 @@ async function renamePreset(info, from, raw) {
    text put back when the collector rejects it, which is what makes the
    panel's "nothing was saved" true. */
 async function saveConfig(info) {
-  if (S.saving || !cm) return;
+  if (S.saving || !cm || !cmDirty) return; // clean editor: nothing to save
   const next = cm.getValue();
   const prev = S.yaml;
   S.saving = true; S.valErr = null; S.valOk = null; clearError();
@@ -1756,7 +1833,7 @@ function screenSettings() {
         span("t", "protocol"),
         el("span", { class: "n sans", text: "what the advertised endpoint speaks. http/protobuf unless your sdk needs otherwise" }),
       ]),
-      el("span", { class: "grow" }), pseg,
+      el("span", { class: "grow" }), savedMark("protocol"), pseg,
     ]),
     el("div", {
       class: "srow clickable", on: { click: () => setOSEnv(!osEnvOn) },
@@ -1767,6 +1844,7 @@ function screenSettings() {
         el("span", { class: "n sans", text: "apps launched from now on point at compy. already-running ones (your terminal included) pick it up after a relaunch" }),
       ]),
       el("span", { class: "grow" }),
+      savedMark("osenv"),
       el("span", { class: "switch" + (osEnvOn ? " on" : "") }, [el("i")]),
     ]),
     envGuide(),
@@ -2011,6 +2089,7 @@ function globalVars() {
       el("div", { class: "k" }, [
         el("span", { class: "name", text: g.name, title: g.desc }),
         el("span", { class: "grow" }),
+        savedMark("gvar-" + g.key),
         span("origin", "settings"),
       ]),
       el("div", { class: "v" }, [
@@ -2052,6 +2131,7 @@ async function savePort(key, raw) {
     S.settings = await apiJSON("/api/settings", "PUT", body); // backend 400s out-of-range
     S.portsSaved = true;
     await loadCore(); // status carries the (still-running) old ports; refresh anyway
+    flashSaved("gvar-" + key);
   } catch (e) { showError(e); try { await loadSettings(); } catch (e2) { /* keep stale */ } }
   render();
 }
@@ -2061,7 +2141,8 @@ async function setOSEnv(on) {
   try {
     await apiJSON("/api/os-env", "POST", { on });
     await loadCore();
-    note(on ? "OTEL_* variables set system-wide" : "OTEL_* variables cleared", 3000);
+    flashSaved("osenv");
+    note(on ? "saved. OTEL_* variables set system-wide" : "saved. OTEL_* variables cleared", 3000);
   } catch (e) { showError(e); }
 }
 /* Advertisement only — the collector serves every protocol regardless, so
@@ -2073,7 +2154,8 @@ async function setProtocol(p) {
   try {
     S.settings = await apiJSON("/api/settings", "PUT", { protocol: p });
     await loadCore(); // endpoint + verdict follow the advertisement
-    note("advertised endpoint now speaks " + p, 3000);
+    flashSaved("protocol");
+    note("saved. advertised endpoint now speaks " + p, 3000);
   } catch (e) { showError(e); }
   render();
 }
@@ -2199,14 +2281,15 @@ if (window.matchMedia) {
 document.addEventListener("click", (e) => {
   if (S.presetsOpenId && !e.target.closest(".cell-preset")) { S.presetsOpenId = null; render(); }
 }, true);
-// cmd/ctrl+S saves in the editor — the same save-and-validate as the button.
-// preventDefault always, so the browser's save dialog never opens; outside
-// the editor the shortcut otherwise does nothing. No other shortcuts.
+// cmd/ctrl+S saves in the editor — the same save-and-validate as the button,
+// and the same states: a clean editor makes it a no-op. preventDefault
+// always, so the browser's save dialog never opens; outside the editor the
+// shortcut otherwise does nothing. No other shortcuts.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && S.preflight) { S.preflight = null; render(); return; }
   if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
     e.preventDefault();
-    if (S.screen !== "editor") return;
+    if (!editorDirty()) return;
     const info = byName(S.editId);
     if (info) saveConfig(info);
   }
