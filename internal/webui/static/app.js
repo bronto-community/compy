@@ -556,7 +556,7 @@ function portsWarning(v) {
     return s;
   };
   const ready = S.adoptSel.grpc && S.adoptSel.http && S.adoptSel.grpc !== S.adoptSel.http && !S.adopting;
-  wrap.appendChild(el("span", { class: "pw-hint sans", text: "can't tell which port is which — assign them:" }));
+  wrap.appendChild(el("span", { class: "pw-hint sans", text: "can't tell which port is which. assign them:" }));
   wrap.appendChild(el("div", { class: "pw-row" }, [sel("grpc"), sel("http")]));
   wrap.appendChild(el("div", { class: "pw-row" }, [
     el("button", { class: "act", text: "cancel", on: { click: () => { S.adoptAsk = false; render(); } } }),
@@ -614,17 +614,14 @@ function screenConfigs() {
       }),
     ]),
     el("div", { attrs: { style: "display:flex; align-items:center; gap:18px; font-size:12px;" } }, [
-      el("button", {
-        class: "ico help", title: "help",
-        on: { click: () => { setHelpDismissed(!helpDismissed()); render(); } },
-      }, [icon("help", 14)]),
+      helpButton("configs"),
       el("button", { class: "act", text: "sync all", on: { click: syncAll } }),
       el("button", { class: "act primary", text: "new configuration", on: { click: openNew } }),
     ]),
   ]));
 
   const strips = el("div", { class: "strip-wrap" });
-  const help = helpStrip();
+  const help = helpStrip("configs");
   if (help) strips.appendChild(help);
   if (S.newOpen) strips.appendChild(newConfigStrip());
   if (S.note) strips.appendChild(el("div", { class: "note", text: S.note }));
@@ -650,27 +647,41 @@ function screenConfigs() {
   return wrap;
 }
 
-/* Help strip: two sentences, dismissible, remembered in localStorage
-   (guarded — WKWebView can run with storage blocked), and recoverable via
-   the header's help button (2026-08-26 round 2). */
-function helpDismissed() {
-  try { return localStorage.getItem("compy.helpDismissed") === "1"; } catch (e) { return false; }
+/* Help strips: one per screen, dismissible, remembered per page in
+   localStorage (guarded — WKWebView can run with storage blocked), and
+   recoverable via that screen's header help button (2026-08-26 round 2).
+   The configs key predates the per-page ones, so it keeps its old name. */
+const HELP_COPY = {
+  configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml or fetch it from a url.",
+  collector: "these numbers are the collector's own, scraped from its telemetry endpoint, and listening shows only ports the process actually has open. the log below is the collector's output, grouped by level and filterable. restart and stop live here; the configurations screen picks what runs.",
+  settings: "appearance, and how apps find compy: the advertised endpoint, its protocol, and the system-wide OTEL_* toggle. global variables are values every configuration's yaml can reference; the collector table downloads, updates, or replaces the binary every config runs on. the danger area at the bottom deletes everything compy manages.",
+  editor: "a configuration is one whole collector config.yaml plus its presets: named sets of values for the ${VAR} references in the yaml. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. cmd+s saves.",
+};
+function helpKey(page) { return page === "configs" ? "compy.helpDismissed" : "compy.helpDismissed." + page; }
+function helpDismissed(page) {
+  try { return localStorage.getItem(helpKey(page)) === "1"; } catch (e) { return false; }
 }
-function setHelpDismissed(on) {
+function setHelpDismissed(page, on) {
   try {
-    if (on) localStorage.setItem("compy.helpDismissed", "1");
-    else localStorage.removeItem("compy.helpDismissed");
+    if (on) localStorage.setItem(helpKey(page), "1");
+    else localStorage.removeItem(helpKey(page));
   } catch (e) { /* session-only */ }
 }
-function helpStrip() {
-  if (helpDismissed()) return null;
+function helpButton(page) {
+  return el("button", {
+    class: "ico help", title: "help",
+    on: { click: () => { setHelpDismissed(page, !helpDismissed(page)); render(); } },
+  }, [icon("help", 14)]);
+}
+function helpStrip(page) {
+  if (helpDismissed(page)) return null;
   return el("div", { class: "gethelp" }, [
     el("span", { class: "hicon" }, [icon("help", 14)]),
-    el("span", { class: "b sans", text: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play — activating restarts the collector. new configuration adds your own — paste yaml or fetch it from a url." }),
+    el("span", { class: "b sans", text: HELP_COPY[page] }),
     el("span", { class: "grow" }),
     el("button", {
       class: "act x", text: "✕", title: "hide this",
-      on: { click: () => { setHelpDismissed(true); render(); } },
+      on: { click: () => { setHelpDismissed(page, true); render(); } },
     }),
   ]);
 }
@@ -1006,7 +1017,7 @@ async function activate(name, preset) {
     // that trusts them, and that is worth a sentence right now.
     const v = S.status && S.status.conformance;
     if (v && !v.conforming) {
-      note("activated, but this config doesn't listen on compy's ports — apps using compy env won't reach it", 7000);
+      note("activated, but this config doesn't listen on compy's ports, so apps using compy env won't reach it", 7000);
     }
   } catch (e) {
     S.busyId = null;
@@ -1207,6 +1218,7 @@ function screenEditor() {
     el("span", { class: "grow" }),
     S.saving ? el("span", { class: "ed-hint busy-word", text: "asking the collector…" })
       : S.renameNote ? span("ed-hint", S.renameNote) : null,
+    helpButton("editor"),
     showReset ? el("button", {
       class: "btn withicon", title: origin === "url" && !info.modified ? "in sync with " + host : "your version",
       on: { click: () => headerResync(info, origin) },
@@ -1218,6 +1230,8 @@ function screenEditor() {
     }),
   ]));
 
+  const ehelp = helpStrip("editor");
+  if (ehelp) wrap.appendChild(el("div", { class: "strip-wrap" }, [ehelp]));
   const noteEl = noteStrip();
   if (noteEl) wrap.appendChild(noteEl);
 
@@ -1483,6 +1497,7 @@ function screenCollector() {
       // half that carries meaning.
       span("col-meta", stopped ? "no process" : ""),
       el("span", { class: "grow" }),
+      helpButton("collector"),
       el("button", {
         class: "btn", text: busy ? "restarting…" : stopped ? "start" : "restart",
         attrs: busy ? { disabled: "" } : null,
@@ -1490,13 +1505,15 @@ function screenCollector() {
       }),
       !stopped && !busy ? el("button", {
         class: "btn quiet", text: "stop",
-        title: "stop the collector. nothing will be received until you activate a config again.",
+        title: "stop the collector. it receives nothing until you activate a config again.",
         on: { click: stopCollector },
       }) : null,
     ]),
     tiles(stopped),
   ]));
 
+  const chelp = helpStrip("collector");
+  if (chelp) wrap.appendChild(el("div", { class: "strip-wrap" }, [chelp]));
   const cn = noteStrip();
   if (cn) wrap.appendChild(cn);
   wrap.appendChild(healthStrip(stopped));
@@ -1657,7 +1674,7 @@ function envGuide() {
   return el("div", { class: "envguide" }, [
     el("div", { class: "n sans", text: "or wire a shell instead:" }),
     row("current shell, right now", 'eval "$(compy env)"'),
-    row("every new shell — append to ~/.zshrc (or your shell's rc)", "echo 'eval \"$(compy env)\"' >> ~/.zshrc"),
+    row("every new shell: append to ~/.zshrc (or your shell's rc)", "echo 'eval \"$(compy env)\"' >> ~/.zshrc"),
     row("one command only", "compy run -- <cmd>"),
     el("div", { class: "n sans", text: "an app's own environment always wins over the system-wide toggle." }),
   ]);
@@ -1665,11 +1682,17 @@ function envGuide() {
 
 function screenSettings() {
   const wrap = el("div", { class: "settings" });
+  const shelp = helpStrip("settings");
+  if (shelp) wrap.appendChild(el("div", { class: "strip-wrap" }, [shelp]));
   const sn = noteStrip();
   if (sn) wrap.appendChild(sn);
 
   wrap.appendChild(el("div", { class: "sec" }, [
-    span("title", "app"),
+    el("div", { attrs: { style: "display:flex; align-items:center; gap:12px;" } }, [
+      span("title", "app"),
+      el("span", { class: "grow" }),
+      helpButton("settings"),
+    ]),
     el("div", { class: "subtitle sans", text: "appearance, and how apps find compy." }),
   ]));
 
@@ -1692,7 +1715,7 @@ function screenSettings() {
     el("div", { class: "srow" }, [
       el("span", { class: "lbl" }, [
         span("t", "protocol"),
-        el("span", { class: "n sans", text: "what the advertised endpoint speaks — http/protobuf unless your sdk needs otherwise" }),
+        el("span", { class: "n sans", text: "what the advertised endpoint speaks. http/protobuf unless your sdk needs otherwise" }),
       ]),
       el("span", { class: "grow" }), pseg,
     ]),
@@ -1702,7 +1725,7 @@ function screenSettings() {
     }, [
       el("span", { class: "lbl" }, [
         span("t", "set OTEL_* variables system-wide"),
-        el("span", { class: "n sans", text: "apps launched from now on point at compy — already-running ones (your terminal included) pick it up after a relaunch" }),
+        el("span", { class: "n sans", text: "apps launched from now on point at compy. already-running ones (your terminal included) pick it up after a relaunch" }),
       ]),
       el("span", { class: "grow" }),
       el("span", { class: "switch" + (osEnvOn ? " on" : "") }, [el("i")]),
@@ -1712,13 +1735,13 @@ function screenSettings() {
 
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
     span("title", "global variables"),
-    el("div", { class: "subtitle sans", text: "available in every configuration's yaml — that's why they're not part of presets." }),
+    el("div", { class: "subtitle sans", text: "available in every configuration's yaml, which is why they're not part of presets." }),
   ]));
   wrap.appendChild(globalVars());
 
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
     span("title", "collector"),
-    el("div", { class: "subtitle sans", text: "one collector runs every configuration. compy ships with its own (otelcol-compy); core, contrib, and otlp can be downloaded, or add your own." }),
+    el("div", { class: "subtitle sans", text: "one collector runs every configuration. compy ships with its own (otelcol-compy); download core, contrib, or otlp, or add your own." }),
   ]));
 
   const table = el("div", { class: "card" }, [
@@ -1763,7 +1786,7 @@ function factoryResetCard() {
   card.appendChild(el("div", { class: "srow" }, [
     el("span", { class: "lbl" }, [
       span("t", "reset compy to factory settings"),
-      el("span", { class: "n sans", text: "deletes all configurations, presets, downloaded collectors, logs, and settings — the shipped configs come back fresh." }),
+      el("span", { class: "n sans", text: "deletes all configurations, presets, downloaded collectors, logs, and settings. the shipped configs come back fresh." }),
     ]),
     el("span", { class: "grow" }),
     S.resetArm ? null : el("button", {
@@ -1878,7 +1901,7 @@ function distroRow(b) {
       : blocked ? "not available on macOS"
         : busy ? "downloading…"
           : checking ? "checking…"
-            : b.latest_available ? b.latest_available + " is available — update " + b.name
+            : b.latest_available ? b.latest_available + " is available. update " + b.name
               : "check for a newer release and update " + b.name;
 
   const row = el("div", { class: "bin-grid bin-row" + (inUse ? " on" : "") }, [

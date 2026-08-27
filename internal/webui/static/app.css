@@ -775,4 +775,5 @@ dialog.ask .row { display: flex; justify-content: flex-end; gap: 10px; }
   line-height: 1.7; color: var(--diag); overflow-x: auto; white-space: pre;
 }
 .settings > .strip-wrap { padding: 0; }
+.settings .gethelp { margin-top: 0; }
 .hidden { display: none !important; }
