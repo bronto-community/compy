@@ -175,6 +175,11 @@ func New() (*App, error) {
 	if err := cfgstore.MaterializeDefaults(dir); err != nil {
 		return nil, err
 	}
+	// One-time repair for state written before the every-config-has-a-preset
+	// invariant: a config with no presets gains the default preset.
+	if err := cfgstore.EnsurePresets(dir); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 
@@ -300,12 +305,10 @@ func (a *App) Activate(name, preset string) error {
 		return err
 	}
 	if preset == "" {
-		preset = info.Meta.ActivePreset
+		preset = info.Meta.ActivePreset // always a real preset (EnsurePresets)
 	}
-	if preset != "" {
-		if _, ok := info.Meta.Presets[preset]; !ok {
-			return state.BadRequest(fmt.Errorf("config %q has no preset %q", name, preset))
-		}
+	if _, ok := info.Meta.Presets[preset]; !ok {
+		return state.BadRequest(fmt.Errorf("config %q has no preset %q", name, preset))
 	}
 	bin, err := a.EnsureDistro("", nil)
 	if err != nil {
@@ -325,7 +328,7 @@ func (a *App) Activate(name, preset string) error {
 		return state.BadRequest(err)
 	}
 
-	if preset != "" && preset != info.Meta.ActivePreset {
+	if preset != info.Meta.ActivePreset {
 		if err := cfgstore.UsePreset(a.Dir, name, preset); err != nil {
 			return err
 		}
