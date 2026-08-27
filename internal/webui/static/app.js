@@ -143,6 +143,7 @@ const S = {
   unlocked: false, unlockAsk: false, yamlOpen: false,
   preset: null, reveal: {},
   saving: false, valErr: null, valOk: null,
+  valMissing: [],          // unset required vars explaining valErr — offers save-without-validating
   renameNote: null,
 
   // collector
@@ -252,10 +253,12 @@ function portLabel(p) {
 function droppingVars() {
   return (S.health && S.health.dropping && S.health.dropping.vars) || [];
 }
+function nameList(names) {
+  return names.length === 1 ? names[0]
+    : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+}
 function droppingText(vars) {
-  const list = vars.length === 1 ? vars[0]
-    : vars.slice(0, -1).join(", ") + " and " + vars[vars.length - 1];
-  return "dropping data — " + list + (vars.length === 1 ? " has" : " have") + " no value";
+  return "dropping data — " + nameList(vars) + (vars.length === 1 ? " has" : " have") + " no value";
 }
 /* The pre-flight's "add values" action, reached from runtime evidence: the
    inline preset editor on the active config's running preset (a real one —
@@ -380,7 +383,7 @@ async function enterRoute() {
       S.unlocked = origin === "user";
       S.yamlOpen = origin === "user";
       S.unlockAsk = false;
-      S.valErr = null; S.valOk = null; S.renameNote = null;
+      S.valErr = null; S.valOk = null; S.valMissing = []; S.renameNote = null;
       S.preset = selectedPreset(info);
       destroyEditor();
     } else {
@@ -1499,8 +1502,18 @@ function screenEditor() {
         span("headline", "the collector rejected this config. nothing was saved."),
         el("span", { class: "grow" }),
         el("button", { class: "act", text: "copy", on: { click: () => copyText(S.valErr, "diagnostic copied") } }),
-        el("button", { class: "act", text: "dismiss", on: { click: () => { S.valErr = null; render(); } } }),
+        el("button", { class: "act", text: "dismiss", on: { click: () => { S.valErr = null; S.valMissing = []; render(); } } }),
       ]),
+      // The failure is explained by variables that simply have no values
+      // yet — "write the yaml first, fill values second" is a legitimate
+      // order of work, so offer the save without the collector's blessing.
+      // Activation stays guarded by its own pre-flight either way.
+      S.valMissing.length ? el("div", { class: "bar2" }, [
+        span("sans", nameList(S.valMissing) + (S.valMissing.length === 1 ? " has no value" : " have no values")
+          + " yet — the collector cannot validate without " + (S.valMissing.length === 1 ? "it" : "them") + "."),
+        el("span", { class: "grow" }),
+        el("button", { class: "act", text: "save without validating", on: { click: () => saveAnyway(info) } }),
+      ]) : null,
       el("pre", { text: S.valErr }),
     ]));
   }
@@ -1670,7 +1683,7 @@ async function saveConfig(info) {
   if (S.saving || !cm || !cmDirty) return; // clean editor: nothing to save
   const next = cm.getValue();
   const prev = S.yaml;
-  S.saving = true; S.valErr = null; S.valOk = null; clearError();
+  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; clearError();
   render();
   const t0 = Date.now();
   const wasRunning = isRunningCfg(info.name);
@@ -1685,7 +1698,38 @@ async function saveConfig(info) {
     await loadCore();
   } catch (e) {
     S.valErr = e.message || String(e);
+    // Is the rejection explained by variables that simply have no values
+    // yet? The draft IS on disk right now (the PUT wrote it before
+    // validation failed), so the server's parse of it — the same rule the
+    // activation pre-flight uses — is the draft's own variables.
+    try {
+      const d = await api(cfgURL(info.name));
+      S.valMissing = missingRequired(d.info, S.preset);
+    } catch (e2) { /* unexplained stays unexplained */ }
     try { await api(cfgURL(info.name) + "/yaml", { method: "PUT", headers: { "Content-Type": "text/plain" }, body: prev }); } catch (e2) { /* nothing better to do */ }
+  }
+  S.saving = false;
+  render();
+}
+
+/* Save-anyway: the escape hatch the panel offers when the rejection is
+   explained by unset variables. Writes with ?validate=false — the backend
+   never touches the running collector for an unvalidated write, so an
+   active running config keeps its previous version (running_stale) until
+   the user restarts or activates. */
+async function saveAnyway(info) {
+  if (S.saving || !cm) return;
+  const next = cm.getValue();
+  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; clearError();
+  render();
+  try {
+    const r = await api(cfgURL(info.name) + "/yaml?validate=false", { method: "PUT", headers: { "Content-Type": "text/plain" }, body: next });
+    S.yaml = next; cmDirty = false;
+    S.valOk = "saved without validating. fill the values, then activate to check it."
+      + (r && r.running_stale ? " the running collector keeps the previous version until then." : "");
+    await loadCore();
+  } catch (e) {
+    S.valErr = e.message || String(e);
   }
   S.saving = false;
   render();

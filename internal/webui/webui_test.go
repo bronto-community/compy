@@ -31,19 +31,20 @@ func fakeAPI() API {
 		Validate:     func() error { return nil },
 		FactoryReset: func() error { return nil },
 
-		CreateConfig:   func(name, yaml string) error { return nil },
-		CreateFromURL:  func(name, url string) error { return nil },
-		GetConfig:      func(name string) (any, error) { return map[string]any{}, nil },
-		PutConfigYAML:  func(name, yaml string) error { return nil },
-		PutConfigMeta:  func(name string, remoteURL *string) error { return nil },
-		DeleteConfig:   func(name string) error { return nil },
-		CopyConfig:     func(src, dst string) error { return nil },
-		ValidateConfig: func(name string) error { return nil },
-		Sync:           func(name string) error { return nil },
-		Resync:         func(name string) error { return nil },
-		Reset:          func(name string) error { return nil },
-		RenameConfig:   func(from, to string) error { return nil },
-		SyncAll:        func() ([]string, error) { return nil, nil },
+		CreateConfig:            func(name, yaml string) error { return nil },
+		CreateFromURL:           func(name, url string) error { return nil },
+		GetConfig:               func(name string) (any, error) { return map[string]any{}, nil },
+		PutConfigYAML:           func(name, yaml string) error { return nil },
+		PutConfigYAMLNoValidate: func(name, yaml string) (bool, error) { return false, nil },
+		PutConfigMeta:           func(name string, remoteURL *string) error { return nil },
+		DeleteConfig:            func(name string) error { return nil },
+		CopyConfig:              func(src, dst string) error { return nil },
+		ValidateConfig:          func(name string) error { return nil },
+		Sync:                    func(name string) error { return nil },
+		Resync:                  func(name string) error { return nil },
+		Reset:                   func(name string) error { return nil },
+		RenameConfig:            func(from, to string) error { return nil },
+		SyncAll:                 func() ([]string, error) { return nil, nil },
 
 		PutPreset:    func(name, preset string, values map[string]string) error { return nil },
 		DeletePreset: func(name, preset string) error { return nil },
@@ -437,6 +438,63 @@ func TestPutConfigYAMLOversizedBody(t *testing.T) {
 	var got map[string]string
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil || got["error"] == "" {
 		t.Fatalf("body = %v, %v, want {\"error\":...}", got, err)
+	}
+}
+
+// TestPutConfigYAMLValidateFalse pins the escape hatch: ?validate=false
+// routes to the no-validate closure (never the validating one) and reports
+// running_stale so the UI can say the running collector kept the previous
+// version. A plain PUT keeps today's validating path exactly.
+func TestPutConfigYAMLValidateFalse(t *testing.T) {
+	api := fakeAPI()
+	var gotName, gotYAML string
+	api.PutConfigYAML = func(name, yaml string) error {
+		t.Fatal("PutConfigYAML called for a validate=false write")
+		return nil
+	}
+	api.PutConfigYAMLNoValidate = func(name, yaml string) (bool, error) {
+		gotName, gotYAML = name, yaml
+		return true, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/configs/debug/yaml?validate=false", strings.NewReader("a: 1\n"))
+	req.Host = "localhost"
+	req.SetPathValue("name", "debug")
+	rec := httptest.NewRecorder()
+	handlePutConfigYAML(api)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotName != "debug" || gotYAML != "a: 1\n" {
+		t.Fatalf("PutConfigYAMLNoValidate got (%q, %q)", gotName, gotYAML)
+	}
+	var got map[string]bool
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil || !got["ok"] || !got["running_stale"] {
+		t.Fatalf("body = %v, %v, want ok and running_stale true", got, err)
+	}
+
+	// Without the param, the validating path runs and the answer stays the
+	// plain {"ok":true} it has always been.
+	var validated bool
+	api.PutConfigYAML = func(name, yaml string) error { validated = true; return nil }
+	api.PutConfigYAMLNoValidate = func(name, yaml string) (bool, error) {
+		t.Fatal("PutConfigYAMLNoValidate called for a plain PUT")
+		return false, nil
+	}
+	req = httptest.NewRequest(http.MethodPut, "/api/configs/debug/yaml", strings.NewReader("a: 1\n"))
+	req.Host = "localhost"
+	req.SetPathValue("name", "debug")
+	rec = httptest.NewRecorder()
+	handlePutConfigYAML(api)(rec, req)
+	if rec.Code != http.StatusOK || !validated {
+		t.Fatalf("plain PUT: status = %d, validated = %v, want 200 and the validating path", rec.Code, validated)
+	}
+	var plain map[string]bool
+	if err := json.NewDecoder(rec.Body).Decode(&plain); err != nil || !plain["ok"] {
+		t.Fatalf("plain PUT body = %v, %v, want {\"ok\":true}", plain, err)
+	}
+	if _, present := plain["running_stale"]; present {
+		t.Fatal("plain PUT body carries running_stale; that field belongs to validate=false only")
 	}
 }
 

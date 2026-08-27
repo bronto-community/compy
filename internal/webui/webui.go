@@ -41,21 +41,25 @@ type API struct {
 	Validate     func() error
 	FactoryReset func() error // uninstall the job, wipe the state dir, re-create the shipped defaults
 
-	Configs        func() (any, error) // configurations, JSON-marshalable
-	CreateConfig   func(name, yaml string) error
-	CreateFromURL  func(name, url string) error
-	GetConfig      func(name string) (any, error) // {"info":..., "yaml":...}
-	PutConfigYAML  func(name, yaml string) error
-	PutConfigMeta  func(name string, remoteURL *string) error // nil = unchanged
-	DeleteConfig   func(name string) error
-	CopyConfig     func(src, dst string) error
-	Activate       func(name, preset string) error // make a configuration the running one; "" preset keeps the current one
-	ValidateConfig func(name string) error         // validate this config (any config, not just the active one) against its own distro
-	Sync           func(name string) error
-	Resync         func(name string) error
-	Reset          func(name string) error // restore a modified built-in config to its shipped version
-	RenameConfig   func(from, to string) error
-	SyncAll        func() ([]string, error)
+	Configs       func() (any, error) // configurations, JSON-marshalable
+	CreateConfig  func(name, yaml string) error
+	CreateFromURL func(name, url string) error
+	GetConfig     func(name string) (any, error) // {"info":..., "yaml":...}
+	PutConfigYAML func(name, yaml string) error
+	// PutConfigYAMLNoValidate writes without validating and never touches
+	// the running collector; returns whether the active running collector
+	// is now on a stale (previous) version of this config.
+	PutConfigYAMLNoValidate func(name, yaml string) (bool, error)
+	PutConfigMeta           func(name string, remoteURL *string) error // nil = unchanged
+	DeleteConfig            func(name string) error
+	CopyConfig              func(src, dst string) error
+	Activate                func(name, preset string) error // make a configuration the running one; "" preset keeps the current one
+	ValidateConfig          func(name string) error         // validate this config (any config, not just the active one) against its own distro
+	Sync                    func(name string) error
+	Resync                  func(name string) error
+	Reset                   func(name string) error // restore a modified built-in config to its shipped version
+	RenameConfig            func(from, to string) error
+	SyncAll                 func() ([]string, error)
 
 	PutPreset    func(name, preset string, values map[string]string) error // create/replace a whole preset
 	DeletePreset func(name, preset string) error
@@ -585,6 +589,9 @@ const maxBodyBytes = 5 << 20
 
 // handlePutConfigYAML's body is text/plain, not JSON: the whole body is the
 // new YAML content. The size cap itself is applied by Handler, not here.
+// ?validate=false writes without validating and never touches the running
+// collector; the response's running_stale says when the active running
+// collector kept its previous version.
 func handlePutConfigYAML(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data, err := io.ReadAll(r.Body)
@@ -592,7 +599,17 @@ func handlePutConfigYAML(api API) http.HandlerFunc {
 			writeBodyErr(w, err)
 			return
 		}
-		if err := api.PutConfigYAML(r.PathValue("name"), string(data)); err != nil {
+		name := r.PathValue("name")
+		if r.URL.Query().Get("validate") == "false" {
+			stale, err := api.PutConfigYAMLNoValidate(name, string(data))
+			if err != nil {
+				writeClosureErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true, "running_stale": stale})
+			return
+		}
+		if err := api.PutConfigYAML(name, string(data)); err != nil {
 			writeClosureErr(w, err)
 			return
 		}

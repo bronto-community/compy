@@ -2169,6 +2169,66 @@ func TestEditingTheStoppedActiveConfigStaysStopped(t *testing.T) {
 	}
 }
 
+// TestWriteConfigYAMLNoValidateNeverTouchesTheCollector pins the skip
+// mode's whole contract: the yaml lands, the collector binary is never
+// asked (the distro is swapped for one that rejects everything), the
+// running process is never restarted, and runningStale reports that the
+// active running collector kept the previous version.
+func TestWriteConfigYAMLNoValidateNeverTouchesTheCollector(t *testing.T) {
+	// Running for the initial activation and still running when the
+	// unvalidated write checks whether it left a stale process behind.
+	calls := setupStaged(t, "state = running", "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// From here every validation would fail — proving no validation runs.
+	fakeDistro(t, "echo rejected >&2; exit 1")
+	*calls = nil
+	stale, err := a.WriteConfigYAMLNoValidate("debug", "exporters:\n  otlp:\n    endpoint: ${env:NOT_SET_YET}\n")
+	if err != nil {
+		t.Fatalf("WriteConfigYAMLNoValidate: %v", err)
+	}
+	if !stale {
+		t.Error("runningStale = false, want true: the active running collector kept the previous version")
+	}
+	if called(*calls, "bootstrap") || called(*calls, "kickstart") {
+		t.Errorf("unvalidated write touched the running collector: %v", *calls)
+	}
+	_, yaml, err := cfgstore.Get(a.Dir, "debug")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(yaml, "NOT_SET_YET") {
+		t.Errorf("yaml not written: %q", yaml)
+	}
+
+	// A config that is not the active one: written, not stale, still no
+	// collector involvement.
+	*calls = nil
+	stale, err = a.WriteConfigYAMLNoValidate("otlp", "poked: true\n")
+	if err != nil {
+		t.Fatalf("WriteConfigYAMLNoValidate(otlp): %v", err)
+	}
+	if stale {
+		t.Error("runningStale = true for a non-active config, want false")
+	}
+	if len(*calls) != 0 {
+		t.Errorf("non-active unvalidated write called launchctl: %v", *calls)
+	}
+
+	if _, err := a.WriteConfigYAMLNoValidate("no-such-config", "a: 1\n"); err == nil {
+		t.Error("WriteConfigYAMLNoValidate(unknown) = nil, want an error")
+	}
+}
+
 // TestUseDistroStartupFailureRestoresTheBinary: switching the one collector
 // to a binary that won't start puts the working one back, settings included.
 func TestUseDistroStartupFailureRestoresTheBinary(t *testing.T) {

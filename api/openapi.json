@@ -617,7 +617,14 @@
       "put": {
         "summary": "Replace a configuration's YAML",
         "parameters": [
-          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          {
+            "name": "validate",
+            "in": "query",
+            "required": false,
+            "description": "Pass \"false\" to write without asking the collector — the escape hatch for a config whose referenced variables have no values yet. The running collector is never touched: an unvalidated config is not auto-applied, so an active running configuration keeps its previous version until the next restart or activation (reported as running_stale: true).",
+            "schema": { "type": "string", "enum": ["false"] }
+          }
         ],
         "requestBody": {
           "content": { "text/plain": { "schema": { "type": "string" } } }
@@ -625,7 +632,18 @@
         "responses": {
           "200": {
             "description": "OK",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "running_stale": { "type": "boolean", "description": "Only with validate=false: the active running collector kept the previous version of this config." }
+                  },
+                  "required": ["ok"]
+                }
+              }
+            }
           },
           "413": {
             "description": "Body too large",
