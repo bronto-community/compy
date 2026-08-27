@@ -3,6 +3,7 @@ package envvars
 import (
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,9 +15,79 @@ func TestVars(t *testing.T) {
 	want := map[string]string{
 		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:14318",
 		"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+		"OTEL_TRACES_EXPORTER":        "otlp",
+		"OTEL_METRICS_EXPORTER":       "otlp",
+		"OTEL_LOGS_EXPORTER":          "otlp",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Vars() = %#v, want %#v", got, want)
+	}
+}
+
+// TestEnvScriptSignalExporters: what `compy env` prints must pin the three
+// per-signal exporters alongside endpoint/protocol.
+func TestEnvScriptSignalExporters(t *testing.T) {
+	script, err := Script(Vars(state.Settings{GRPCPort: 14317, HTTPPort: 14318}), "sh")
+	if err != nil {
+		t.Fatalf("Script() unexpected error: %v", err)
+	}
+	for _, line := range []string{
+		"export OTEL_TRACES_EXPORTER='otlp'\n",
+		"export OTEL_METRICS_EXPORTER='otlp'\n",
+		"export OTEL_LOGS_EXPORTER='otlp'\n",
+	} {
+		if !strings.Contains(script, line) {
+			t.Errorf("Script() = %q, missing %q", script, line)
+		}
+	}
+}
+
+// TestSetUnsetOSAllVars: SetOS/UnsetOS over Vars() must cover the full
+// five-key set — toggling OS-env off has to unset everything set-os set.
+func TestSetUnsetOSAllVars(t *testing.T) {
+	orig := Exec
+	defer func() { Exec = orig }()
+
+	var calls []string
+	Exec = func(name string, arg ...string) *exec.Cmd {
+		calls = append(calls, name+" "+strings.Join(arg, " "))
+		return exec.Command("true")
+	}
+
+	vars := Vars(state.Settings{GRPCPort: 14317, HTTPPort: 14318})
+	keys := []string{
+		"OTEL_EXPORTER_OTLP_ENDPOINT",
+		"OTEL_EXPORTER_OTLP_PROTOCOL",
+		"OTEL_LOGS_EXPORTER",
+		"OTEL_METRICS_EXPORTER",
+		"OTEL_TRACES_EXPORTER",
+	}
+
+	if err := SetOS(vars); err != nil {
+		t.Fatalf("SetOS() unexpected error: %v", err)
+	}
+	if len(calls) != len(keys) {
+		t.Errorf("SetOS() ran %d commands, want %d: %v", len(calls), len(keys), calls)
+	}
+	for _, k := range keys {
+		want := "launchctl setenv " + k + " " + vars[k]
+		if !slices.Contains(calls, want) {
+			t.Errorf("SetOS() calls = %v, missing %q", calls, want)
+		}
+	}
+
+	calls = nil
+	if err := UnsetOS(vars); err != nil {
+		t.Fatalf("UnsetOS() unexpected error: %v", err)
+	}
+	if len(calls) != len(keys) {
+		t.Errorf("UnsetOS() ran %d commands, want %d: %v", len(calls), len(keys), calls)
+	}
+	for _, k := range keys {
+		want := "launchctl unsetenv " + k
+		if !slices.Contains(calls, want) {
+			t.Errorf("UnsetOS() calls = %v, missing %q", calls, want)
+		}
 	}
 }
 
