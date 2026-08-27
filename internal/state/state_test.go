@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSettingsRoundTrip(t *testing.T) {
@@ -119,6 +120,22 @@ func TestDirCreatesSubdirs(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(home, sub)); err != nil {
 			t.Fatal(sub, err)
 		}
+	}
+}
+
+func TestUpdateCheckRoundTrip(t *testing.T) {
+	t.Setenv("COMPY_HOME", t.TempDir())
+	c, err := LoadUpdateCheck() // no file yet: zero value, no claim
+	if err != nil || c.Latest != "" || !c.CheckedAt.IsZero() {
+		t.Fatalf("defaults wrong: %+v %v", c, err)
+	}
+	want := UpdateCheck{Latest: "0.161.0", CheckedAt: time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)}
+	if err := SaveUpdateCheck(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadUpdateCheck()
+	if err != nil || got.Latest != want.Latest || !got.CheckedAt.Equal(want.CheckedAt) {
+		t.Fatalf("got %+v (%v), want %+v", got, err, want)
 	}
 }
 

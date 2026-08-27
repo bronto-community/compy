@@ -55,6 +55,32 @@ func TestLatestVersionHonestErrors(t *testing.T) {
 	}
 }
 
+func TestNewerVersion(t *testing.T) {
+	cases := []struct {
+		latest, current string
+		want            bool
+	}{
+		{"0.161.0", "0.135.0", true},  // newer
+		{"0.135.0", "0.135.0", false}, // equal
+		{"0.135.0", "0.161.0", false}, // older
+		{"1.0.0", "0.161.0", true},    // major beats minor
+		{"0.135.1", "0.135.0", true},  // patch bump
+		{"0.161", "0.135.0", true},    // short form, missing part = 0
+		{"0.135.0", "0.135", false},   // equal via missing part
+		{"0.161.0", "unknown", false}, // bundled stamp fallback: no claim
+		{"0.161.0", "", false},        // user-managed rows have no version
+		{"", "0.135.0", false},        // no check result yet
+		{"garbage", "0.135.0", false}, // malformed latest
+		{"0.161.0", "v0.135.0", false},
+		{"0.-1.0", "0.135.0", false},
+	}
+	for _, c := range cases {
+		if got := NewerVersion(c.latest, c.current); got != c.want {
+			t.Errorf("NewerVersion(%q, %q) = %v, want %v", c.latest, c.current, got, c.want)
+		}
+	}
+}
+
 func TestDefForVersion(t *testing.T) {
 	base := Def{Name: "otlp", Version: "0.135.0", Binary: "otelcol-otlp",
 		URLs: map[string]string{"darwin_arm64": "x", "linux_amd64": "y"}}

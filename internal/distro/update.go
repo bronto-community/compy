@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
 
@@ -54,6 +55,50 @@ func LatestVersion(fetch Fetch) (string, error) {
 		return strings.TrimPrefix(r.TagName, "v"), nil
 	}
 	return "", errors.New("release check: no collector release in the GitHub API response")
+}
+
+// NewerVersion reports whether latest is a strictly newer release than
+// current, comparing dot-separated numeric parts (a missing part counts as
+// 0, so "0.161" > "0.135.0"). A malformed or empty version on either side
+// never claims: "", "unknown" (the bundled build stamp fallback), or any
+// non-numeric part compares false.
+func NewerVersion(latest, current string) bool {
+	lp, lok := versionParts(latest)
+	cp, cok := versionParts(current)
+	if !lok || !cok {
+		return false
+	}
+	for i := 0; i < len(lp) || i < len(cp); i++ {
+		var l, c int
+		if i < len(lp) {
+			l = lp[i]
+		}
+		if i < len(cp) {
+			c = cp[i]
+		}
+		if l != c {
+			return l > c
+		}
+	}
+	return false
+}
+
+// versionParts parses "0.161.0" into {0, 161, 0}; ok is false for anything
+// that is not dot-separated non-negative integers.
+func versionParts(v string) ([]int, bool) {
+	if v == "" {
+		return nil, false
+	}
+	fields := strings.Split(v, ".")
+	out := make([]int, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil || n < 0 {
+			return nil, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
 
 // DefForVersion returns d retargeted at another upstream version, following
