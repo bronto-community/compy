@@ -1915,9 +1915,12 @@ function distroRow(b) {
   const checking = !!S.up[b.name];
   const ver = b.version ? " · " + b.version : "";
   // The persisted release check (background or on-demand) claims a newer
-  // version; only updatable rows carry it, and it clears once the update
-  // pulls (the version in effect catches up).
+  // version; only installed updatable rows carry it, and it clears once the
+  // update pulls (the version in effect catches up). An undownloaded row
+  // instead says what a download would fetch: the persisted latest, or the
+  // compiled-in pin when no check has run yet.
   const avail = b.latest_available ? " · " + b.latest_available + " available" : "";
+  const fetches = b.fetch_version ? " · downloads " + b.fetch_version + (b.fetch_pinned ? " (pinned)" : "") : "";
 
   // A real fetch failure is a Go error with a URL in it — too long for a
   // 1fr cell. The row shows one short line; the whole thing is the tooltip.
@@ -1930,21 +1933,24 @@ function distroRow(b) {
           : inUse ? "in use" + ver + avail
             : blocked ? "not available on macOS"
               : here ? (mine ? "added by you" : "installed" + ver + avail)
-                : "available to download" + ver + avail;
+                : "available to download" + fetches;
   const stateCls = busy || checking || inUse ? " accent" : failed ? " bad" : blocked || (bundled && !here) ? " off" : mine ? " mine" : "";
   const glyph = inUse ? "dot" : blocked || (bundled && !here) ? "ban" : here ? "circle" : "download";
 
-  // The update affordance belongs to the pinned upstream definitions only:
-  // the bundled collector updates with compy releases, and a user-managed
-  // path is the user's to update — each disabled title says so.
-  const canUpdate = b.definition && !b.user_entry && !blocked;
+  // The update affordance belongs to INSTALLED pinned definitions only: the
+  // bundled collector updates with compy releases, a user-managed path is
+  // the user's to update, and an undownloaded row has nothing to update —
+  // its download fetches the newest release directly. Each disabled title
+  // says so.
+  const canUpdate = b.definition && !b.user_entry && !blocked && here;
   const updateTitle = bundled ? "updates with compy releases"
     : !b.definition || b.user_entry ? "user-managed — update the binary at its path yourself"
       : blocked ? "not available on macOS"
-        : busy ? "downloading…"
-          : checking ? "checking…"
-            : b.latest_available ? b.latest_available + " is available. update " + b.name
-              : "check for a newer release and update " + b.name;
+        : !here ? "nothing installed — download fetches the newest release"
+          : busy ? "downloading…"
+            : checking ? "checking…"
+              : b.latest_available ? b.latest_available + " is available. update " + b.name
+                : "check for a newer release and update " + b.name;
 
   const row = el("div", { class: "bin-grid bin-row" + (inUse ? " on" : "") }, [
     el("span", { class: "ic" + (blocked || (bundled && !here) ? " off" : ""), title: state }, [icon(glyph, 13)]),
