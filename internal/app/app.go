@@ -576,6 +576,26 @@ func (a *App) WriteConfigYAML(name, yaml string) error {
 	return a.reactivateIf(name)
 }
 
+// WriteConfigYAMLNoValidate replaces a configuration's YAML without asking
+// the collector and without touching the running process — the escape hatch
+// for "write the yaml first, fill the variable values second", where
+// validation cannot pass yet. An unvalidated config must never be
+// auto-applied, so the reactivate step is skipped entirely; when name is the
+// active configuration and the collector is running, the write still lands
+// but the process keeps its previous config until the user restarts or
+// activates. runningStale reports exactly that case, so callers can say so.
+func (a *App) WriteConfigYAMLNoValidate(name, yaml string) (runningStale bool, err error) {
+	if err := cfgstore.WriteYAML(a.Dir, name, yaml); err != nil {
+		return false, err
+	}
+	if a.isActive(name) {
+		if running, _ := launchd.Running(); running {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // UpdateConfigMeta updates a configuration's remote URL (nil = unchanged),
 // re-activating if it is the running one. There is no per-config collector
 // binary to update: one collector runs every configuration.
@@ -1646,21 +1666,22 @@ func (a *App) WebUIAPI() webui.API {
 		Validate:     a.Validate,
 		FactoryReset: a.FactoryReset,
 
-		Configs:        func() (any, error) { return a.Configs() },
-		CreateConfig:   a.CreateConfig,
-		CreateFromURL:  a.CreateFromURL,
-		GetConfig:      a.configDetail,
-		PutConfigYAML:  a.WriteConfigYAML,
-		PutConfigMeta:  a.UpdateConfigMeta,
-		DeleteConfig:   a.DeleteConfig,
-		CopyConfig:     a.CopyConfig,
-		Activate:       a.Activate,
-		ValidateConfig: a.ValidateConfig,
-		Sync:           a.Sync,
-		Resync:         a.Resync,
-		Reset:          a.Reset,
-		RenameConfig:   a.RenameConfig,
-		SyncAll:        a.SyncAll,
+		Configs:                 func() (any, error) { return a.Configs() },
+		CreateConfig:            a.CreateConfig,
+		CreateFromURL:           a.CreateFromURL,
+		GetConfig:               a.configDetail,
+		PutConfigYAML:           a.WriteConfigYAML,
+		PutConfigYAMLNoValidate: a.WriteConfigYAMLNoValidate,
+		PutConfigMeta:           a.UpdateConfigMeta,
+		DeleteConfig:            a.DeleteConfig,
+		CopyConfig:              a.CopyConfig,
+		Activate:                a.Activate,
+		ValidateConfig:          a.ValidateConfig,
+		Sync:                    a.Sync,
+		Resync:                  a.Resync,
+		Reset:                   a.Reset,
+		RenameConfig:            a.RenameConfig,
+		SyncAll:                 a.SyncAll,
 
 		PutPreset:    a.ReplacePreset,
 		DeletePreset: a.DeletePreset,
