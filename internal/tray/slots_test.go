@@ -126,6 +126,25 @@ func TestStatusLines(t *testing.T) {
 			wantLine1: "● Running · prod · p",
 			wantLine2: "5 ports open · 2 warnings",
 		},
+		{
+			// Nonconforming ports append to the warnings segment, in the
+			// status line's own lowercase style.
+			name: "nonconforming appends ports mismatch",
+			st: app.Status{Running: true, Config: "odd", Preset: "p", Listening: []int{6000, 6001},
+				Conformance: &app.PortsVerdict{Conforming: false, MissingHTTP: true, Actual: []int{6000, 6001}}},
+			warns:     1,
+			wantLine1: "● Running · odd · p",
+			wantLine2: ":6000 :6001 · 1 warnings · ports mismatch",
+		},
+		{
+			// A conforming verdict — even with the grpc port missing — adds
+			// nothing here: the mismatch chip is for stranded apps only.
+			name: "conforming grpc-only miss stays quiet",
+			st: app.Status{Running: true, Config: "httponly", Preset: "p", Listening: []int{14318},
+				Conformance: &app.PortsVerdict{Conforming: true, MissingGRPC: true, Actual: []int{14318}}},
+			wantLine1: "● Running · httponly · p",
+			wantLine2: ":14318",
+		},
 	}
 	for _, c := range cases {
 		line1, line2 := statusLines(c.st, c.warns)

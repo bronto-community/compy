@@ -45,6 +45,14 @@ func statusLines(st app.Status, warns int) (line1, line2 string) {
 		}
 		line2 += fmt.Sprintf("%d warnings", warns)
 	}
+	// The conformance verdict's warning, appended to the warnings segment:
+	// apps following compy's advertised env would miss this collector.
+	if st.Conformance != nil && !st.Conformance.Conforming {
+		if line2 != "" {
+			line2 += " · "
+		}
+		line2 += "ports mismatch"
+	}
 	return line1, line2
 }
 

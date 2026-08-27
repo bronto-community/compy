@@ -41,8 +41,27 @@
             "type": "array",
             "description": "TCP ports the collector process is actually listening on, detected from the OS (launchd pid + lsof), sorted ascending. Absent when stopped or undetectable — never derived from settings or YAML.",
             "items": { "type": "integer" }
+          },
+          "conformance": {
+            "$ref": "#/components/schemas/PortsVerdict",
+            "description": "Whether an app following compy's advertised endpoint would reach the running collector. Absent when stopped or when port detection is unavailable — no detection, no claim."
           }
         }
+      },
+      "PortsVerdict": {
+        "type": "object",
+        "description": "The advertised-ports verdict. conforming rides on the HTTP port alone — that is what OTEL_EXPORTER_OTLP_ENDPOINT uses; missing_grpc is reported but never fails the verdict by itself.",
+        "properties": {
+          "conforming": { "type": "boolean" },
+          "missing_http": { "type": "boolean", "description": "The advertised HTTP port is not among the detected listeners." },
+          "missing_grpc": { "type": "boolean", "description": "The advertised gRPC port is not among the detected listeners (a softer addendum, never a warning on its own)." },
+          "actual": {
+            "type": "array",
+            "description": "Detected non-telemetry listeners — the ports POST /api/service/adopt-ports would adopt.",
+            "items": { "type": "integer" }
+          }
+        },
+        "required": ["conforming", "missing_http", "missing_grpc"]
       },
       "Settings": {
         "type": "object",
@@ -298,6 +317,44 @@
           "200": {
             "description": "OK",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/service/adopt-ports": {
+      "post": {
+        "summary": "Set the advertised grpc/http ports to the running config's actual OTLP listeners",
+        "description": "The advertisement follows the deliberate config. With an empty body the detected non-telemetry listeners are classified (the otlp/http listener speaks HTTP/1.1, the grpc one does not); any ambiguity — no or several http-ish candidates, more candidates than slots — is refused with a 400 naming the candidates, never guessed silently. An explicit body resolves it: each given port must be one of the detected candidates. Applying goes through the same path as PUT /api/settings (OS-level env refreshed when on); shipped configs pick the new ports up on their next activation.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "Optional. Absent fields are classified (or, when the other is given, left unchanged).",
+                "properties": {
+                  "grpc_port": { "type": "integer" },
+                  "http_port": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK — the resulting settings",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Settings" } } }
+          },
+          "400": {
+            "description": "Collector not running / nothing detected, classification ambiguous (candidates named in the message), or an explicit port that is not a detected listener",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
             "description": "Error",

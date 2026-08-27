@@ -152,6 +152,10 @@ type Status struct {
 	// settings or YAML. Empty when stopped or undetectable: no detection
 	// means no claim, not a guess.
 	Listening []int `json:"listening,omitempty"`
+	// Conformance is the ports verdict — whether an app following compy's
+	// advertised endpoint would reach this collector. nil when stopped or
+	// when detection is unavailable (no detection means no claim).
+	Conformance *PortsVerdict `json:"conformance,omitempty"`
 }
 
 // New resolves the state dir, migrates a v1 layout if one is found, and
@@ -514,6 +518,9 @@ func (a *App) Status() (Status, error) {
 		OSEnv:     s.OSEnv,
 		Recent:    s.Recent,
 		Listening: listening,
+		// The telemetry port (otelcol's :8888 default, health's knowledge)
+		// is excluded from the verdict's OTLP candidates.
+		Conformance: portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, collector.TelemetryPort()),
 	}, nil
 }
 
@@ -1449,7 +1456,7 @@ func (a *App) statusMap() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
+	m := map[string]any{
 		"running":   st.Running,
 		"distro":    st.Distro,
 		"grpc_port": st.GRPCPort,
@@ -1460,7 +1467,11 @@ func (a *App) statusMap() (map[string]any, error) {
 		"os_env":    st.OSEnv,
 		"recent":    st.Recent,
 		"listening": st.Listening,
-	}, nil
+	}
+	if st.Conformance != nil {
+		m["conformance"] = st.Conformance
+	}
+	return m, nil
 }
 
 // WebUIAPI wires the web UI's closures onto App methods: the full v2 REST
@@ -1474,6 +1485,7 @@ func (a *App) WebUIAPI() webui.API {
 
 		GetSettings: a.settingsMap,
 		PutSettings: a.PutSettings,
+		AdoptPorts:  a.AdoptPorts,
 
 		Health:       a.Health,
 		Apply:        a.Apply,
