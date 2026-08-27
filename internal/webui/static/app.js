@@ -876,8 +876,14 @@ function configRow(info) {
       on: { click: () => preflightActivate(name, sel) },
     }, [icon("play", 11, true)]));
   }
-  // A pencil here read as "edit the config"; the row-level icon is now a
-  // plus that adds a preset (the per-preset pencil lives in the dropdown).
+  // Pencil edits the selected preset (for most configs: their one and only
+  // default — 2026-08-28 ruling), plus adds another. The pencil's old
+  // read-as-edit-the-config ambiguity is gone now that clicking the row
+  // itself opens the config editor.
+  cell.appendChild(el("button", {
+    class: "addp", title: "edit the " + sel + " preset",
+    on: { click: () => openInline(name, sel, false) },
+  }, [icon("pencil", 12)]));
   cell.appendChild(el("button", {
     class: "addp", title: "add a preset",
     on: { click: () => openInline(name, "", true) },
