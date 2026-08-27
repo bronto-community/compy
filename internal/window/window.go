@@ -15,8 +15,8 @@ import (
 
 	webview "github.com/webview/webview_go"
 
-	"github.com/bronto-io/compy/internal/app"
-	"github.com/bronto-io/compy/internal/webui"
+	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/webui"
 )
 
 // Run serves the web UI on an ephemeral localhost port and blocks in a

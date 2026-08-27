@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Module `github.com/bronto-io/compy`; gofmt + `go vet ./...` clean; `GOOS=linux CGO_ENABLED=0 go build ./...` stays green; full `go test ./...` green before every commit.
+- Module `github.com/bronto-community/compy`; gofmt + `go vet ./...` clean; `GOOS=linux CGO_ENABLED=0 go build ./...` stays green; full `go test ./...` green before every commit.
 - Every test sets `COMPY_HOME` to `t.TempDir()`. No network in unit tests (download code takes an injectable fetch func).
 - Atomic writes via `state.WriteFileAtomic`. Files with secrets (meta.json, config.yaml) 0o600.
 - Config names: reuse `state.ValidBackendName` semantics (rename usages, keep regex `^[a-z0-9][a-z0-9-]*$`, ≤64).

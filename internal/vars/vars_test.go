@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/bronto-io/compy/internal/vars"
+	"github.com/bronto-community/compy/internal/vars"
 )
 
 func TestParse(t *testing.T) {

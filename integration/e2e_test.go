@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bronto-io/compy/internal/cfgstore"
-	"github.com/bronto-io/compy/internal/collector"
+	"github.com/bronto-community/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/collector"
 )
 
 const otlpTraceJSON = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"name":"e2e-span",` +

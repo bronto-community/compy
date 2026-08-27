@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // Exec creates commands run by SetOS/UnsetOS. Overridable in tests so they

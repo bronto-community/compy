@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // TestErrorText: the CLI must show the still-running reassurance REST users

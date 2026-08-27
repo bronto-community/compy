@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 func jsonBody(s string) (io.ReadCloser, int64, error) {

@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/bronto-io/compy/internal/cfgstore"
-	"github.com/bronto-io/compy/internal/distro"
-	"github.com/bronto-io/compy/internal/launchd"
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/distro"
+	"github.com/bronto-community/compy/internal/launchd"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // legacySettings are the v1 settings.json fields v2 dropped; they only exist

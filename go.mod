@@ -1,4 +1,4 @@
-module github.com/bronto-io/compy
+module github.com/bronto-community/compy
 
 go 1.24
 

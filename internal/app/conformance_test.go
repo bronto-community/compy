@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bronto-io/compy/internal/launchd"
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/launchd"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // TestPortsVerdict is the verdict matrix: conforming, http-miss, grpc-only

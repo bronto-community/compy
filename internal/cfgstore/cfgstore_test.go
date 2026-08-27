@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bronto-io/compy/internal/state"
-	"github.com/bronto-io/compy/internal/vars"
+	"github.com/bronto-community/compy/internal/state"
+	"github.com/bronto-community/compy/internal/vars"
 )
 
 func TestCreateGetListDelete(t *testing.T) {

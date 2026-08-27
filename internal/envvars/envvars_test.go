@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // TestVars: the endpoint follows the advertised protocol (grpc → gRPC port,

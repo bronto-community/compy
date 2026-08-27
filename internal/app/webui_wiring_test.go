@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bronto-io/compy/internal/app"
-	"github.com/bronto-io/compy/internal/webui"
+	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/webui"
 )
 
 // TestWebUIWiring exercises app.WebUIAPI() wired for real into

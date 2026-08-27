@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bronto-io/compy/internal/app"
-	"github.com/bronto-io/compy/internal/distro"
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/distro"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // placeBundled drops a fake otelcol-compy (plus version stamp) next to the

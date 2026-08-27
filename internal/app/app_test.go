@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bronto-io/compy/internal/app"
-	"github.com/bronto-io/compy/internal/cfgstore"
-	"github.com/bronto-io/compy/internal/collector"
-	"github.com/bronto-io/compy/internal/distro"
-	"github.com/bronto-io/compy/internal/envvars"
-	"github.com/bronto-io/compy/internal/launchd"
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/collector"
+	"github.com/bronto-community/compy/internal/distro"
+	"github.com/bronto-community/compy/internal/envvars"
+	"github.com/bronto-community/compy/internal/launchd"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // setup points COMPY_HOME and HOME at temp dirs (HOME too: launchd.Install
