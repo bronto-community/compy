@@ -549,6 +549,9 @@ func cmdDistro(args []string) error {
 						note = "available (downloads on first use, " + ver + ")"
 					}
 				}
+				if la, _ := d["latest_available"].(string); la != "" {
+					note += " · " + la + " available"
+				}
 				fmt.Fprintf(w, "%s %s\t%s\t%s\n", mark, d["name"], note, d["path"])
 			}
 			return w.Flush()
