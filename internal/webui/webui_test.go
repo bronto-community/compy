@@ -22,6 +22,7 @@ func fakeAPI() API {
 
 		GetSettings: func() (map[string]any, error) { return map[string]any{}, nil },
 		PutSettings: func(grpcPort, httpPort *int) error { return nil },
+		AdoptPorts:  func(grpcPort, httpPort *int) error { return nil },
 
 		Health:       func() (any, error) { return map[string]any{"available": false}, nil },
 		Apply:        func() error { return nil },
@@ -323,6 +324,56 @@ func TestPutSettingsRoute(t *testing.T) {
 	rec = call(handlePutSettings(api), http.MethodPut, `{"grpc_port":0}`, nil)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("closure error status = %d, want 500", rec.Code)
+	}
+}
+
+// TestAdoptPortsRoute: an empty body classifies (nil, nil reaches the
+// closure), an explicit body assigns, an ambiguity refusal is a 400 whose
+// body is message-only, and success answers with the resulting settings.
+func TestAdoptPortsRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotGRPC, gotHTTP *int
+	api.AdoptPorts = func(grpcPort, httpPort *int) error {
+		gotGRPC, gotHTTP = grpcPort, httpPort
+		return nil
+	}
+	api.GetSettings = func() (map[string]any, error) {
+		return map[string]any{"grpc_port": 6000, "http_port": 6001}, nil
+	}
+
+	rec := call(handleAdoptPorts(api), http.MethodPost, "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotGRPC != nil || gotHTTP != nil {
+		t.Fatalf("empty body got grpc=%v http=%v, want nil/nil (classify)", gotGRPC, gotHTTP)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["http_port"] != float64(6001) {
+		t.Fatalf("response = %v, want the resulting settings", body)
+	}
+
+	rec = call(handleAdoptPorts(api), http.MethodPost, `{"grpc_port":6000,"http_port":6001}`, nil)
+	if rec.Code != http.StatusOK || gotGRPC == nil || *gotGRPC != 6000 || gotHTTP == nil || *gotHTTP != 6001 {
+		t.Fatalf("explicit body: status %d, grpc=%v http=%v", rec.Code, gotGRPC, gotHTTP)
+	}
+
+	api.AdoptPorts = func(grpcPort, httpPort *int) error {
+		return markBadRequest(errWithMessage("can't tell which of :6000 :6001 is the otlp/http port"))
+	}
+	rec = call(handleAdoptPorts(api), http.MethodPost, "", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("ambiguity status = %d, want 400", rec.Code)
+	}
+	body = nil
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] == "" || len(body) != 1 {
+		t.Fatalf("400 body = %v, want message-only", body)
 	}
 }
 

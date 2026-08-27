@@ -32,6 +32,7 @@ type API struct {
 
 	GetSettings func() (map[string]any, error)
 	PutSettings func(grpcPort, httpPort *int) error // partial: nil = unchanged
+	AdoptPorts  func(grpcPort, httpPort *int) error // both nil = classify the running config's detected ports; explicit values resolve ambiguity
 
 	Health       func() (any, error) // collector's own metrics; {"available": false} when stopped
 	Apply        func() error
@@ -118,6 +119,7 @@ func routes() []route {
 
 		{"GET", "/api/collector/health", handleHealth},
 
+		{"POST", "/api/service/adopt-ports", handleAdoptPorts},
 		{"POST", "/api/service/apply", handleApply},
 		{"POST", "/api/service/stop", handleStop},
 		{"POST", "/api/service/start", handleStart},
@@ -426,6 +428,34 @@ func handlePutSettings(api API) http.HandlerFunc {
 			return
 		}
 		if err := api.PutSettings(body.GRPCPort, body.HTTPPort); err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		settings, err := api.GetSettings()
+		if err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
+	}
+}
+
+// handleAdoptPorts sets the advertised grpc/http ports to the running
+// config's actual OTLP listeners. The body is optional: empty means
+// classify the detected ports; {"grpc_port","http_port"} assigns them
+// explicitly when classification refused as ambiguous (a 400 naming the
+// candidates). Responds with the resulting settings, like PUT /api/settings.
+func handleAdoptPorts(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			GRPCPort *int `json:"grpc_port"`
+			HTTPPort *int `json:"http_port"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeBodyErr(w, err)
+			return
+		}
+		if err := api.AdoptPorts(body.GRPCPort, body.HTTPPort); err != nil {
 			writeClosureErr(w, err)
 			return
 		}

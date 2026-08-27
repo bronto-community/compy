@@ -33,6 +33,7 @@ const usage = `compy — local OpenTelemetry Collector manager
 
   compy status [--json]
   compy apply | validate | stop | start
+  compy adopt-ports [--grpc N] [--http N]
   compy config list
   compy config show|edit|delete|sync|resync|reset <name>
   compy config create <name> [--from-url URL]
@@ -96,6 +97,8 @@ func run(args []string) error {
 		return cmdStatus(rest)
 	case "apply":
 		return withApp(func(a *app.App) error { return a.Apply() })
+	case "adopt-ports":
+		return cmdAdoptPorts(rest)
 	case "stop":
 		return withApp(func(a *app.App) error { return a.Stop() })
 	case "start":
@@ -247,12 +250,66 @@ func cmdStatus(args []string) error {
 		fmt.Printf("service:  %s\nconfig:   %s\ndistro:   %s\nendpoint: http://127.0.0.1:%d (grpc %d)\n",
 			running, config, distro, st.HTTPPort, st.GRPCPort)
 		if len(st.Listening) > 0 {
-			parts := make([]string, len(st.Listening))
-			for i, p := range st.Listening {
-				parts[i] = fmt.Sprintf(":%d", p)
-			}
-			fmt.Printf("listening: %s\n", strings.Join(parts, " "))
+			fmt.Printf("listening: %s\n", portsLine(st.Listening))
 		}
+		// The verdict warns when an app following compy's advertised env
+		// would miss this collector; a missing grpc port alone is only a
+		// note (the exported endpoint is the HTTP one).
+		if v := st.Conformance; v != nil {
+			if !v.Conforming {
+				listens := "no other ports"
+				if len(v.Actual) > 0 {
+					listens = portsLine(v.Actual)
+				}
+				fmt.Printf("warning: apps point at :%d; this config listens on %s (run `compy adopt-ports`, or bind ${env:COMPY_HTTP_PORT} in the config)\n", st.HTTPPort, listens)
+			} else if v.MissingGRPC {
+				fmt.Printf("note: grpc port :%d is not among this config's listeners\n", st.GRPCPort)
+			}
+		}
+		return nil
+	})
+}
+
+// portsLine renders ports as ":6000 :6001".
+func portsLine(ports []int) string {
+	parts := make([]string, len(ports))
+	for i, p := range ports {
+		parts[i] = fmt.Sprintf(":%d", p)
+	}
+	return strings.Join(parts, " ")
+}
+
+// cmdAdoptPorts points the advertised ports at the running config's actual
+// OTLP listeners. Without flags the detected ports are classified; an
+// ambiguous classification is refused with the candidates named, and
+// --grpc/--http resolve it explicitly.
+func cmdAdoptPorts(args []string) error {
+	fs := flag.NewFlagSet("adopt-ports", flag.ContinueOnError)
+	var grpcPort, httpPort int
+	fs.IntVar(&grpcPort, "grpc", 0, "which detected port is otlp/grpc")
+	fs.IntVar(&httpPort, "http", 0, "which detected port is otlp/http")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	var grpcP, httpP *int
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "grpc":
+			grpcP = &grpcPort
+		case "http":
+			httpP = &httpPort
+		}
+	})
+	return withApp(func(a *app.App) error {
+		if err := a.AdoptPorts(grpcP, httpP); err != nil {
+			return err
+		}
+		s, err := a.GetSettings()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("advertised ports now grpc %d, http %d\n", s.GRPCPort, s.HTTPPort)
+		fmt.Println("shipped configs pick the new ports up on their next activation")
 		return nil
 	})
 }
