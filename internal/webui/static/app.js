@@ -811,10 +811,14 @@ function configRow(info) {
   cell.appendChild(selBtn);
 
   const alreadyRunning = running && sel === (S.status && S.status.preset);
+  // While one activation is in flight every OTHER play is locked out —
+  // install/probe can't be safely cancelled, so the ruling is greying, not
+  // aborting; the in-flight row keeps its busy indicator instead.
+  const locked = !!S.busyId && !busy;
   cell.appendChild(el("button", {
     class: "play",
-    title: alreadyRunning ? "already running" : "activate " + name + " · " + sel,
-    attrs: alreadyRunning || busy ? { disabled: "" } : null,
+    title: locked ? activatingTitle() : alreadyRunning ? "already running" : "activate " + name + " · " + sel,
+    attrs: alreadyRunning || busy || locked ? { disabled: "" } : null,
     on: { click: () => preflightActivate(name, sel) },
   }, [icon("play", 11, true)]));
   // A pencil here read as "edit the config"; the row-level icon is now a
@@ -900,7 +904,8 @@ function presetMenu(info, list) {
         on: { click: () => { S.presetSel[info.name] = p; S.presetsOpenId = null; render(); } },
       }),
       el("button", {
-        class: "mini accent", title: "activate this preset",
+        class: "mini accent", title: S.busyId ? activatingTitle() : "activate this preset",
+        attrs: S.busyId ? { disabled: "" } : null,
         on: { click: () => { S.presetsOpenId = null; preflightActivate(info.name, p); } },
       }, [icon("play", 11, true)]),
       el("button", {
@@ -1070,7 +1075,11 @@ function yamlLineOf(yaml, key) {
    drops everything (its exporter has nowhere to send), so ask first — an
    inline panel under the row, never a dialog. Nothing missing → activate
    immediately, zero friction. */
+function activatingTitle() {
+  return "activating " + S.busyId + "…, wait for it to finish";
+}
 function preflightActivate(name, preset) {
+  if (S.busyId) return; // every entry button is disabled; belt for stragglers
   const info = byName(name);
   const missing = info ? missingRequired(info, preset) : [];
   if (!missing.length) { activate(name, preset); return; }
@@ -1100,6 +1109,8 @@ function preflightPanel(info) {
     }),
     el("button", {
       class: "btn accent", text: "activate anyway",
+      title: S.busyId ? activatingTitle() : null,
+      attrs: S.busyId ? { disabled: "" } : null,
       on: { click: () => { S.preflight = null; activate(p.name, p.preset); } },
     }),
   ]);
