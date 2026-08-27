@@ -609,3 +609,38 @@ with the text above.
   sentences) became periods, commas, or colons; structural separators in
   status lines and state labels ("· ", "not built — build.sh") are
   design tokens and stay.
+- **The nothing-active strip goes quiet** (owner ruling, 2026-08-27 —
+  supersedes ruling D1, the prototype's boxed nothing-active strip): when
+  nothing runs, the configurations screen shows one muted sentence above
+  the table — "nothing active. press play on a config to start the
+  collector." — no box, no dashed border, no suggestion button. A
+  deliberately stopped collector is a state, not a nag; the sidebar's
+  stopped card already carries it. The `.empty` idiom is gone.
+- **Activation pre-flight for missing required values** (owner ruling,
+  2026-08-27): a required variable is one whose yaml reference has no
+  `:-fallback` (`has_default` false), is not COMPY_-prefixed, and has no
+  non-empty value in the preset the activation would use. Every
+  activation entry point on the configurations screen (play button,
+  preset-menu play; the editor has no activate path) checks first: if
+  anything is missing, an inline panel under the row — the
+  inline-editor idiom, never a dialog — says "<config> needs <VARS>
+  before it can send anywhere. add a preset with values, or activate
+  anyway.", with "add values" (opens the inline preset editor — a new
+  preset if none exist, else the effective one) and "activate anyway"
+  (proceeds exactly as before); Escape/cancel collapses. Nothing missing
+  → zero friction. The CLI warns and proceeds (`warning: no value for X
+  (no default in the yaml)` per var, on stderr, no gating flag); the
+  tray is unchanged (native menus can't host the flow; failure
+  surfacing covers it). The rule is shared: `cfgstore.MissingRequired`
+  and the window's `missingRequired` implement the same selection, and
+  the editor's static missing-value warning now reuses it.
+- **Help strips are opt-in, one slot everywhere** (owner ruling,
+  2026-08-27 — supersedes the shown-by-default help ruling from the copy
+  round): no help strip renders until the header's question-mark button
+  opens it; the button or the ✕ closes it. Open state is in-memory only
+  (a reload starts closed — simpler than persisting, and the strips are
+  reference material now, not onboarding), and the old
+  `compy.helpDismissed*` localStorage keys are ignored. The strip's slot
+  is identical on all four screens: directly under the page's header
+  line, above the content — which moved the collector screen's tiles
+  out of its header block and the settings strip below the "app" title.
