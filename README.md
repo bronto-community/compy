@@ -10,7 +10,15 @@ OS supervises the process and there is no daemon of compy's own.
 
 ## Install
 
-Requires Go 1.24+.
+Once tagged releases exist, Homebrew is the short path (while this repo is
+private, `brew` additionally needs a `HOMEBREW_GITHUB_API_TOKEN` that can
+read it):
+
+```
+brew install bronto-community/tap/compy
+```
+
+Or build from source. Requires Go 1.24+.
 
 ```
 go build -o compy ./cmd/compy
@@ -152,6 +160,11 @@ Unit tests live next to their packages under `internal/`; the
 `integration` tag and `OTELCOL_BIN` set. `packaging/` holds the OCB
 manifest and build script for `otelcol-compy` and the macOS app-bundle
 tooling. `CLAUDE.md` has the module map.
+
+CI runs these same gates on every PR (see `.github/workflows/README.md`
+for the full workflow list). Releases are cut by pushing a `vX.Y.Z` tag,
+which GoReleaser turns into GitHub release artifacts and the Homebrew
+cask.
 
 ## License
 
