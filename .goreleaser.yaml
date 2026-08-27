@@ -1,0 +1,83 @@
+# GoReleaser config: tagged releases (v*) via .github/workflows/release.yml,
+# which runs on a macOS runner because the darwin builds need cgo (systray,
+# webview). Local dry run:
+#
+#   go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean
+#
+# Beyond the compy binaries, a post-build hook (.github/scripts/
+# goreleaser-extras.sh) produces the otelcol-compy collector tarballs (with
+# per-asset .sha256 files, matching the upstream format compy's updater
+# reads) and the compy.app zip; release.extra_files picks them up from
+# dist/extra/.
+version: 2
+
+project_name: compy
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  # darwin needs cgo; amd64 cross-compiles from the arm64 runner because
+  # clang targets both architectures.
+  - id: compy-darwin
+    main: ./cmd/compy
+    binary: compy
+    env:
+      - CGO_ENABLED=1
+    goos: [darwin]
+    goarch: [arm64, amd64]
+    hooks:
+      post:
+        - cmd: sh .github/scripts/goreleaser-extras.sh "{{ .Path }}" "{{ .Target }}"
+  # linux is the pure-Go stub build (no tray/window), same as the
+  # cross-build gate in CI.
+  - id: compy-linux
+    main: ./cmd/compy
+    binary: compy
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: compy
+    ids: [compy-darwin, compy-linux]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+
+checksum:
+  extra_files:
+    - glob: dist/extra/*.tar.gz
+    - glob: dist/extra/compy.app.zip
+
+release:
+  extra_files:
+    - glob: dist/extra/*
+
+# The tap already hosts bronto-cli as a GoReleaser-generated cask under
+# Casks/, so compy follows the same layout. Publishing needs the
+# HOMEBREW_TAP_TOKEN secret (push access to the tap); without it the
+# release workflow passes --skip=homebrew instead of failing.
+homebrew_casks:
+  - name: compy
+    ids: [compy]
+    directory: Casks
+    description: Local OpenTelemetry Collector manager for the dev loop
+    homepage: https://github.com/bronto-community/compy
+    caveats: |
+      The menu bar icon is opt-in: run `compy tray install`.
+    repository:
+      owner: bronto-community
+      name: homebrew-tap
+      token: "{{ envOrDefault \"HOMEBREW_TAP_TOKEN\" \"\" }}"
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/compy"]
+          end

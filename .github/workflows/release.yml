@@ -1,0 +1,40 @@
+# Tag-driven releases: push a v* tag and GoReleaser builds the compy
+# archives (darwin cgo arm64+amd64, linux CGO-off amd64+arm64), the
+# otelcol-compy collector tarballs, and the compy.app zip, then publishes
+# the GitHub release and the Homebrew cask. Runs on macOS because the
+# darwin builds need cgo. See .github/workflows/README.md for the secrets.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Decide whether the cask can be published
+        id: cask
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set; skipping the Homebrew cask" >&2
+            echo "skip=--skip=homebrew" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean ${{ steps.cask.outputs.skip }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
