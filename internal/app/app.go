@@ -739,7 +739,72 @@ func (a *App) Health() (any, error) {
 	// Pid-bound: scrape only the ports the process actually listens on
 	// (:8888 first when it is among them); the blind default probe exists
 	// only as a fallback when port detection is unavailable.
-	return collector.ScrapePorts(collector.ListeningPorts(pid)), nil
+	h := collector.ScrapePorts(collector.ListeningPorts(pid))
+	view := healthView{Health: h}
+	if vars := dropDiagnosis(true, h.Dropped, a.activeMissing()); len(vars) > 0 {
+		view.Dropping = &dropping{Vars: vars}
+	}
+	return view, nil
+}
+
+// healthView is the health payload: the collector's own numbers plus the
+// drop diagnosis when it holds. No new polling anywhere — every surface
+// derives the diagnosis from data it already fetches.
+type healthView struct {
+	collector.Health
+	Dropping *dropping `json:"dropping,omitempty"`
+}
+
+type dropping struct {
+	Vars []string `json:"vars"`
+}
+
+// dropDiagnosis is the honesty rule for "runs but silently drops": a config
+// activated with missing required values (via "activate anyway") starts
+// fine — validation never binds or sends — and only the runtime evidence
+// shows the loss. Blame the variables ONLY when all three legs hold: the
+// collector is running, telemetry is actually being dropped, and the active
+// preset is missing required values. Drops with all values present have
+// some other cause and get no vars named; missing values without drops are
+// the pre-flight's business, not a runtime warning.
+func dropDiagnosis(running bool, dropped int64, missing []string) []string {
+	if !running || dropped <= 0 || len(missing) == 0 {
+		return nil
+	}
+	return missing
+}
+
+// activeMissing names the ACTIVE configuration's missing required values —
+// cfgstore.MissingRequired (the pre-flight's own rule) against its active
+// preset. Nil when nothing is active or the config is unreadable: no
+// config, no claim.
+func (a *App) activeMissing() []string {
+	s, err := state.LoadSettings()
+	if err != nil || s.ActiveConfig == "" {
+		return nil
+	}
+	info, _, err := cfgstore.Get(a.Dir, s.ActiveConfig)
+	if err != nil {
+		return nil
+	}
+	return cfgstore.MissingRequired(info, "")
+}
+
+// DropDiagnosis is the tray's and the CLI's entry to the same rule Health
+// embeds for the window. The cheap check runs first: a fully valued active
+// preset — the common case — costs one settings and one config read, never
+// a launchctl call or a metrics scrape.
+func (a *App) DropDiagnosis() []string {
+	missing := a.activeMissing()
+	if len(missing) == 0 {
+		return nil
+	}
+	running, pid, err := launchd.Info()
+	if err != nil || !running {
+		return nil
+	}
+	h := collector.ScrapePorts(collector.ListeningPorts(pid))
+	return dropDiagnosis(true, h.Dropped, missing)
 }
 
 // Log returns the last n lines of the collector log.

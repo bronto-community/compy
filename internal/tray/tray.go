@@ -199,7 +199,7 @@ func (m *menu) sync() {
 	// error count feeds the icon's attention state instead of this line.
 	errs, warns, _ := m.a.LogStats(500) // best-effort: a log-read error just omits the tail
 	configs, cfgErr := m.a.Configs()
-	line1, line2 := statusLines(st, warns)
+	line1, line2 := statusLines(st, warns, len(m.a.DropDiagnosis()) > 0)
 	m.status.SetTitle(line1)
 	m.statusLine2.SetTitle(line2)
 	m.setIcon(iconFor(st.Running, errs))

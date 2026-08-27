@@ -182,7 +182,15 @@
           "received": { "type": "integer" },
           "exported": { "type": "integer" },
           "queue": { "type": "integer" },
-          "dropped": { "type": "integer" }
+          "dropped": { "type": "integer" },
+          "dropping": {
+            "type": "object",
+            "description": "The drop diagnosis: present only when the running collector reports dropped > 0 AND the active configuration's effective preset is missing required values (cfgstore.MissingRequired — no ${VAR:-fallback} in the yaml, not COMPY_*, empty in the preset). Drops with all values present carry no diagnosis: some other cause, no vars blamed.",
+            "properties": {
+              "vars": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["vars"]
+          }
         },
         "required": ["available"]
       },

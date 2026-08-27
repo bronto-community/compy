@@ -243,6 +243,30 @@ function portLabel(p) {
   if (S.health && S.health.available && S.health.port === p) return "telemetry";
   return "";
 }
+/* The drop diagnosis (health.dropping): the backend enforces the honesty
+   rule — present only when the running collector reports dropped > 0 AND
+   the active config's effective preset is missing required values. Drops
+   with values present carry no diagnosis, so the vars are never blamed for
+   someone else's failure. */
+function droppingVars() {
+  return (S.health && S.health.dropping && S.health.dropping.vars) || [];
+}
+function droppingText(vars) {
+  const list = vars.length === 1 ? vars[0]
+    : vars.slice(0, -1).join(", ") + " and " + vars[vars.length - 1];
+  return "dropping data — " + list + (vars.length === 1 ? " has" : " have") + " no value";
+}
+/* The pre-flight's "add values" action, reached from runtime evidence: the
+   inline preset editor on the active config's running preset (a real one —
+   every config keeps at least one). */
+function openDroppingEditor() {
+  const name = S.status && S.status.config;
+  const info = byName(name);
+  if (!info) return;
+  const preset = (S.status && S.status.preset) || selectedPreset(info);
+  openInline(name, preset, false);
+  if (S.screen !== "configs") go("#/configs");
+}
 function fmtCount(n) {
   if (n == null) return "—";
   if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, "") + "m";
@@ -547,6 +571,19 @@ function renderSidebar() {
     } else if (v && !grpcPrimary && v.missing_grpc) {
       box.appendChild(span("pw-soft", "grpc :" + S.status.grpc_port + " not among this config's listeners"));
     }
+  }
+
+  // "runs but drops": health.dropping (both legs backend-verified). Shown
+  // only where health is actually being refreshed, so the claim is current.
+  const dvars = !stopped && (S.screen === "configs" || S.screen === "collector") ? droppingVars() : [];
+  if (dvars.length) {
+    box.appendChild(el("div", { class: "portwarn" }, [
+      el("div", { class: "pw-line" }, [
+        el("span", { class: "dot5", attrs: { style: "background: var(--err)" } }),
+        span("", droppingText(dvars)),
+      ]),
+      el("button", { class: "act adopt", text: "add values", on: { click: openDroppingEditor } }),
+    ]));
   }
 }
 
@@ -1654,6 +1691,8 @@ function screenCollector() {
   if (cn) wrap.appendChild(cn);
   wrap.appendChild(el("div", { class: "tiles-wrap" }, [tiles(stopped)]));
   wrap.appendChild(healthStrip(stopped));
+  const drop = droppingStrip();
+  if (drop) wrap.appendChild(drop);
   wrap.appendChild(logPane(stopped));
   if (lastError) wrap.appendChild(el("div", { class: "strip-wrap" }, [errorStrip()]));
   return wrap;
@@ -1701,6 +1740,23 @@ function healthStrip(stopped) {
       text: stopped ? "no metrics while stopped" : has ? "localhost:" + (h.port || 8888) + "/metrics" : "localhost:8888/metrics · no answer",
     }),
   ]);
+}
+
+// The drop diagnosis under the health numbers it derives from: the dropped
+// counter is climbing AND the active preset is missing required values —
+// the state "activate anyway" accepted, now with runtime evidence. Absent
+// whenever either leg is (drops with values present get no vars blamed).
+function droppingStrip() {
+  const dvars = nothingActive() ? [] : droppingVars();
+  if (!dvars.length) return null;
+  return el("div", { class: "strip-wrap" }, [el("div", { class: "errbar" }, [
+    el("div", { class: "failbar" }, [
+      el("span", { class: "dot6", attrs: { style: "background: var(--err)" } }),
+      span("msg", droppingText(dvars) + ", so the exporter has nowhere to send. validation can't catch this."),
+      el("span", { class: "grow" }),
+      el("button", { class: "act", text: "add values", on: { click: openDroppingEditor } }),
+    ]),
+  ])]);
 }
 
 function logPane(stopped) {

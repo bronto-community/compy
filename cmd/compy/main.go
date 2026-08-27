@@ -290,6 +290,12 @@ func cmdStatus(args []string) error {
 				fmt.Printf("note: grpc port :%d is not among this config's listeners\n", st.GRPCPort)
 			}
 		}
+		// The drop diagnosis: the running collector reports dropped
+		// telemetry AND the active preset is missing required values —
+		// the "activate anyway" aftermath validation can't catch.
+		if vars := a.DropDiagnosis(); len(vars) > 0 {
+			fmt.Printf("warning: dropping data: no value for %s in the active preset\n", strings.Join(vars, ", "))
+		}
 		return nil
 	})
 }

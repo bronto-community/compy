@@ -68,6 +68,7 @@ func TestStatusLines(t *testing.T) {
 		name      string
 		st        app.Status
 		warns     int
+		dropping  bool
 		wantLine1 string
 		wantLine2 string
 	}{
@@ -147,9 +148,26 @@ func TestStatusLines(t *testing.T) {
 			wantLine1: "● Running · httponly · p",
 			wantLine2: ":14318",
 		},
+		{
+			// The drop diagnosis joins the warnings segment: the collector
+			// runs but silently drops because required values are missing.
+			name:      "drop diagnosis appends dropping data",
+			st:        app.Status{Running: true, Config: "bronto", Preset: "default", Listening: []int{14317, 14318}},
+			warns:     2,
+			dropping:  true,
+			wantLine1: "● Running · bronto · default",
+			wantLine2: ":14317 :14318 · 2 warnings · dropping data",
+		},
+		{
+			name:      "drop diagnosis alone is the whole tail",
+			st:        app.Status{Running: true, Config: "bronto", Preset: "default"},
+			dropping:  true,
+			wantLine1: "● Running · bronto · default",
+			wantLine2: "dropping data",
+		},
 	}
 	for _, c := range cases {
-		line1, line2 := statusLines(c.st, c.warns)
+		line1, line2 := statusLines(c.st, c.warns, c.dropping)
 		if line1 != c.wantLine1 || line2 != c.wantLine2 {
 			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, line1, line2, c.wantLine1, c.wantLine2)
 		}

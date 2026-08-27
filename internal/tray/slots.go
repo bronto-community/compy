@@ -29,7 +29,12 @@ import (
 // The ports segment is st.Listening — the ports the collector process is
 // actually listening on, detected from the OS — never a claim derived from
 // settings or YAML. Nothing detected omits the segment entirely.
-func statusLines(st app.Status, warns int) (line1, line2 string) {
+//
+// dropping is app.DropDiagnosis holding (the running collector drops
+// telemetry AND the active preset is missing required values): it joins the
+// warnings segment as "dropping data" — the native menu can't host the
+// window's add-values flow, so the chip just names the state.
+func statusLines(st app.Status, warns int, dropping bool) (line1, line2 string) {
 	if !st.Running {
 		return "○ Stopped", "no listeners"
 	}
@@ -43,6 +48,12 @@ func statusLines(st app.Status, warns int) (line1, line2 string) {
 			line2 += " · "
 		}
 		line2 += fmt.Sprintf("%d warnings", warns)
+	}
+	if dropping {
+		if line2 != "" {
+			line2 += " · "
+		}
+		line2 += "dropping data"
 	}
 	// The conformance verdict's warning, appended to the warnings segment:
 	// apps following compy's advertised env would miss this collector.
