@@ -1930,7 +1930,7 @@ function distroRow(b) {
     : failed ? (short ? "download failed · " + short : "download failed")
       : checking ? "checking for a newer release…"
         : bundled ? (here ? "shipped with compy" + ver : "not built — packaging/collector/build.sh")
-          : inUse ? "in use" + ver + avail
+          : inUse ? "in use" + ver + (here ? avail : fetches)
             : blocked ? "not available on macOS"
               : here ? (mine ? "added by you" : "installed" + ver + avail)
                 : "available to download" + fetches;
