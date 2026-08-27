@@ -12,7 +12,6 @@ import (
 	"flag"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -776,7 +775,7 @@ func cmdUI(args []string) error {
 		if runtime.GOOS == "darwin" {
 			_ = exec.Command("open", url).Run()
 		}
-		return http.Serve(ln, webui.Handler(a.WebUIAPI()))
+		return webui.ServeListener(ln, a.WebUIAPI())
 	})
 }
 

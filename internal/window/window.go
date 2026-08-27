@@ -12,7 +12,6 @@ package window
 import (
 	"fmt"
 	"net"
-	"net/http"
 
 	webview "github.com/webview/webview_go"
 
@@ -29,7 +28,7 @@ func Run(a *app.App) error {
 		return err
 	}
 	defer ln.Close()
-	go func() { _ = http.Serve(ln, webui.Handler(a.WebUIAPI())) }()
+	go func() { _ = webui.ServeListener(ln, a.WebUIAPI()) }()
 
 	w := webview.New(false)
 	defer w.Destroy()
