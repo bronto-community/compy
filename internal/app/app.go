@@ -1393,7 +1393,31 @@ func (a *App) PutSettings(grpcP, httpP *int) error {
 		}
 		s.HTTPPort = *httpP
 	}
-	return state.SaveSettings(s)
+	if err := state.SaveSettings(s); err != nil {
+		return err
+	}
+	// With OS-level env on, the OTEL_* values derive from these ports —
+	// refresh them so the OS environment doesn't keep pointing at the old
+	// endpoint until the toggle is flipped.
+	if s.OSEnv {
+		return envvars.SetOS(envvars.Vars(s))
+	}
+	return nil
+}
+
+// ReapplyOSEnv re-runs the OS-level env injection when the setting is on.
+// `launchctl setenv` does not survive a reboot, so something that runs at
+// every login (the tray) must call this — otherwise the toggle claims "on"
+// over an empty OS environment after a restart.
+func (a *App) ReapplyOSEnv() error {
+	s, err := state.LoadSettings()
+	if err != nil {
+		return err
+	}
+	if !s.OSEnv {
+		return nil
+	}
+	return envvars.SetOS(envvars.Vars(s))
 }
 
 // SetOSEnv sets or clears the launchd user environment and records it.

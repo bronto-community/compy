@@ -171,6 +171,13 @@ func onReady(a *app.App) {
 			time.Sleep(time.Hour)
 		}
 	}()
+	// The tray runs at every login — the one moment the OS-level env can be
+	// re-applied, since `launchctl setenv` does not survive a reboot.
+	go func() {
+		if err := a.ReapplyOSEnv(); err != nil {
+			fmt.Fprintln(os.Stderr, "compy tray: reapply os env:", err)
+		}
+	}()
 	go m.handleToggle()
 	go m.handleRestart()
 	go handleOpenApp(openApp)
