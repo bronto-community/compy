@@ -1631,6 +1631,28 @@ async function stopCollector() {
 }
 
 /* ── screen 4: settings ───────────────────────────────────────────── */
+
+// envGuide: the shell-side alternatives to the OS-level toggle — three
+// ways to wire a shell, each with the log toolbar's click-to-copy idiom.
+function envGuide() {
+  const row = (desc, cmd) => el("div", { class: "envrow" }, [
+    el("span", { class: "n sans", text: desc }),
+    el("span", { class: "grow" }),
+    el("code", { text: cmd }),
+    el("button", {
+      class: "ico", title: "copy this command",
+      on: { click: () => copyText(cmd, "command copied") },
+    }, [icon("copy", 12)]),
+  ]);
+  return el("div", { class: "envguide" }, [
+    el("div", { class: "n sans", text: "or wire a shell instead:" }),
+    row("current shell, right now", 'eval "$(compy env)"'),
+    row("every new shell — append to ~/.zshrc (or your shell's rc)", "echo 'eval \"$(compy env)\"' >> ~/.zshrc"),
+    row("one command only", "compy run -- <cmd>"),
+    el("div", { class: "n sans", text: "an app's own environment always wins over the system-wide toggle." }),
+  ]);
+}
+
 function screenSettings() {
   const wrap = el("div", { class: "settings" });
   const sn = noteStrip();
@@ -1638,10 +1660,7 @@ function screenSettings() {
 
   wrap.appendChild(el("div", { class: "sec" }, [
     span("title", "app"),
-    el("div", { class: "subtitle sans" }, [
-      document.createTextNode("shell wiring lives in the CLI: "),
-      el("span", { attrs: { style: "color: var(--text3)" }, text: "compy env" }),
-    ]),
+    el("div", { class: "subtitle sans", text: "appearance, and how apps find compy." }),
   ]));
 
   const themeNote = S.theme === "system" ? "following macOS — currently " + osTheme() : "always " + S.theme;
@@ -1666,6 +1685,7 @@ function screenSettings() {
       el("span", { class: "grow" }),
       el("span", { class: "switch" + (osEnvOn ? " on" : "") }, [el("i")]),
     ]),
+    envGuide(),
   ]));
 
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [

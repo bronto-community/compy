@@ -659,6 +659,18 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .srow .lbl .n { font-size: 11.5px; color: var(--dim); }
 .srow.clickable { cursor: pointer; }
 .srow.clickable:hover { background: var(--raise); }
+/* envguide: the shell-side alternatives under the OS-env toggle. */
+.envguide {
+  display: flex; flex-direction: column; gap: 5px; padding: 11px 14px;
+  border-bottom: 1px solid var(--divider);
+}
+.envguide .n { font-size: 11.5px; color: var(--dim); overflow-wrap: anywhere; }
+.envrow { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.envrow code {
+  font-size: 11.5px; color: var(--text3); background: var(--raise);
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px;
+  white-space: nowrap; overflow-x: auto; max-width: 60%;
+}
 .seg { display: flex; border: 1px solid var(--border3); border-radius: 5px; overflow: hidden; }
 .seg button {
   font-size: 11.5px; padding: 5px 14px; cursor: pointer;
