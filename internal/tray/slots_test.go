@@ -12,8 +12,8 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/bronto-io/compy/internal/app"
-	"github.com/bronto-io/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/cfgstore"
 )
 
 // TestAlphabetical pins the 2026-08-26 ordering ruling: the whole menu is

@@ -18,13 +18,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bronto-io/compy/internal/cfgstore"
-	"github.com/bronto-io/compy/internal/collector"
-	"github.com/bronto-io/compy/internal/distro"
-	"github.com/bronto-io/compy/internal/envvars"
-	"github.com/bronto-io/compy/internal/launchd"
-	"github.com/bronto-io/compy/internal/state"
-	"github.com/bronto-io/compy/internal/webui"
+	"github.com/bronto-community/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/collector"
+	"github.com/bronto-community/compy/internal/distro"
+	"github.com/bronto-community/compy/internal/envvars"
+	"github.com/bronto-community/compy/internal/launchd"
+	"github.com/bronto-community/compy/internal/state"
+	"github.com/bronto-community/compy/internal/webui"
 )
 
 // probeTimeout is how long Activate waits for the collector to accept

@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bronto-io/compy/internal/state"
-	"github.com/bronto-io/compy/internal/vars"
+	"github.com/bronto-community/compy/internal/state"
+	"github.com/bronto-community/compy/internal/vars"
 )
 
 // Meta is the persisted metadata for a configuration (meta.json). There is

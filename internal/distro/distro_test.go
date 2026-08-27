@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // buildTarGz packs a single regular file named binName with the given

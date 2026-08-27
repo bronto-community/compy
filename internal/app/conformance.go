@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/bronto-io/compy/internal/collector"
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/collector"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // PortsVerdict answers one question: would an app following compy's

@@ -19,8 +19,8 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/bronto-io/compy/internal/app"
-	"github.com/bronto-io/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/cfgstore"
 )
 
 // refreshInterval is how often the status line and menu indicator icons are

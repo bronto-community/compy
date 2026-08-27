@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/bronto-io/compy/internal/app"
-	"github.com/bronto-io/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/cfgstore"
 )
 
 // statusLines renders the two status-block lines (README "5. Menu bar";

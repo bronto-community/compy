@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bronto-io/compy/internal/collector"
+	"github.com/bronto-community/compy/internal/collector"
 )
 
 func fakeBin(t *testing.T, script string) string {

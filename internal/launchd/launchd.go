@@ -16,7 +16,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // Label is the collector job's launchd label, used for the plist filename

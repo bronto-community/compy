@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/bronto-io/compy/internal/state"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // Def describes one pinned collector distribution.

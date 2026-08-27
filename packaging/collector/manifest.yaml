@@ -3,7 +3,7 @@
 # build: packaging/collector/build.sh. Component curation by the design
 # owner (2026-08-27); the collector version pins every component line.
 dist:
-  module: github.com/bronto-io/compy/otelcol-compy
+  module: github.com/bronto-community/compy/otelcol-compy
   name: otelcol-compy
   description: compy's OpenTelemetry Collector for the local dev loop
   version: 0.159.0

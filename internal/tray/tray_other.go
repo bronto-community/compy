@@ -5,7 +5,7 @@ package tray
 import (
 	"errors"
 
-	"github.com/bronto-io/compy/internal/app"
+	"github.com/bronto-community/compy/internal/app"
 )
 
 // Run is a stub on non-macOS platforms: compy's tray is macOS-only.

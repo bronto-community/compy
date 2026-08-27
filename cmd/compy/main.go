@@ -20,14 +20,14 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/bronto-io/compy/internal/app"
-	"github.com/bronto-io/compy/internal/cfgstore"
-	"github.com/bronto-io/compy/internal/envvars"
-	"github.com/bronto-io/compy/internal/launchd"
-	"github.com/bronto-io/compy/internal/state"
-	"github.com/bronto-io/compy/internal/tray"
-	"github.com/bronto-io/compy/internal/webui"
-	"github.com/bronto-io/compy/internal/window"
+	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/envvars"
+	"github.com/bronto-community/compy/internal/launchd"
+	"github.com/bronto-community/compy/internal/state"
+	"github.com/bronto-community/compy/internal/tray"
+	"github.com/bronto-community/compy/internal/webui"
+	"github.com/bronto-community/compy/internal/window"
 )
 
 const usage = `compy — local OpenTelemetry Collector manager

@@ -5,7 +5,7 @@ package window
 import (
 	"errors"
 
-	"github.com/bronto-io/compy/internal/app"
+	"github.com/bronto-community/compy/internal/app"
 )
 
 // Run is unavailable off darwin for now; use `compy ui` (browser) instead.
