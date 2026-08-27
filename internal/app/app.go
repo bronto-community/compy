@@ -5,7 +5,6 @@
 package app
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -32,11 +31,25 @@ import (
 // connections after kickstart.
 const probeTimeout = 5 * time.Second
 
-// DefaultDistro is the collector compy uses when settings name none:
-// contrib, downloaded (checksum-verified) automatically the first time
-// anything needs a collector binary. An explicit settings.Distro — set via
+// DefaultDistro is the collector compy falls back to when settings name
+// none and no bundled otelcol-compy sits next to the executable: contrib,
+// downloaded (checksum-verified) automatically the first time anything
+// needs a collector binary. An explicit settings.Distro — set via
 // `compy distro use` or a first `compy distro add` — always wins.
 const DefaultDistro = "contrib"
+
+// effectiveDistro is the distro a blank settings.Distro resolves to: the
+// bundled otelcol-compy when it is built next to the compy executable, else
+// DefaultDistro. An explicit setting always wins.
+func effectiveDistro(s state.Settings) string {
+	if s.Distro != "" {
+		return s.Distro
+	}
+	if p, _ := distro.Bundled(); p != "" {
+		return distro.BundledName
+	}
+	return DefaultDistro
+}
 
 // App holds the resolved state directory. Settings are re-read per
 // operation so concurrent editors (CLI and web UI) never fight over a
@@ -493,7 +506,7 @@ func (a *App) Status() (Status, error) {
 	}
 	return Status{
 		Running:   running,
-		Distro:    cmp.Or(s.Distro, DefaultDistro),
+		Distro:    effectiveDistro(s),
 		GRPCPort:  s.GRPCPort,
 		HTTPPort:  s.HTTPPort,
 		Config:    s.ActiveConfig,
@@ -771,6 +784,14 @@ func httpFetch(url string) (io.ReadCloser, int64, error) {
 	return resp.Body, resp.ContentLength, nil
 }
 
+// fetchFn returns the injected Fetch, or plain HTTP(S).
+func (a *App) fetchFn() distro.Fetch {
+	if a.Fetch != nil {
+		return a.Fetch
+	}
+	return httpFetch
+}
+
 // EnsureDistro resolves a distro name to a collector binary path: "" means
 // the global default from settings (or DefaultDistro when none is set), a
 // user-registered entry is used as-is, and a shipped definition is
@@ -780,12 +801,12 @@ func httpFetch(url string) (io.ReadCloser, int64, error) {
 // so an automatic fetch during activation shows the same progress bar as an
 // explicit one.
 func (a *App) EnsureDistro(name string, progress distro.Progress) (string, error) {
+	s, err := state.LoadSettings()
+	if err != nil {
+		return "", err
+	}
 	if name == "" {
-		s, err := state.LoadSettings()
-		if err != nil {
-			return "", err
-		}
-		name = cmp.Or(s.Distro, DefaultDistro)
+		name = effectiveDistro(s)
 	}
 	user, err := state.LoadDistros()
 	if err != nil {
@@ -793,6 +814,13 @@ func (a *App) EnsureDistro(name string, progress distro.Progress) (string, error
 	}
 	if i := slices.IndexFunc(user, func(d state.Distro) bool { return d.Name == name }); i >= 0 {
 		return user[i].Path, nil
+	}
+	if name == distro.BundledName {
+		p, _ := distro.Bundled()
+		if p == "" {
+			return "", state.BadRequest(errors.New("the bundled collector is not built — run packaging/collector/build.sh"))
+		}
+		return p, nil
 	}
 	for _, d := range distro.Defs() {
 		if d.Name == name {
@@ -816,11 +844,7 @@ func (a *App) EnsureDistro(name string, progress distro.Progress) (string, error
 					progress(done, total)
 				}
 			}
-			fetch := a.Fetch
-			if fetch == nil {
-				fetch = httpFetch
-			}
-			path, err := distro.Ensure(a.Dir, d, fetch, track)
+			path, err := distro.EnsureVersion(a.Dir, d, distro.EffectiveVersion(d, s), a.fetchFn(), track)
 			if began {
 				a.endDownload(name, err)
 			}
@@ -877,15 +901,24 @@ func (a *App) Distros() ([]map[string]any, error) {
 	for _, d := range distro.Defs() {
 		defs[d.Name] = d
 	}
-	selected := cmp.Or(s.Distro, DefaultDistro)
+	selected := effectiveDistro(s)
 	out := make([]map[string]any, 0, len(reg))
 	for _, d := range reg {
 		def, isDef := defs[d.Name]
+		bundled := d.Name == distro.BundledName && !isUserEntry[d.Name]
+		version := ""
+		if isDef {
+			version = distro.EffectiveVersion(def, s)
+		} else if bundled && d.Path != "" {
+			_, version = distro.Bundled()
+		}
 		row := map[string]any{
 			"name":       d.Name,
 			"path":       d.Path,
+			"version":    version,
 			"selected":   d.Name == selected,
 			"definition": isDef,
+			"bundled":    bundled,
 			"available":  !isDef || distro.Available(def),
 			"downloaded": d.Path != "",
 			"user_entry": isUserEntry[d.Name],
@@ -1069,12 +1102,159 @@ func (a *App) UseDistro(name string) error {
 	// settings.json included, which puts the previous collector back — so
 	// read the setting rather than claim it stuck.
 	if after, lerr := state.LoadSettings(); lerr == nil && after.Distro != name {
-		return fmt.Errorf("%q did not start; the collector is still %q: %w", name, cmp.Or(after.Distro, DefaultDistro), err)
+		return fmt.Errorf("%q did not start; the collector is still %q: %w", name, effectiveDistro(after), err)
 	}
 	// Anything else — a plist write, a launchctl refusal — is our fault and
 	// keeps both its own message and its 500 (the collector log tail the UI
 	// shows there is the diagnostic).
 	return err
+}
+
+// updatableDef returns the shipped definition behind name when `compy
+// distro update` applies to it. The bundled collector and user-managed
+// entries are refused with a message the UI shows verbatim.
+func (a *App) updatableDef(name string) (distro.Def, error) {
+	if name == distro.BundledName {
+		return distro.Def{}, state.BadRequest(errors.New("the bundled collector updates with compy releases"))
+	}
+	user, err := state.LoadDistros()
+	if err != nil {
+		return distro.Def{}, err
+	}
+	if slices.ContainsFunc(user, func(d state.Distro) bool { return d.Name == name }) {
+		return distro.Def{}, state.BadRequest(fmt.Errorf("distro %q is user-managed — update the binary at its path yourself", name))
+	}
+	for _, d := range distro.Defs() {
+		if d.Name == name {
+			if !distro.Available(d) {
+				return distro.Def{}, state.BadRequest(fmt.Errorf("distro %q has no build for this platform", name))
+			}
+			return d, nil
+		}
+	}
+	return distro.Def{}, state.BadRequest(fmt.Errorf("no such distro %q", name))
+}
+
+// checkDistroUpdate resolves name's definition, its version in effect, and
+// the latest upstream release. On-demand only — nothing polls in the
+// background — and a network failure or rate limit surfaces as its own
+// error, never as a claim about versions.
+func (a *App) checkDistroUpdate(name string) (d distro.Def, current, latest string, err error) {
+	d, err = a.updatableDef(name)
+	if err != nil {
+		return d, "", "", err
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		return d, "", "", err
+	}
+	current = distro.EffectiveVersion(d, s)
+	latest, err = distro.LatestVersion(a.fetchFn())
+	return d, current, latest, err
+}
+
+// CheckDistroUpdate reports name's version in effect and the latest
+// upstream release, downloading nothing.
+func (a *App) CheckDistroUpdate(name string) (current, latest string, err error) {
+	_, current, latest, err = a.checkDistroUpdate(name)
+	return current, latest, err
+}
+
+// applyDistroUpdate downloads and verifies version alongside the current
+// one (versioned dirs — nothing is overwritten), records it as d's version
+// in effect, and — when d is the collector in use and launchd reports the
+// job running — re-applies so the running collector switches to it. A new
+// collector that fails to start rolls the whole update back: distro
+// versions live in settings.json, which the last-good restore puts back
+// with the rest of the setup. A stopped collector stays stopped.
+func (a *App) applyDistroUpdate(d distro.Def, version string, progress distro.Progress) error {
+	name := d.Name
+	if progress == nil && a.Progress != nil {
+		progress = func(done, total int64) { a.Progress(name, done, total) }
+	}
+	began := false
+	track := func(done, total int64) {
+		if !began {
+			began = a.beginDownload(name)
+		}
+		a.setDownloadProgress(name, done, total)
+		if progress != nil {
+			progress(done, total)
+		}
+	}
+	_, err := distro.EnsureVersion(a.Dir, d, version, a.fetchFn(), track)
+	if began {
+		a.endDownload(name, err)
+	}
+	if err != nil {
+		return err
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		return err
+	}
+	if s.DistroVersions == nil {
+		s.DistroVersions = map[string]string{}
+	}
+	s.DistroVersions[name] = version
+	if err := state.SaveSettings(s); err != nil {
+		return err
+	}
+	if effectiveDistro(s) != name || s.ActiveConfig == "" {
+		return nil
+	}
+	if running, rerr := launchd.Running(); rerr != nil || !running {
+		return nil // stopped stays stopped; the new version runs on next start
+	}
+	err = a.Apply()
+	if err == nil {
+		return nil
+	}
+	// Same honesty as UseDistro: whether the update survived depends on how
+	// the apply failed. A rejected configuration never reached launchd (the
+	// old binary keeps running until the next restart, which uses version);
+	// a collector that would not start was rolled back by the last-good
+	// restore, settings.json — version record included — with it.
+	if state.IsBadRequest(err) {
+		return fmt.Errorf("%s is now %s, but the active configuration does not run with it: %w", name, version, err)
+	}
+	if after, lerr := state.LoadSettings(); lerr == nil && after.DistroVersions[name] != version {
+		return fmt.Errorf("%s %s did not start; the collector is still %s: %w", name, version, distro.EffectiveVersion(d, after), err)
+	}
+	return err
+}
+
+// UpdateDistro is the blocking update the CLI uses: check upstream, and
+// when a newer release exists, download, verify, and switch to it.
+// updated=false with err=nil means name is already the newest release.
+func (a *App) UpdateDistro(name string, progress distro.Progress) (current, latest string, updated bool, err error) {
+	d, current, latest, err := a.checkDistroUpdate(name)
+	if err != nil || latest == current {
+		return current, latest, false, err
+	}
+	return current, latest, true, a.applyDistroUpdate(d, latest, progress)
+}
+
+// StartUpdateDistro is UpdateDistro for the REST surface: the release check
+// answers synchronously (started=false with latest==current means nothing
+// to do), the download runs in the background reporting to the same tracker
+// the fetch progress route polls. An update already in flight is left alone.
+func (a *App) StartUpdateDistro(name string) (current, latest string, started bool, err error) {
+	d, current, latest, err := a.checkDistroUpdate(name)
+	if err != nil {
+		return "", "", false, err
+	}
+	if latest == current {
+		return current, latest, false, nil
+	}
+	if !a.beginDownload(name) {
+		return current, latest, true, nil
+	}
+	go func() {
+		err := a.applyDistroUpdate(d, latest, nil)
+		a.endDownload(name, err)
+	}()
+	return current, latest, true, nil
 }
 
 // Vars returns the OTEL_* environment variables for the current settings.
@@ -1230,10 +1410,12 @@ func (a *App) WebUIAPI() webui.API {
 			}
 			return warning, nil
 		},
-		SetDistroPath:    a.SetDistroPath,
-		RemoveDistro:     a.RemoveDistro,
-		UseDistro:        a.UseDistro,
-		FetchDistro:      a.StartFetchDistro,
-		DownloadProgress: a.DownloadProgress,
+		SetDistroPath:     a.SetDistroPath,
+		RemoveDistro:      a.RemoveDistro,
+		UseDistro:         a.UseDistro,
+		FetchDistro:       a.StartFetchDistro,
+		DownloadProgress:  a.DownloadProgress,
+		CheckDistroUpdate: a.CheckDistroUpdate,
+		UpdateDistro:      a.StartUpdateDistro,
 	}
 }

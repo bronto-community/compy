@@ -68,6 +68,9 @@ type API struct {
 	UseDistro        func(name string) error
 	FetchDistro      func(name string) error // starts the download and returns; poll DownloadProgress
 	DownloadProgress func(name string) (any, error)
+
+	CheckDistroUpdate func(name string) (current, latest string, err error)               // on-demand upstream release check, no download
+	UpdateDistro      func(name string) (current, latest string, started bool, err error) // starts the pull when newer; poll DownloadProgress
 }
 
 // badRequester is how a closure error asks to be reported as 400 Bad
@@ -149,6 +152,8 @@ func routes() []route {
 		{"POST", "/api/distros/{name}/use", handleUseDistro},
 		{"POST", "/api/distros/{name}/fetch", handleFetchDistro},
 		{"GET", "/api/distros/{name}/progress", handleDownloadProgress},
+		{"GET", "/api/distros/{name}/update", handleCheckDistroUpdate},
+		{"POST", "/api/distros/{name}/update", handleUpdateDistro},
 	}
 }
 
@@ -828,6 +833,34 @@ func handleDownloadProgress(api API) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, progress)
+	}
+}
+
+// handleCheckDistroUpdate answers the on-demand release check: the version
+// in effect and the latest upstream release. Nothing is downloaded.
+func handleCheckDistroUpdate(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		current, latest, err := api.CheckDistroUpdate(r.PathValue("name"))
+		if err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"current": current, "latest": latest})
+	}
+}
+
+// handleUpdateDistro starts pulling the latest upstream release and returns;
+// "started": false with current == latest is the honest no-op ("already
+// newest"). The download reports through the same progress route a fetch
+// uses.
+func handleUpdateDistro(api API) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		current, latest, started, err := api.UpdateDistro(r.PathValue("name"))
+		if err != nil {
+			writeClosureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"current": current, "latest": latest, "started": started})
 	}
 }
 

@@ -156,12 +156,28 @@ func extractBinary(tarGz []byte, binName, dest string) error {
 	}
 }
 
-// Registry returns state.LoadDistros() merged with Defs(): definition
-// entries appear with Path set to their installed path (or "" if not yet
-// downloaded into root); a user entry (state.Distro) with the same name as
-// a definition overrides it entirely.
+// EffectiveVersion returns the version of d in effect: the pulled-update
+// version recorded in settings' DistroVersions when present, else the
+// pinned one.
+func EffectiveVersion(d Def, s state.Settings) string {
+	if v := s.DistroVersions[d.Name]; v != "" {
+		return v
+	}
+	return d.Version
+}
+
+// Registry returns the bundled distro (BundledName, Path "" when not built
+// next to the executable) followed by state.LoadDistros() merged with
+// Defs(): definition entries appear with Path set to their installed path
+// (or "" if not yet downloaded into root), at the version in effect per
+// settings; a user entry (state.Distro) with the same name as a definition
+// or the bundled distro overrides it entirely.
 func Registry(root string) ([]state.Distro, error) {
 	user, err := state.LoadDistros()
+	if err != nil {
+		return nil, err
+	}
+	s, err := state.LoadSettings()
 	if err != nil {
 		return nil, err
 	}
@@ -170,15 +186,22 @@ func Registry(root string) ([]state.Distro, error) {
 		overrides[u.Name] = u
 	}
 
-	out := make([]state.Distro, 0, len(defs)+len(user))
-	seen := make(map[string]bool, len(defs))
+	out := make([]state.Distro, 0, len(defs)+len(user)+1)
+	seen := map[string]bool{BundledName: true}
+	if u, ok := overrides[BundledName]; ok {
+		out = append(out, u)
+	} else {
+		path, _ := Bundled()
+		out = append(out, state.Distro{Name: BundledName, Path: path})
+	}
 	for _, d := range Defs() {
 		seen[d.Name] = true
 		if u, ok := overrides[d.Name]; ok {
 			out = append(out, u)
 			continue
 		}
-		path := filepath.Join(root, "distros", d.Name+"-"+d.Version, d.Binary)
+		ver := EffectiveVersion(d, s)
+		path := filepath.Join(root, "distros", d.Name+"-"+ver, d.Binary)
 		if _, err := os.Stat(path); err != nil {
 			path = ""
 		}
