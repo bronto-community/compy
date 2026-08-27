@@ -7,10 +7,12 @@ package distro
 //
 //	https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.159.0/<asset>
 //
-// SHA256 values below were taken from the release's published per-asset
-// <asset>.sha256 files and independently cross-checked by downloading the
-// otlp darwin_arm64 tarball and running `shasum -a 256` on it (2026-08-27)
-// — matched exactly.
+// SHA256 values below come from the release's published per-asset
+// <asset>.sha256 files. The initial import was independently cross-checked
+// by downloading the otlp darwin_arm64 tarball and running `shasum -a 256`
+// on it (2026-08-27); it matched exactly. Version bumps rewrite this file
+// with fresh values from the same .sha256 assets
+// (.github/scripts/bump-collector.py, run by the collector-bump workflow).
 const releaseBase = "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.159.0/"
 
 var defs = []Def{
