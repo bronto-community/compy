@@ -737,7 +737,7 @@ function screenConfigs() {
    supersedes the shown-by-default rule from the copy round; the old
    compy.helpDismissed localStorage keys are simply ignored). */
 const HELP_COPY = {
-  configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml or fetch it from a url.",
+  configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml, fetch it from a url, or paste an otelbin.io share link.",
   collector: "these numbers are the collector's own, scraped from its telemetry endpoint, and listening shows only ports the process actually has open. the log below is the collector's output, grouped by level and filterable. restart and stop live here; the configurations screen picks what runs.",
   settings: "appearance, and how apps find compy: the advertised endpoint, its protocol, and the system-wide OTEL_* toggle. global variables are values every configuration's yaml can reference; the collector table downloads, updates, or replaces the binary every config runs on. the danger area at the bottom deletes everything compy manages.",
   editor: "a configuration is one whole collector config.yaml plus its presets: named sets of values for the ${VAR} references in the yaml. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. cmd+s saves, and the save button shows amber while anything is unsaved.",
@@ -1333,7 +1333,7 @@ function newConfigStrip() {
       }),
       el("span", {
         class: "foot" + (S.newErr ? " bad" : ""),
-        text: S.fetching ? "fetching…" : S.newErr || "empty means a blank config",
+        text: S.fetching ? "fetching…" : S.newErr || "empty means a blank config · otelbin.io links work",
       }),
     ]),
     el("button", { class: "act cancel", text: "cancel", on: { click: () => { S.newOpen = false; render(); } } }),
@@ -1948,21 +1948,25 @@ async function stopCollector() {
 
 // envGuide: the shell-side alternatives to the OS-level toggle — three
 // ways to wire a shell, each with the log toolbar's click-to-copy idiom.
+// One entry per way: the label on its own line, the command on its own
+// line beneath it (2026-08-27 feedback — the label+command single line was
+// hard to process line by line).
 function envGuide() {
-  const row = (desc, cmd) => el("div", { class: "envrow" }, [
-    el("span", { class: "n sans", text: desc }),
-    el("span", { class: "grow" }),
-    el("code", { text: cmd }),
-    el("button", {
-      class: "ico", title: "copy this command",
-      on: { click: () => copyText(cmd, "command copied") },
-    }, [icon("copy", 12)]),
+  const entry = (label, cmd) => el("div", { class: "enventry" }, [
+    el("div", { class: "n sans", text: label }),
+    el("div", { class: "envcmd" }, [
+      el("code", { text: cmd }),
+      el("button", {
+        class: "ico", title: "copy this command",
+        on: { click: () => copyText(cmd, "command copied") },
+      }, [icon("copy", 12)]),
+    ]),
   ]);
   return el("div", { class: "envguide" }, [
     el("div", { class: "n sans", text: "or wire a shell instead:" }),
-    row("current shell, right now", 'eval "$(compy env)"'),
-    row("every new shell: append to ~/.zshrc (or your shell's rc)", "echo 'eval \"$(compy env)\"' >> ~/.zshrc"),
-    row("one command only", "compy run -- <cmd>"),
+    entry("current shell, right now", 'eval "$(compy env)"'),
+    entry("every new shell — append to ~/.zshrc (or your shell's rc)", "echo 'eval \"$(compy env)\"' >> ~/.zshrc"),
+    entry("one command only", "compy run -- <cmd>"),
     el("div", { class: "n sans", text: "an app's own environment always wins over the system-wide toggle." }),
   ]);
 }
