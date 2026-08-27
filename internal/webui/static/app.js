@@ -126,6 +126,7 @@ const S = {
   // configurations screen
   find: "",
   busyId: null,            // config being activated
+  stoppingId: null,        // config whose stop control was pressed
   err: null, errName: null, errKept: null,
   note: null, noteTimer: null,
   flash: null,             // key of the control showing its brief "saved" mark
@@ -795,6 +796,7 @@ function configRow(info) {
   const running = isRunningCfg(name);
   const isActiveCfg = !!(S.status && S.status.config === name);
   const busy = S.busyId === name;
+  const stopping = S.stoppingId === name;
   const list = presetsOf(info);
   const sel = selectedPreset(info);
   const many = list.length > 1;
@@ -826,10 +828,15 @@ function configRow(info) {
     class: "cfg-name", on: { click: () => go("#/configs/" + enc(name)) },
   }, [
     span("", name),
-    // Active-config indication beyond the amber name and dot: the word
-    // itself, pulsing, so the row unambiguously says "this is running"
-    // (2026-08-26 feedback). Stopped-but-active stays dimmed, wordless.
-    running && !busy ? span("runword", "running") : null,
+    // The row's ONE status slot (owner ruling, 2026-08-27): steady running
+    // is the static word; an in-flight activation or stop is the busy word
+    // + bar in the same place. The preset cell never carries status.
+    busy || stopping
+      ? el("span", { class: "busy" }, [
+        span("word", busy ? "restarting…" : "stopping…"),
+        el("span", { class: "bar" }, [el("i")]),
+      ])
+      : running ? span("runword", "running") : null,
   ]));
 
   /* preset cell: selector (chevron only when there is more than one),
@@ -848,29 +855,33 @@ function configRow(info) {
   cell.appendChild(selBtn);
 
   const alreadyRunning = running && sel === (S.status && S.status.preset);
-  // While one activation is in flight every OTHER play is locked out —
-  // install/probe can't be safely cancelled, so the ruling is greying, not
-  // aborting; the in-flight row keeps its busy indicator instead.
-  const locked = !!S.busyId && !busy;
-  cell.appendChild(el("button", {
-    class: "play",
-    title: locked ? activatingTitle() : alreadyRunning ? "already running" : "activate " + name + " · " + sel,
-    attrs: alreadyRunning || busy || locked ? { disabled: "" } : null,
-    on: { click: () => preflightActivate(name, sel) },
-  }, [icon("play", 11, true)]));
+  // While an activation or stop is in flight every OTHER play is locked
+  // out — install/probe can't be safely cancelled, so the ruling is
+  // greying, not aborting; the in-flight row keeps its busy indicator.
+  const locked = inflight() && !busy && !stopping;
+  if (alreadyRunning) {
+    // The running row's play slot is a stop control — the collector-screen
+    // stop flow (no confirm there, none here), err-toned like delete.
+    cell.appendChild(el("button", {
+      class: "play stop",
+      title: stopping ? "stopping…" : locked ? inflightTitle() : "stop the collector",
+      attrs: stopping || locked ? { disabled: "" } : null,
+      on: { click: () => stopFromRow(name) },
+    }, [icon("square", 11, true)]));
+  } else {
+    cell.appendChild(el("button", {
+      class: "play",
+      title: locked ? inflightTitle() : "activate " + name + " · " + sel,
+      attrs: busy || locked ? { disabled: "" } : null,
+      on: { click: () => preflightActivate(name, sel) },
+    }, [icon("play", 11, true)]));
+  }
   // A pencil here read as "edit the config"; the row-level icon is now a
   // plus that adds a preset (the per-preset pencil lives in the dropdown).
   cell.appendChild(el("button", {
     class: "addp", title: "add a preset",
     on: { click: () => openInline(name, "", true) },
   }, [icon("plus", 12)]));
-
-  if (busy) {
-    cell.appendChild(el("span", { class: "busy" }, [
-      span("word", "restarting…"),
-      el("span", { class: "bar" }, [el("i")]),
-    ]));
-  }
 
   if (S.presetsOpenId === name) cell.appendChild(presetMenu(info, list));
   row.appendChild(cell);
@@ -941,8 +952,8 @@ function presetMenu(info, list) {
         on: { click: () => { S.presetSel[info.name] = p; S.presetsOpenId = null; render(); } },
       }),
       el("button", {
-        class: "mini accent", title: S.busyId ? activatingTitle() : "activate this preset",
-        attrs: S.busyId ? { disabled: "" } : null,
+        class: "mini accent", title: inflight() ? inflightTitle() : "activate this preset",
+        attrs: inflight() ? { disabled: "" } : null,
         on: { click: () => { S.presetsOpenId = null; preflightActivate(info.name, p); } },
       }, [icon("play", 11, true)]),
       el("button", {
@@ -1112,11 +1123,15 @@ function yamlLineOf(yaml, key) {
    drops everything (its exporter has nowhere to send), so ask first — an
    inline panel under the row, never a dialog. Nothing missing → activate
    immediately, zero friction. */
-function activatingTitle() {
-  return "activating " + S.busyId + "…, wait for it to finish";
+// A stop is an in-flight action exactly like an activation: while either
+// runs, every other play greys out and further requests are ignored.
+function inflight() { return !!(S.busyId || S.stoppingId); }
+function inflightTitle() {
+  return S.busyId ? "activating " + S.busyId + "…, wait for it to finish"
+    : "stopping " + S.stoppingId + "…, wait for it to finish";
 }
 function preflightActivate(name, preset) {
-  if (S.busyId) return; // every entry button is disabled; belt for stragglers
+  if (inflight()) return; // every entry button is disabled; belt for stragglers
   const info = byName(name);
   const missing = info ? missingRequired(info, preset) : [];
   if (!missing.length) { activate(name, preset); return; }
@@ -1146,14 +1161,29 @@ function preflightPanel(info) {
     }),
     el("button", {
       class: "btn accent", text: "activate anyway",
-      title: S.busyId ? activatingTitle() : null,
-      attrs: S.busyId ? { disabled: "" } : null,
+      title: inflight() ? inflightTitle() : null,
+      attrs: inflight() ? { disabled: "" } : null,
       on: { click: () => { S.preflight = null; activate(p.name, p.preset); } },
     }),
   ]);
 }
+/* The row's stop control: the collector screen's stop flow (POST
+   /api/service/stop, no confirmation there either), plus the row's
+   in-flight state so the status slot says "stopping…" and other plays
+   grey out for the duration. */
+async function stopFromRow(name) {
+  if (inflight()) return;
+  S.stoppingId = name;
+  clearError();
+  render();
+  try { await api("/api/service/stop", { method: "POST" }); } catch (e) { showError(e); }
+  S.stoppingId = null;
+  await loadCore(); await loadCollector();
+  render();
+}
+
 async function activate(name, preset) {
-  if (S.busyId) return; // further activations are ignored until this settles
+  if (inflight()) return; // further activations are ignored until this settles
   S.busyId = name;
   S.err = null; S.presetsOpenId = null; S.preflight = null;
   clearError();
@@ -2332,7 +2362,7 @@ async function updateDistro(name) {
 function refreshBlocked() {
   const a = document.activeElement;
   const inField = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
-  return inField || S.busyId || S.saving || S.restarting || S.presetsOpenId || S.inline
+  return inField || S.busyId || S.stoppingId || S.saving || S.restarting || S.presetsOpenId || S.inline
     || S.confirm || S.preflight || S.newOpen || S.unlockAsk || S.resetArm || S.resetBusy
     || document.querySelector("dialog[open]")
     || (S.screen === "editor" && cmDirty);
