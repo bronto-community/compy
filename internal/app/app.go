@@ -901,6 +901,9 @@ func (a *App) Distros() ([]map[string]any, error) {
 	for _, d := range distro.Defs() {
 		defs[d.Name] = d
 	}
+	// Best-effort: an unreadable check-result cache means no availability
+	// claim, never a broken listing (the zero value claims nothing).
+	chk, _ := state.LoadUpdateCheck()
 	selected := effectiveDistro(s)
 	out := make([]map[string]any, 0, len(reg))
 	for _, d := range reg {
@@ -922,6 +925,18 @@ func (a *App) Distros() ([]map[string]any, error) {
 			"available":  !isDef || distro.Available(def),
 			"downloaded": d.Path != "",
 			"user_entry": isUserEntry[d.Name],
+		}
+		// Availability rides only on the updatable rows — pinned definitions
+		// not overridden by a user entry. The bundled collector updates with
+		// compy and user paths are the user's to update; NewerVersion never
+		// claims on a malformed/unknown current version.
+		if isDef && !isUserEntry[d.Name] {
+			if !chk.CheckedAt.IsZero() {
+				row["checked_at"] = chk.CheckedAt.Format(time.RFC3339)
+			}
+			if distro.NewerVersion(chk.Latest, version) {
+				row["latest_available"] = chk.Latest
+			}
 		}
 		// A download this process started without the settings screen's
 		// help (activation auto-fetching the default) rides along in the
@@ -1135,10 +1150,72 @@ func (a *App) updatableDef(name string) (distro.Def, error) {
 	return distro.Def{}, state.BadRequest(fmt.Errorf("no such distro %q", name))
 }
 
+// latestVersion is the one release-check path — the on-demand check and the
+// tray's background MaybeCheckUpdates both land here, so every successful
+// check records the same distro-updates.json and all surfaces agree. One
+// listing covers every pinned distro. A record-write failure doesn't fail
+// the check (the caller still gets its answer); it just isn't cached.
+func (a *App) latestVersion() (string, error) {
+	latest, err := distro.LatestVersion(a.fetchFn())
+	if err != nil {
+		return "", err
+	}
+	if err := state.SaveUpdateCheck(state.UpdateCheck{Latest: latest, CheckedAt: time.Now().UTC()}); err != nil {
+		fmt.Fprintln(os.Stderr, "compy: record release check:", err)
+	}
+	return latest, nil
+}
+
+// updateCheckInterval is the background release-check cadence. The tray's
+// goroutine calls MaybeCheckUpdates more often; it declines until due.
+const updateCheckInterval = 12 * time.Hour
+
+// MaybeCheckUpdates runs one upstream release check when the persisted
+// result is older than updateCheckInterval — the tray's background job.
+// Fully silent on failure (offline, rate-limited): stderr at most, the
+// previous result stands with its honest checked_at, the next call retries.
+func (a *App) MaybeCheckUpdates() {
+	chk, err := state.LoadUpdateCheck()
+	if err == nil && time.Since(chk.CheckedAt) < updateCheckInterval {
+		return
+	}
+	if _, err := a.latestVersion(); err != nil {
+		fmt.Fprintln(os.Stderr, "compy: release check:", err)
+	}
+}
+
+// UpdateAvailable reports the newest known upstream release when it is
+// newer than some updatable pinned distro's version in effect, "" when none
+// is. Read-only — it answers from the persisted check result, never the
+// network — so the tray can afford it on its 5s resync.
+func (a *App) UpdateAvailable() (string, error) {
+	chk, err := state.LoadUpdateCheck()
+	if err != nil || chk.Latest == "" {
+		return "", err
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		return "", err
+	}
+	user, err := state.LoadDistros()
+	if err != nil {
+		return "", err
+	}
+	for _, d := range distro.Defs() {
+		if slices.ContainsFunc(user, func(u state.Distro) bool { return u.Name == d.Name }) {
+			continue // user-managed override: theirs to update
+		}
+		if distro.Available(d) && distro.NewerVersion(chk.Latest, distro.EffectiveVersion(d, s)) {
+			return chk.Latest, nil
+		}
+	}
+	return "", nil
+}
+
 // checkDistroUpdate resolves name's definition, its version in effect, and
-// the latest upstream release. On-demand only — nothing polls in the
-// background — and a network failure or rate limit surfaces as its own
-// error, never as a claim about versions.
+// the latest upstream release (persisting the check result). A network
+// failure or rate limit surfaces as its own error, never as a claim about
+// versions.
 func (a *App) checkDistroUpdate(name string) (d distro.Def, current, latest string, err error) {
 	d, err = a.updatableDef(name)
 	if err != nil {
@@ -1149,7 +1226,7 @@ func (a *App) checkDistroUpdate(name string) (d distro.Def, current, latest stri
 		return d, "", "", err
 	}
 	current = distro.EffectiveVersion(d, s)
-	latest, err = distro.LatestVersion(a.fetchFn())
+	latest, err = a.latestVersion()
 	return d, current, latest, err
 }
 

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bronto-io/compy/internal/app"
 	"github.com/bronto-io/compy/internal/distro"
@@ -153,6 +154,146 @@ func TestUpdateDistroPullsRecordsAndResolves(t *testing.T) {
 	}
 	if _, _, started, err := a.StartUpdateDistro("otlp"); err != nil || started {
 		t.Fatalf("StartUpdateDistro when newest = (started %v, err %v), want (false, nil)", started, err)
+	}
+}
+
+// countingFetch wraps fetch, counting GitHub releases-listing calls.
+func countingFetch(fetch distro.Fetch, calls *int) distro.Fetch {
+	return func(url string) (io.ReadCloser, int64, error) {
+		if strings.Contains(url, "api.github.com") {
+			*calls++
+		}
+		return fetch(url)
+	}
+}
+
+func TestUpdateCheckPersistsAndShowsOnRows(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	a.Fetch = countingFetch(updateFetch(t, "0.160.0", tarGzWith(t, "otelcol-otlp")), &calls)
+
+	// The on-demand check persists its result.
+	if _, _, err := a.CheckDistroUpdate("otlp"); err != nil {
+		t.Fatal(err)
+	}
+	chk, err := state.LoadUpdateCheck()
+	if err != nil || chk.Latest != "0.160.0" || chk.CheckedAt.IsZero() {
+		t.Fatalf("persisted check = %+v (%v), want latest 0.160.0 with checked_at", chk, err)
+	}
+	if calls != 1 {
+		t.Fatalf("listing calls = %d, want 1", calls)
+	}
+
+	// One listing covers every pinned distro: every updatable row claims
+	// availability from the persisted result, with no further network.
+	a.Fetch = func(url string) (io.ReadCloser, int64, error) {
+		t.Errorf("unexpected network call %q while listing distros", url)
+		return nil, 0, fmt.Errorf("offline")
+	}
+	fakeDistro(t, "exit 0") // a user-managed row must never claim
+	rows, err := a.Distros()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]map[string]any{}
+	for _, r := range rows {
+		byName[r["name"].(string)] = r
+	}
+	for _, name := range []string{"core", "contrib", "otlp"} {
+		if byName[name]["latest_available"] != "0.160.0" {
+			t.Errorf("%s latest_available = %v, want 0.160.0", name, byName[name]["latest_available"])
+		}
+		if s, _ := byName[name]["checked_at"].(string); s == "" {
+			t.Errorf("%s checked_at missing", name)
+		}
+	}
+	for _, name := range []string{"compy", "fake"} {
+		if v, ok := byName[name]["latest_available"]; ok {
+			t.Errorf("%s claims %v; bundled/user rows must not", name, v)
+		}
+	}
+}
+
+func TestMaybeCheckUpdatesCadenceAndUpdateClears(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	working := countingFetch(updateFetch(t, "0.160.0", tarGzWith(t, "otelcol-otlp")), &calls)
+	a.Fetch = working
+
+	// No persisted result: due — checks and records.
+	a.MaybeCheckUpdates()
+	if calls != 1 {
+		t.Fatalf("listing calls = %d, want 1", calls)
+	}
+	if chk, err := state.LoadUpdateCheck(); err != nil || chk.Latest != "0.160.0" {
+		t.Fatalf("persisted check = %+v (%v)", chk, err)
+	}
+
+	// Fresh result: declines without network.
+	a.MaybeCheckUpdates()
+	if calls != 1 {
+		t.Fatalf("fresh result still checked: %d calls", calls)
+	}
+
+	// Stale result: due again.
+	if err := state.SaveUpdateCheck(state.UpdateCheck{Latest: "0.150.0", CheckedAt: time.Now().Add(-13 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	a.MaybeCheckUpdates()
+	if calls != 2 {
+		t.Fatalf("stale result not rechecked: %d calls", calls)
+	}
+
+	// A failed check keeps the previous result and its honest checked_at —
+	// silent, retried next tick, never a stale claim erased.
+	stale := state.UpdateCheck{Latest: "0.160.0", CheckedAt: time.Now().Add(-13 * time.Hour).UTC()}
+	if err := state.SaveUpdateCheck(stale); err != nil {
+		t.Fatal(err)
+	}
+	a.Fetch = func(url string) (io.ReadCloser, int64, error) {
+		return nil, 0, fmt.Errorf("rate limited")
+	}
+	a.MaybeCheckUpdates()
+	if chk, err := state.LoadUpdateCheck(); err != nil || chk.Latest != stale.Latest || !chk.CheckedAt.Equal(stale.CheckedAt) {
+		t.Fatalf("failed check touched the record: %+v (%v), want %+v", chk, err, stale)
+	}
+
+	// UpdateAvailable answers from the persisted claim; a pulled update
+	// clears that distro's claim (its version in effect caught up) while the
+	// others keep theirs.
+	a.Fetch = working
+	if v, err := a.UpdateAvailable(); err != nil || v != "0.160.0" {
+		t.Fatalf("UpdateAvailable = (%q, %v), want 0.160.0", v, err)
+	}
+	if _, _, updated, err := a.UpdateDistro("otlp", nil); err != nil || !updated {
+		t.Fatalf("update otlp = (%v, %v)", updated, err)
+	}
+	rows, err := a.Distros()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		switch r["name"] {
+		case "otlp":
+			if v, ok := r["latest_available"]; ok {
+				t.Errorf("otlp still claims %v after updating to it", v)
+			}
+		case "contrib":
+			if r["latest_available"] != "0.160.0" {
+				t.Errorf("contrib claim = %v, want 0.160.0", r["latest_available"])
+			}
+		}
+	}
+	if v, _ := a.UpdateAvailable(); v != "0.160.0" {
+		t.Errorf("UpdateAvailable after otlp update = %q, want 0.160.0 (contrib still behind)", v)
 	}
 }
 

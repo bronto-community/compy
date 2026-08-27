@@ -120,6 +120,15 @@
           "download": {
             "$ref": "#/components/schemas/DownloadProgress",
             "description": "Present only while a download of this distro is in flight in the serving process — including one an activation started automatically (the default collector fetched on first need), so the settings screen's periodic refresh can show a progress bar for a download it did not start."
+          },
+          "latest_available": {
+            "type": "string",
+            "description": "The newest upstream release, present only when it is newer than this row's version in effect, per the persisted release check (the tray's ~12h background check, or an on-demand GET /api/distros/{name}/update — both record the same result). Read from disk, never fetched during this request. Only on updatable rows: never on the bundled collector (it updates with compy releases) or user-managed entries, and a malformed/unknown current version never claims."
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the persisted release check last succeeded (a failed check keeps the previous result and its checked_at rather than claim staleness away). Absent until a check has succeeded; only on updatable rows, like latest_available."
           }
         }
       },
@@ -1115,7 +1124,7 @@
     "/api/distros/{name}/update": {
       "get": {
         "summary": "Check the latest upstream release for a pinned distro (core, contrib, otlp) \u2014 on demand, downloads nothing",
-        "description": "The version in effect and the newest upstream release of open-telemetry/opentelemetry-collector-releases. 400 for the bundled collector (it updates with compy releases), a user-managed entry, or an unknown name; a network failure or rate limit is an honest error, never a claim about versions.",
+        "description": "The version in effect and the newest upstream release of open-telemetry/opentelemetry-collector-releases. A successful check is recorded in the state dir (the same record the tray's background check writes), so every distro row's latest_available/checked_at refreshes with it. 400 for the bundled collector (it updates with compy releases), a user-managed entry, or an unknown name; a network failure or rate limit is an honest error, never a claim about versions.",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],

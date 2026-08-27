@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"time"
 )
 
 // Settings holds compy's global settings. Unknown fields in settings.json
@@ -225,6 +226,30 @@ func LoadSettings() (Settings, error) {
 // SaveSettings writes settings.json atomically.
 func SaveSettings(s Settings) error {
 	return saveJSON("settings.json", s)
+}
+
+// UpdateCheck is the persisted result of the last successful upstream
+// release check (distro-updates.json). One release of
+// opentelemetry-collector-releases carries every pinned distro's assets, so
+// a single latest version covers core, contrib, and otlp alike; per-row
+// availability is that version compared against the row's version in
+// effect. Reading it is a file read — it never triggers network — and a
+// failed check writes nothing, so the previous result (with its honest
+// CheckedAt) stands.
+type UpdateCheck struct {
+	Latest    string    `json:"latest"`
+	CheckedAt time.Time `json:"checked_at"`
+}
+
+// LoadUpdateCheck loads distro-updates.json; a missing file yields the zero
+// value (no result yet).
+func LoadUpdateCheck() (UpdateCheck, error) {
+	return loadJSON("distro-updates.json", UpdateCheck{})
+}
+
+// SaveUpdateCheck writes distro-updates.json atomically.
+func SaveUpdateCheck(c UpdateCheck) error {
+	return saveJSON("distro-updates.json", c)
 }
 
 // LoadDistros loads distros.json from the state dir. A missing file yields
