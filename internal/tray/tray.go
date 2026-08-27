@@ -46,6 +46,13 @@ type menu struct {
 	status      *systray.MenuItem
 	statusLine2 *systray.MenuItem
 
+	// updates is the disabled "Update available · 0.x.y" line under the
+	// status block, hidden while nothing newer is known; updatesLine caches
+	// what it currently shows so the 5s resync only touches systray on a
+	// change (the setIcon/itemIcons discipline).
+	updates     *systray.MenuItem
+	updatesLine string
+
 	slots       []*systray.MenuItem            // pre-created inline config rows (fixed menu position)
 	slotNames   []string                       // slotNames[i] = config shown in slots[i], "" = hidden
 	slotPresets []map[string]*systray.MenuItem // slotPresets[i]: that row's own preset submenu items
@@ -112,6 +119,9 @@ func onReady(a *app.App) {
 	m.status.Disable()
 	m.statusLine2 = systray.AddMenuItem("...", "service status")
 	m.statusLine2.Disable()
+	m.updates = systray.AddMenuItem("", "a newer collector release is available — update in Open compy → settings")
+	m.updates.Disable()
+	m.updates.Hide()
 	systray.AddSeparator()
 	header := systray.AddMenuItem("CONFIGURATION", "your configurations")
 	header.Disable()
@@ -150,6 +160,17 @@ func onReady(a *app.App) {
 			m.mu.Unlock()
 		}
 	}()
+	// Background release check: the tray is compy's one long-running process
+	// (no daemon — v1 design rule), so the ~12h cadence lives here. The
+	// hourly wakeups are just retry/due checks — app.MaybeCheckUpdates
+	// declines without network until the persisted result is actually stale,
+	// and stays silent on failure. Its own goroutine, off the 5s sync path.
+	go func() {
+		for {
+			a.MaybeCheckUpdates()
+			time.Sleep(time.Hour)
+		}
+	}()
 	go m.handleToggle()
 	go m.handleRestart()
 	go handleOpenApp(openApp)
@@ -175,6 +196,7 @@ func (m *menu) sync() {
 	m.status.SetTitle(line1)
 	m.statusLine2.SetTitle(line2)
 	m.setIcon(iconFor(st.Running, errs))
+	m.syncUpdatesLine()
 	m.last = st
 	m.toggle.SetTitle(toggleTitle(st.Running))
 	// Restarting a stopped collector makes no sense — the toggle's Start is
@@ -301,6 +323,29 @@ func (m *menu) resolvePresetClick(item *systray.MenuItem) (presetTarget, bool) {
 	defer m.mu.Unlock()
 	target, ok := m.presetOwner[item]
 	return target, ok
+}
+
+// syncUpdatesLine shows the disabled availability line when the persisted
+// release check knows a newer version than some pinned distro runs — a
+// read-only file check via app.UpdateAvailable, never network. Called from
+// sync(), so under m.mu everywhere but onReady's initial call. Read-only on
+// purpose: updating still lives in the settings screen and the CLI
+// (deliberately no actions here, like the no-per-backend-toggles rule).
+func (m *menu) syncUpdatesLine() {
+	line := ""
+	if latest, err := m.a.UpdateAvailable(); err == nil && latest != "" {
+		line = "Update available · " + latest
+	}
+	if line == m.updatesLine {
+		return
+	}
+	m.updatesLine = line
+	if line == "" {
+		m.updates.Hide()
+		return
+	}
+	m.updates.SetTitle(line)
+	m.updates.Show()
 }
 
 // setIcon swaps the menu-bar icon when — and only when — the state changed,

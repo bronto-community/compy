@@ -1708,6 +1708,10 @@ function distroRow(b) {
   const bundled = !!b.bundled;
   const checking = !!S.up[b.name];
   const ver = b.version ? " · " + b.version : "";
+  // The persisted release check (background or on-demand) claims a newer
+  // version; only updatable rows carry it, and it clears once the update
+  // pulls (the version in effect catches up).
+  const avail = b.latest_available ? " · " + b.latest_available + " available" : "";
 
   // A real fetch failure is a Go error with a URL in it — too long for a
   // 1fr cell. The row shows one short line; the whole thing is the tooltip.
@@ -1717,10 +1721,10 @@ function distroRow(b) {
     : failed ? (short ? "download failed · " + short : "download failed")
       : checking ? "checking for a newer release…"
         : bundled ? (here ? "shipped with compy" + ver : "not built — packaging/collector/build.sh")
-          : inUse ? "in use" + ver
+          : inUse ? "in use" + ver + avail
             : blocked ? "not available on macOS"
-              : here ? (mine ? "added by you" : "installed" + ver)
-                : "available to download" + ver;
+              : here ? (mine ? "added by you" : "installed" + ver + avail)
+                : "available to download" + ver + avail;
   const stateCls = busy || checking || inUse ? " accent" : failed ? " bad" : blocked || (bundled && !here) ? " off" : mine ? " mine" : "";
   const glyph = inUse ? "dot" : blocked || (bundled && !here) ? "ban" : here ? "circle" : "download";
 
@@ -1733,7 +1737,8 @@ function distroRow(b) {
       : blocked ? "not available on macOS"
         : busy ? "downloading…"
           : checking ? "checking…"
-            : "check for a newer release and update " + b.name;
+            : b.latest_available ? b.latest_available + " is available — update " + b.name
+              : "check for a newer release and update " + b.name;
 
   const row = el("div", { class: "bin-grid bin-row" + (inUse ? " on" : "") }, [
     el("span", { class: "ic" + (blocked || (bundled && !here) ? " off" : ""), title: state }, [icon(glyph, 13)]),
@@ -1756,7 +1761,10 @@ function distroRow(b) {
         on: { click: () => fetchDistro(b.name) },
       }, [icon("download", 13)]),
       el("button", {
-        class: "ico", title: updateTitle,
+        // Accent when a newer release is actually known — the existing
+        // "this is the actionable thing" treatment, no popups.
+        class: "ico" + (b.latest_available && canUpdate && !busy && !checking ? " accent" : ""),
+        title: updateTitle,
         attrs: canUpdate && !busy && !checking ? null : { disabled: "" },
         on: { click: () => updateDistro(b.name) },
       }, [icon("refresh", 13)]),
