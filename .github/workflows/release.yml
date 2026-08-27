@@ -31,7 +31,7 @@ jobs:
             echo "HOMEBREW_TAP_TOKEN not set; skipping the Homebrew cask" >&2
             echo "skip=--skip=homebrew" >> "$GITHUB_OUTPUT"
           fi
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           args: release --clean ${{ steps.cask.outputs.skip }}
