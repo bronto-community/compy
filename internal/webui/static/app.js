@@ -839,18 +839,27 @@ function configRow(info) {
       : running ? span("runword", "running") : null,
   ]));
 
-  /* preset cell: selector (chevron only when there is more than one),
-     play, pencil, and the in-flight indicator. */
+  /* preset cell: the chip IS the preset — clicking it edits (one preset)
+     or opens the menu (several). The edit affordance lives INSIDE the
+     chip's border so its scope reads as the preset, never the config
+     (2026-08-28 ruling: a free-floating pencil inherited the row's scope
+     and read as "edit the config", however it was titled). */
   const cell = el("span", { class: "cell-preset" });
   const selBtn = el("button", {
     class: "preset-sel" + (many ? " many" : ""),
-    attrs: many ? { "aria-haspopup": "true" } : { tabindex: "-1" },
-    on: { click: () => { if (many) { S.presetsOpenId = S.presetsOpenId === name ? null : name; render(); } } },
+    attrs: { "aria-haspopup": many ? "true" : null },
+    title: many ? "pick or edit a preset" : "edit the " + sel + " preset",
+    on: {
+      click: () => {
+        if (many) { S.presetsOpenId = S.presetsOpenId === name ? null : name; render(); } else { openInline(name, sel, false); }
+      },
+    },
   }, [
     // Every config keeps at least one preset, so sel is always real.
     span("nm", sel),
     el("span", { class: "grow" }),
-    many ? el("span", { class: "caret" }, [icon("chevron", 12)]) : null,
+    many ? el("span", { class: "caret" }, [icon("chevron", 12)])
+      : el("span", { class: "caret" }, [icon("pencil", 11)]),
   ]);
   cell.appendChild(selBtn);
 
@@ -876,14 +885,8 @@ function configRow(info) {
       on: { click: () => preflightActivate(name, sel) },
     }, [icon("play", 11, true)]));
   }
-  // Pencil edits the selected preset (for most configs: their one and only
-  // default — 2026-08-28 ruling), plus adds another. The pencil's old
-  // read-as-edit-the-config ambiguity is gone now that clicking the row
-  // itself opens the config editor.
-  cell.appendChild(el("button", {
-    class: "addp", title: "edit the " + sel + " preset",
-    on: { click: () => openInline(name, sel, false) },
-  }, [icon("pencil", 12)]));
+  // Quick-editing the preset lives in the chip itself; the row keeps only
+  // the plus for adding another.
   cell.appendChild(el("button", {
     class: "addp", title: "add a preset",
     on: { click: () => openInline(name, "", true) },
