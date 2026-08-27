@@ -154,6 +154,11 @@ const S = {
   resetArm: false,         // factory-reset inline confirm showing
   resetTyped: "",          // what's in its type-compy-to-confirm field
   resetBusy: false,        // reset request in flight
+
+  // sidebar ports warning (status.conformance)
+  adoptAsk: false,         // manual grpc/http assignment showing
+  adoptSel: {},            // { grpc: port, http: port } chosen in it
+  adopting: false,         // adopt request in flight
 };
 
 /* ── theme ────────────────────────────────────────────────────────────
@@ -492,6 +497,93 @@ function renderSidebar() {
   // ports line at all. (The collector in use lives in settings, not here.)
   const ports = detectedPorts();
   if (!stopped && ports.length) box.appendChild(span("ports", portsCompact(ports)));
+
+  /* The conformance verdict (status.conformance, present only while running
+     with detection): nonconforming means an app following compy's advertised
+     env would miss this collector — warn, and offer adopt. A conforming
+     config whose grpc port just isn't bound gets only a soft addendum. */
+  const v = !stopped && S.status ? S.status.conformance : null;
+  if (v && !v.conforming) {
+    box.appendChild(portsWarning(v));
+  } else {
+    S.adoptAsk = false;
+    if (v && v.missing_grpc) {
+      box.appendChild(span("pw-soft", "grpc :" + S.status.grpc_port + " not among this config's listeners"));
+    }
+  }
+}
+
+function portsWarning(v) {
+  const st = S.status;
+  const listens = v.actual && v.actual.length
+    ? "this config listens on " + portsCompact(v.actual)
+    : "this config opens no other ports";
+  const wrap = el("div", { class: "portwarn" }, [
+    el("div", { class: "pw-line" }, [
+      el("span", { class: "dot5", attrs: { style: "background: var(--err)" } }),
+      span("", "apps point at :" + st.http_port + " — " + listens),
+    ]),
+    el("span", { class: "pw-hint sans", text: "bind ${env:COMPY_HTTP_PORT} in the config, or:" }),
+  ]);
+  if (!S.adoptAsk) {
+    wrap.appendChild(el("button", {
+      class: "act adopt", text: S.adopting ? "adopting…" : "adopt this config's ports",
+      attrs: S.adopting ? { disabled: "" } : null,
+      on: { click: () => adoptPorts(null) },
+    }));
+    return wrap;
+  }
+  /* Ambiguous classification: never guess silently — the user says which
+     detected port is which. */
+  const opts = v.actual || [];
+  const sel = (key) => {
+    const s = el("select", {
+      class: "field sm", attrs: { "data-fk": "adopt-" + key, "aria-label": "otlp/" + key + " port" },
+      on: { change: (e) => { S.adoptSel[key] = parseInt(e.target.value, 10) || 0; render(); } },
+    }, [el("option", { text: key + " —", attrs: { value: "" } })].concat(
+      opts.map((p) => el("option", { text: key + " :" + p, attrs: { value: String(p) } }))));
+    if (S.adoptSel[key]) s.value = String(S.adoptSel[key]);
+    return s;
+  };
+  const ready = S.adoptSel.grpc && S.adoptSel.http && S.adoptSel.grpc !== S.adoptSel.http && !S.adopting;
+  wrap.appendChild(el("span", { class: "pw-hint sans", text: "can't tell which port is which — assign them:" }));
+  wrap.appendChild(el("div", { class: "pw-row" }, [sel("grpc"), sel("http")]));
+  wrap.appendChild(el("div", { class: "pw-row" }, [
+    el("button", { class: "act", text: "cancel", on: { click: () => { S.adoptAsk = false; render(); } } }),
+    el("button", {
+      class: "act adopt", text: S.adopting ? "adopting…" : "adopt",
+      attrs: ready ? null : { disabled: "" },
+      on: { click: () => adoptPorts({ grpc_port: S.adoptSel.grpc, http_port: S.adoptSel.http }) },
+    }),
+  ]));
+  return wrap;
+}
+
+/* Adopt: no body lets the backend classify the detected ports (otlp/http
+   speaks HTTP/1.1, grpc doesn't); a 400 on that path is the backend
+   refusing to guess — open the manual assignment instead of an error. An
+   explicit body is the user's own assignment and fails loudly. */
+async function adoptPorts(body) {
+  if (S.adopting) return;
+  clearError();
+  S.adopting = true;
+  render();
+  try {
+    await apiJSON("/api/service/adopt-ports", "POST", body || {});
+    S.adopting = false; S.adoptAsk = false; S.adoptSel = {};
+    await loadCore();
+    note("advertised ports now follow " + ((S.status && S.status.config) || "this config"), 4200);
+  } catch (e) {
+    S.adopting = false;
+    const v = S.status && S.status.conformance;
+    if (!body && e.status === 400 && v && v.actual && v.actual.length) {
+      S.adoptAsk = true;
+      render();
+      return;
+    }
+    showError(e);
+  }
+  render();
 }
 
 /* ── screen 1: configurations ─────────────────────────────────────── */
@@ -899,6 +991,13 @@ async function activate(name, preset) {
     S.presetSel[name] = preset;
     await loadCore();
     await loadCollector();
+    // The success path stays honest about reachability: activated, yes —
+    // but a config that ignores compy's advertised ports strands every app
+    // that trusts them, and that is worth a sentence right now.
+    const v = S.status && S.status.conformance;
+    if (v && !v.conforming) {
+      note("activated, but this config doesn't listen on compy's ports — apps using compy env won't reach it", 7000);
+    }
   } catch (e) {
     S.busyId = null;
     // C1.14: the panel shows the collector's real diagnostic, never a

@@ -95,11 +95,30 @@ configuration:
 (`compy presets set <config> <preset> KEY=VALUE` takes one variable per
 call; `compy use <config> <preset>` both selects and activates a preset.)
 
+## The advertised endpoint
+
+compy's advertised ports are the contract: `compy env`, `compy run`, and
+the OS-level env all export
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<http_port>` (protocol
+`http/protobuf`) from the ports in settings — 14318 HTTP / 14317 gRPC by
+default, stable across config switches. The shipped configurations bind
+their receivers to `${env:COMPY_GRPC_PORT}` / `${env:COMPY_HTTP_PORT}`, so
+they always conform. A configuration owns its receivers and may bind
+anywhere — but when its detected listeners don't include the advertised
+HTTP port, apps that followed compy's env would silently miss it, so every
+surface says so instead (`compy status`, the window sidebar, the menu bar's
+"ports mismatch"). Either make the config conform (bind the `COMPY_*_PORT`
+variables) or run `compy adopt-ports` (also in the window's warning) to
+re-point the advertisement at the config's actual OTLP ports — grpc vs.
+http is probed apart automatically, and anything ambiguous is refused with
+the candidates named (`--grpc N --http N` assigns them explicitly).
+
 ## Command surface
 
 ```
 compy status [--json]
 compy apply | validate | stop | start
+compy adopt-ports [--grpc N] [--http N]
 compy config list
 compy config show|edit|delete|sync|resync <name>
 compy config create <name> [--from-url URL]
