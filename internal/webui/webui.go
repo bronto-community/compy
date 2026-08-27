@@ -181,7 +181,23 @@ func Handler(api API) http.Handler {
 
 // Serve starts the web UI listening on addr.
 func Serve(addr string, api API) error {
-	return http.ListenAndServe(addr, Handler(api))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return ServeListener(ln, api)
+}
+
+// ServeListener serves the web UI on an existing listener. Keep-alives are
+// off deliberately: macOS's URL loader silently retries an idempotent
+// request when a pooled connection has gone stale, but never a POST — which
+// surfaced as "the network connection was lost" on the first button pressed
+// after the window sat idle. One connection per request costs nothing on
+// localhost and removes the class.
+func ServeListener(ln net.Listener, api API) error {
+	srv := &http.Server{Handler: Handler(api)}
+	srv.SetKeepAlivesEnabled(false)
+	return srv.Serve(ln)
 }
 
 // hostCheck rejects (403) any request whose Host header is not localhost,
