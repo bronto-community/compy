@@ -56,10 +56,12 @@ To send somewhere real, e.g. the shipped `bronto` configuration:
 **Configurations and presets.** compy manages whole collector
 `config.yaml` documents, each with named presets (e.g. `default`,
 `staging`) of values for the `${VAR}` / `${env:VAR:-default}` references
-the YAML contains. Exactly one configuration and one of its presets is
-active at a time. Activating puts the preset's values into the collector's
-environment and restarts it; the collector expands its own variables,
-compy never rewrites the YAML. If the new configuration fails to start,
+the YAML contains. Presets are how values reach a configuration: every
+configuration keeps at least one — a new one starts with an empty
+`default` preset, and the last preset can't be deleted. Exactly one
+configuration and one of its presets is active at a time. Activating puts
+the preset's values into the collector's environment and restarts it; the
+collector expands its own variables, compy never rewrites the YAML. If the new configuration fails to start,
 compy restores the one that was running.
 
 **Shipped, remote, and your own configs.** Three configurations ship with

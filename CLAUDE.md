@@ -94,7 +94,10 @@ updating BOTH, or `TestOpenAPIDriftAgainstRoutes` fails.
 ## Configurations
 
 A configuration (`internal/cfgstore`) is a whole collector `config.yaml` +
-`meta.json` (provenance, presets) under `configs/<name>/`. Exactly one
+`meta.json` (provenance, presets) under `configs/<name>/`. Every config
+keeps at least one preset (creation paths write an empty `default`;
+`cfgstore.EnsurePresets` backfills older state at `app.New`; the last
+preset can't be deleted). Exactly one
 configuration, and one of its presets, is active at a time;
 activating (`app.Activate`) puts that preset's values into the LaunchAgent's
 environment so the collector expands its own `${VAR}` / `${env:VAR:-def}`
