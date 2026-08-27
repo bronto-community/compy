@@ -15,10 +15,11 @@ import (
 
 // statusLines renders the two status-block lines (README "5. Menu bar";
 // ACCEPTANCE C5.1). Stopped is exactly "Stopped" / "no listeners" — no
-// config or preset named, since nothing is running to name. Running always
-// names the config and the preset — "default" when the config has none (a
-// config with no `${VAR}` references activates with empty values; 2026-08-26
-// feedback). warns is the collector log's warn-level line count only
+// config or preset named, since nothing is running to name. Running names
+// the config and its preset — every config has a real one (cfgstore's
+// default-preset invariant), so an empty Preset only means the status
+// itself couldn't resolve it, and then nothing is claimed. warns is the
+// collector log's warn-level line count only
 // (controller ruling D2: warn-only here, unlike the window sidebar's
 // warn+error sum), and the tail is omitted entirely at zero rather than
 // printed as "0 warnings". The leading ●/○ stands in for the design's
@@ -35,8 +36,6 @@ func statusLines(st app.Status, warns int) (line1, line2 string) {
 	line1 = "● Running · " + st.Config
 	if st.Preset != "" {
 		line1 += " · " + st.Preset
-	} else {
-		line1 += " · default"
 	}
 	line2 = portsSegment(st.Listening)
 	if warns > 0 {
@@ -116,10 +115,9 @@ func checkedConfig(st app.Status) string {
 }
 
 // presetChoices reports a configuration's presets (sorted) and whether it
-// gets a submenu at all: any config with a preset does (2026-08-26 feedback:
-// switch "if a preset is available" — a single-preset submenu still shows
-// what would run). Picking a preset there is the activation; a preset-less
-// config activates directly on click.
+// gets a submenu at all: two or more presets do (a single-preset config —
+// the guaranteed minimum — activates directly on click, clickPreset).
+// Picking a preset in the submenu is the activation.
 func presetChoices(info cfgstore.Info) (names []string, submenu bool) {
 	if len(info.Meta.Presets) == 0 {
 		return nil, false

@@ -78,11 +78,13 @@ func TestStatusLines(t *testing.T) {
 			wantLine2: ":4317 :4318",
 		},
 		{
-			// 2026-08-26 feedback: the implicit preset is named "default",
-			// consistently with the window, rather than omitted.
-			name:      "running without a preset says default",
+			// Every config keeps a real preset now (cfgstore's default-preset
+			// invariant), so an empty Preset means the status couldn't resolve
+			// it — claim nothing rather than invent "default" (2026-08-27,
+			// supersedes the 2026-08-26 implicit-default rule).
+			name:      "unresolved preset claims nothing",
 			st:        app.Status{Running: true, Config: "debug", Listening: []int{4317, 4318}},
-			wantLine1: "● Running · debug · default",
+			wantLine1: "● Running · debug",
 			wantLine2: ":4317 :4318",
 		},
 		{
@@ -93,7 +95,7 @@ func TestStatusLines(t *testing.T) {
 		},
 		{
 			name:      "warnings appended, warn-only (no error count)",
-			st:        app.Status{Running: true, Config: "prod", Listening: []int{14317, 14318}},
+			st:        app.Status{Running: true, Config: "prod", Preset: "default", Listening: []int{14317, 14318}},
 			warns:     2,
 			wantLine1: "● Running · prod · default",
 			wantLine2: ":14317 :14318 · 2 warnings",
