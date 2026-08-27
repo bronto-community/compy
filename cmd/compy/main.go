@@ -641,9 +641,6 @@ func cmdDistro(args []string) error {
 						// download would fetch (persisted latest, or the
 						// compiled-in pin when no release check has run).
 						fv, _ := d["fetch_version"].(string)
-						if d["fetch_pinned"] == true {
-							fv += ", pinned"
-						}
 						note = "available (downloads " + fv + ")"
 					}
 				}
