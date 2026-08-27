@@ -367,7 +367,7 @@ func (a *App) Activate(name, preset string) error {
 		// when launchd agrees: a restore that itself failed to start
 		// must not be reported as "still running" — say it died instead.
 		if back, _ := launchd.Running(); !back {
-			return fmt.Errorf("%w\nthe previous setup (%s) was restored but did not start either — nothing is running now", failure, still)
+			return fmt.Errorf("%w\nthe previous setup (%s) was restored but did not start either; nothing is running now", failure, still)
 		}
 		return state.StillRunning(failure, still)
 	}

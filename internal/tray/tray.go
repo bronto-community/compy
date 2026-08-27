@@ -119,7 +119,7 @@ func onReady(a *app.App) {
 	m.status.Disable()
 	m.statusLine2 = systray.AddMenuItem("...", "service status")
 	m.statusLine2.Disable()
-	m.updates = systray.AddMenuItem("", "a newer collector release is available — update in Open compy → settings")
+	m.updates = systray.AddMenuItem("", "a newer collector release is available. update it in Open compy → settings")
 	m.updates.Disable()
 	m.updates.Hide()
 	systray.AddSeparator()
