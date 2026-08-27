@@ -1,0 +1,36 @@
+# Nightly end-to-end run against a real collector binary. The pinned otlp
+# distro (~10MB) comes straight from internal/distro/defs.go: the URL and
+# sha256 are parsed out of that file, so a collector bump PR updates this
+# workflow's inputs automatically.
+name: Integration
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Download the pinned otlp collector
+        run: |
+          defs=internal/distro/defs.go
+          base=$(sed -n 's/^const releaseBase = "\(.*\)"$/\1/p' "$defs")
+          asset=$(awk -F'"' '$4 ~ /^otelcol-otlp_.*_linux_amd64\.tar\.gz$/ {print $4; exit}' "$defs")
+          sha=$(awk -F'"' 'index($4, "otelcol-otlp_") {seen=1} seen && $2 == "linux_amd64" && $4 ~ /^[0-9a-f]+$/ && length($4) == 64 {print $4; exit}' "$defs")
+          test -n "$base" && test -n "$asset" && test -n "$sha"
+          curl -fsSL -o otelcol.tar.gz "$base$asset"
+          echo "$sha  otelcol.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/otelcol"
+          tar -xzf otelcol.tar.gz -C "$RUNNER_TEMP/otelcol"
+          rm otelcol.tar.gz
+      - name: go test -tags=integration
+        run: OTELCOL_BIN="$RUNNER_TEMP/otelcol/otelcol-otlp" go test -tags=integration ./integration/

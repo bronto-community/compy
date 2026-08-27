@@ -1,0 +1,23 @@
+# govulncheck on every PR plus a weekly sweep, so a new advisory against an
+# already-merged dependency still gets noticed.
+name: Security
+
+on:
+  pull_request:
+  schedule:
+    - cron: "30 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
