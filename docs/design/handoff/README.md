@@ -579,3 +579,19 @@ with the text above.
   to the shell rc, `compy run -- <cmd>` — closing with "an app's own
   environment always wins over the system-wide toggle". The app-section
   subtitle ("shell wiring lives in the CLI") folded into it.
+- **Configurable advertised protocol** (owner ruling, 2026-08-27): the
+  advertised OTLP protocol becomes a setting — `grpc` | `http/protobuf` |
+  `http/json`, default unchanged (http/protobuf; empty in settings.json
+  means the default). Both http flavors keep the endpoint on the HTTP
+  port (one OTLP/HTTP receiver serves both); grpc points it at the gRPC
+  port, still in `http://host:port` form — the OTLP exporter spec's own
+  default shape, whose http scheme already means plaintext for gRPC, so
+  `OTEL_EXPORTER_OTLP_INSECURE` is deliberately not set and the key set
+  stays identical across protocols (locked by a test: that is what makes
+  the OS-env refresh on a protocol switch stale-key-proof). The
+  conformance verdict rides the port the advertised endpoint actually
+  uses (grpc → gRPC port primary, the HTTP port missing becomes the soft
+  addendum, and a grpc-only config can adopt); switching is
+  advertisement-only — nothing restarts. Surfaces: settings app card gets
+  a three-segment protocol row (appearance idiom), `compy settings set
+  --protocol`, GET/PUT /api/settings, and `compy status`'s endpoint line.
