@@ -10,53 +10,41 @@ OS supervises the process and there is no daemon of compy's own.
 
 ## Install
 
-Once tagged releases exist, Homebrew is the short path (while this repo is
-private, `brew` additionally needs a `HOMEBREW_GITHUB_API_TOKEN` that can
-read it):
-
 ```
 brew install bronto-community/tap/compy
+compy tray install
 ```
 
-Or build from source. Requires Go 1.24+.
+That's the whole setup: the cask installs compy with its bundled collector
+distribution (`otelcol-compy`) and the `compy.app` identity for the native
+window, and `compy tray install` puts the compy icon in the menu bar as a
+login item. Click the icon and activate a configuration — the first
+activation just works, nothing to download.
 
-```
-go build -o compy ./cmd/compy
-```
+While this repo is private, `brew` additionally needs a
+`HOMEBREW_GITHUB_API_TOKEN` that can read it.
 
-That is enough: on first use compy downloads a pinned, checksum-verified
-collector build (~90MB). Two optional extras:
-
-- **Bundled collector.** `sh packaging/collector/build.sh` builds
-  `otelcol-compy`, compy's own curated collector distribution (components
-  pinned in `packaging/collector/manifest.yaml`), next to the compy binary
-  via the OpenTelemetry Collector Builder. It is a separate, slow step (OCB
-  downloads a large module graph). When it sits next to the compy
-  executable it is the default collector and no download happens.
-- **macOS app bundle.** `sh packaging/macos/make-app.sh ./compy` assembles
-  a `compy.app` next to the binary so the standalone window (`compy
-  window`, and the menu bar's "Open compy") shows the right identity in
-  the app menu and Dock. Everything works without it. See
-  `packaging/macos/README.md`.
+Building from source instead is covered under
+[Development](#development).
 
 ## Quickstart
 
 ```
-./compy use debug
-eval "$(./compy env)"
+compy use debug
+eval "$(compy env)"
 ```
 
 The first line validates, installs, and starts the collector with the
 shipped `debug` configuration on compy's standard ports (14318 HTTP, 14317
 gRPC). The second exports `OTEL_EXPORTER_OTLP_ENDPOINT` and friends into
 your current shell, so anything you start from it sends telemetry to
-compy. `./compy status` confirms both.
+compy. `compy status` confirms both.
 
 To send somewhere real, e.g. the shipped `bronto` configuration:
 
 ```
-./compy presets set bronto default BRONTO_API_KEY=...
-./compy use bronto default
+compy presets set bronto default BRONTO_API_KEY=...
+compy use bronto default
 ```
 
 ## What it does
@@ -145,6 +133,30 @@ On first v2 run, a v1 state directory (`config/base.yaml` + enabled
 is archived to `legacy-v1/`. One-way, logged to stderr.
 
 ## Development
+
+Building from source requires Go 1.24+:
+
+```
+go build -o compy ./cmd/compy
+```
+
+That is enough: on first use compy downloads a pinned, checksum-verified
+collector build (~90MB). Two optional extras (the Homebrew install ships
+both):
+
+- **Bundled collector.** `sh packaging/collector/build.sh` builds
+  `otelcol-compy`, compy's own curated collector distribution (components
+  pinned in `packaging/collector/manifest.yaml`), next to the compy binary
+  via the OpenTelemetry Collector Builder. It is a separate, slow step (OCB
+  downloads a large module graph). When it sits next to the compy
+  executable it is the default collector and no download happens.
+- **macOS app bundle.** `sh packaging/macos/make-app.sh ./compy` assembles
+  a `compy.app` next to the binary so the standalone window (`compy
+  window`, and the menu bar's "Open compy") shows the right identity in
+  the app menu and Dock. Everything works without it. See
+  `packaging/macos/README.md`.
+
+The gates:
 
 ```
 go build ./cmd/compy

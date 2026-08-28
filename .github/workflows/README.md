@@ -22,6 +22,15 @@ weekly.
   blocks workflow recursion), so without this secret a collector-bump PR
   needs a manual nudge (close/reopen) before CI runs on it.
 
+## Known limitation: no signing / notarization
+
+Release binaries (compy, otelcol-compy, compy.app) are ad-hoc signed at
+best — there is no Developer ID signing or notarization in the pipeline.
+The cask compensates by stripping `com.apple.quarantine` recursively from
+the staged install in its postflight; a manually downloaded archive needs
+the same `xattr -dr com.apple.quarantine` by hand. Proper signing needs an
+Apple Developer account and certificate secrets in this repo.
+
 ## Private-repo note for Homebrew
 
 The tap is public but the cask downloads its archive from this repo's
