@@ -17,6 +17,10 @@
   </nav>
   <main id="screen"></main>
 </div>
+<!-- persistent live regions: transient notes and error strips are rebuilt
+     per render, so screen readers only hear them via these mirrors -->
+<div id="live-note" class="visually-hidden" aria-live="polite"></div>
+<div id="live-err" class="visually-hidden" aria-live="assertive"></div>
 <script src="vendor/codemirror.min.js" defer></script>
 <script src="vendor/yaml.min.js" defer></script>
 <script src="vendor/lucide-icons.js" defer></script>

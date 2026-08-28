@@ -137,6 +137,7 @@ const S = {
   inline: null,            // { name, preset, isNew }
   inlineName: "",
   inlineDraft: null,       // { KEY: value } — the inline editor's working copy
+  inlineErr: null,         // field-adjacent error beside the inline editor's name field
   preflight: null,         // { name, preset, missing } — activation held for missing required values
   helpOpen: {},            // { page: true } while its help strip is open (opt-in, not persisted)
 
@@ -145,7 +146,8 @@ const S = {
   preset: null, reveal: {},
   saving: false, valErr: null, valOk: null,
   valMissing: [],          // unset required vars explaining valErr — offers save-without-validating
-  renameNote: null,
+  renameNote: null,        // field-adjacent error beside the header's name field
+  presetErr: null,         // field-adjacent error under the preset chips
 
   // collector
   query: "", level: "all", tail: true, restarting: false,
@@ -249,14 +251,22 @@ function openDroppingEditor() {
   if (S.screen !== "configs") go("#/configs");
 }
 /* ── transient notes (the design's ~3s one-liners) ────────────────── */
+// The visible strips are rebuilt on every render, so a screen reader never
+// hears them; the persistent #live-note / #live-err mirrors (index.html)
+// carry the same text through a stable aria-live container.
+function announce(id, text) {
+  const n = document.getElementById(id);
+  if (n) n.textContent = text || "";
+}
 function noteStrip() {
   if (!S.note) return null;
   return el("div", { class: "strip-wrap" }, [el("div", { class: "note", text: S.note })]);
 }
 function note(text, ms) {
   S.note = text;
+  announce("live-note", text);
   if (S.noteTimer) clearTimeout(S.noteTimer);
-  S.noteTimer = setTimeout(() => { S.note = null; S.noteTimer = null; render(); }, ms || 3200);
+  S.noteTimer = setTimeout(() => { S.note = null; S.noteTimer = null; announce("live-note", ""); render(); }, ms || 3200);
   render();
 }
 
@@ -289,6 +299,7 @@ async function showError(err) {
   const msg = err && err.message ? err.message : String(err);
   const nl = msg.indexOf("\n");
   lastError = nl < 0 ? { msg, tail: "" } : { msg: msg.slice(0, nl), tail: msg.slice(nl + 1) };
+  announce("live-err", lastError.msg);
   render();
   if (err && err.status === 500 && nl < 0) {
     try {
@@ -297,7 +308,7 @@ async function showError(err) {
     } catch (e) { /* best effort */ }
   }
 }
-function clearError() { lastError = null; }
+function clearError() { lastError = null; announce("live-err", ""); }
 function errorStrip() {
   if (!lastError) return null;
   return el("div", { class: "errbar" }, [
@@ -363,7 +374,7 @@ async function enterRoute() {
       S.unlocked = origin === "user";
       S.yamlOpen = origin === "user";
       S.unlockAsk = false;
-      S.valErr = null; S.valOk = null; S.valMissing = []; S.renameNote = null;
+      S.valErr = null; S.valOk = null; S.valMissing = []; S.renameNote = null; S.presetErr = null;
       S.preset = selectedPreset(info);
       destroyEditor();
     } else {
@@ -703,7 +714,7 @@ function screenConfigs() {
    button opens it; the button (or the ✕) closes it again. Open state is
    in-memory only, so every load starts with no strips (2026-08-27,
    supersedes the shown-by-default rule from the copy round; the old
-   compy.helpDismissed localStorage keys are simply ignored). */
+   compy.helpDismissed localStorage keys are swept at boot). */
 const HELP_COPY = {
   configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml, fetch it from a url, or paste an otelbin.io share link.",
   collector: "these numbers are the collector's own, scraped from its telemetry endpoint, and listening shows only ports the process actually has open. the log below is the collector's output, grouped by level and filterable. restart and stop live here; the configurations screen picks what runs.",
@@ -849,7 +860,10 @@ function configRow(info) {
   const cell = el("span", { class: "cell-preset" });
   const selBtn = el("button", {
     class: "preset-sel" + (many ? " many" : ""),
-    attrs: { "aria-haspopup": many ? "true" : null },
+    attrs: {
+      "aria-haspopup": many ? "true" : null,
+      "aria-expanded": many ? (S.presetsOpenId === name ? "true" : "false") : null,
+    },
     title: many ? "pick or edit a preset" : "edit the " + sel + " preset",
     on: {
       click: () => {
@@ -987,6 +1001,7 @@ function openInline(name, preset, isNew) {
   const gen = isNew ? freePresetName(presetsOf(info || { meta: {} })) : "";
   S.inline = { name, preset, isNew, gen };
   S.inlineName = isNew ? gen : preset;
+  S.inlineErr = null;
   // The draft starts as a copy of the stored values (a new preset seeds
   // from the currently selected one) — created here, never mid-render.
   const base = info ? (((info.meta && info.meta.presets) || {})[isNew ? selectedPreset(info) : preset]) || {} : {};
@@ -1032,8 +1047,17 @@ function inlinePresetEditor(info) {
         class: "field sm",
         attrs: { placeholder: "preset name", spellcheck: "false", "data-fk": "inline-name", style: "width:180px", "aria-label": "preset name" },
         props: { value: S.inlineName },
-        on: { input: (e) => { S.inlineName = e.target.value; inlineSaveSync(); } },
+        on: {
+          input: (e) => {
+            S.inlineName = e.target.value;
+            // Typing past a collision clears it (the render restores focus
+            // via data-fk); otherwise flip the save button in place only.
+            if (S.inlineErr) { S.inlineErr = null; render(); return; }
+            inlineSaveSync();
+          },
+        },
       }),
+      S.inlineErr ? span("field-err sans", S.inlineErr) : null,
       el("span", { class: "grow" }),
       el("button", { class: "act", text: "cancel", on: { click: () => { S.inline = null; S.inlineDraft = null; render(); } } }),
       el("button", {
@@ -1056,8 +1080,12 @@ function inlinePresetEditor(info) {
 async function saveInline(info) {
   const p = S.inline;
   const target = slug(S.inlineName) || p.preset;
-  if (!target) { showError(new Error("a preset needs a name")); return; }
-  if ((p.isNew || target !== p.preset) && presetsOf(info).indexOf(target) > -1) { note("a preset called " + target + " already exists", 3000); return; }
+  if (!target) { S.inlineErr = "a preset needs a name"; render(); return; }
+  if ((p.isNew || target !== p.preset) && presetsOf(info).indexOf(target) > -1) {
+    S.inlineErr = "a preset called " + target + " already exists";
+    render();
+    return;
+  }
   const values = S.inlineDraft || {};
   try {
     // Rename before writing values: PUT-to-target-first would create the
@@ -1412,7 +1440,7 @@ function screenEditor() {
     }) : null,
     el("span", { class: "grow" }),
     S.saving ? el("span", { class: "ed-hint busy-word", text: "asking the collector…" })
-      : S.renameNote ? span("ed-hint", S.renameNote) : null,
+      : S.renameNote ? span("ed-hint field-err", S.renameNote) : null,
     helpButton("editor"),
     showReset ? el("button", {
       class: "btn withicon", title: origin === "url" && !info.modified ? "in sync with " + host : "your version",
@@ -1463,6 +1491,8 @@ function screenEditor() {
   }
   chips.appendChild(el("button", { class: "chip-add", title: "add a preset", on: { click: () => addPreset(info) } }, [icon("plus", 13)]));
   band.appendChild(chips);
+  // Field-adjacent: a chip-rename collision answers right under the chips.
+  if (S.presetErr) band.appendChild(el("div", { class: "field-err sans", text: S.presetErr }));
 
   const values = ((info.meta.presets || {})[S.preset]) || {};
   band.appendChild(valueCards(info, values, (k, v) => queueValue(info, k, v), "ed"));
@@ -1682,8 +1712,13 @@ async function delPreset(info, p) {
 }
 async function renamePreset(info, from, raw) {
   const to = slug(raw) || from;
+  S.presetErr = null;
   if (to === from) { render(); return; }
-  if (presetsOf(info).indexOf(to) > -1) { note("a preset called " + to + " already exists", 3000); return; }
+  if (presetsOf(info).indexOf(to) > -1) {
+    S.presetErr = "a preset called " + to + " already exists. name not changed.";
+    render();
+    return;
+  }
   try {
     await apiJSON(cfgURL(info.name) + "/presets/" + enc(from) + "/rename", "POST", { to });
     await loadCore();
@@ -2000,12 +2035,20 @@ function screenSettings() {
   const themeNote = S.theme === "system" ? "following macOS — currently " + osTheme() : "always " + S.theme;
   const seg = el("div", { class: "seg" });
   for (const k of ["system", "dark", "light"]) {
-    seg.appendChild(el("button", { class: S.theme === k ? "on" : "", text: k, on: { click: () => setTheme(k) } }));
+    seg.appendChild(el("button", {
+      class: S.theme === k ? "on" : "", text: k,
+      attrs: { "aria-pressed": S.theme === k ? "true" : "false" },
+      on: { click: () => setTheme(k) },
+    }));
   }
   const proto = (S.settings && S.settings.protocol) || (S.status && S.status.protocol) || "http/protobuf";
   const pseg = el("div", { class: "seg" });
   for (const p of ["grpc", "http/protobuf", "http/json"]) {
-    pseg.appendChild(el("button", { class: proto === p ? "on" : "", text: p, on: { click: () => setProtocol(p) } }));
+    pseg.appendChild(el("button", {
+      class: proto === p ? "on" : "", text: p,
+      attrs: { "aria-pressed": proto === p ? "true" : "false" },
+      on: { click: () => setProtocol(p) },
+    }));
   }
   const osEnvOn = !!(S.status && S.status.os_env);
   wrap.appendChild(el("div", { class: "card" }, [
@@ -2415,6 +2458,13 @@ async function refresh() {
 /* ── boot ─────────────────────────────────────────────────────────── */
 loadTheme();
 applyTheme();
+// The retired shown-by-default help strips left compy.helpDismissed* keys
+// behind; sweep them once so stale state stops accumulating.
+try {
+  for (const k of Object.keys(localStorage)) {
+    if (k.startsWith("compy.helpDismissed")) localStorage.removeItem(k);
+  }
+} catch (e) { /* private mode */ }
 if (window.matchMedia) {
   // 'system' follows macOS live: the tokens swap via the media query, and
   // the note beside the control needs a re-render to name the new value.
@@ -2428,6 +2478,7 @@ document.addEventListener("click", (e) => {
 // always, so the browser's save dialog never opens; outside the editor the
 // shortcut otherwise does nothing. No other shortcuts.
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && S.presetsOpenId) { S.presetsOpenId = null; render(); return; }
   if (e.key === "Escape" && S.preflight) { S.preflight = null; render(); return; }
   if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
     e.preventDefault();
