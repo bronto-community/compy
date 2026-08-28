@@ -1307,3 +1307,38 @@ func TestHealthRoute(t *testing.T) {
 		t.Fatalf("health body = %v", body)
 	}
 }
+
+// upstreamFake stands in for internal/state.Upstream, matched structurally
+// the same way badRequestFake is.
+type upstreamFake struct{ error }
+
+func (upstreamFake) Upstream() bool { return true }
+
+// An upstream-marked closure error (the GitHub release check failing) is a
+// 502, not a 500 — the page appends its collector log tail to a 500 only,
+// and the collector has nothing to do with GitHub being down (G3). The mark
+// survives fmt.Errorf wrapping like the others.
+func TestUpstreamFailureIs502(t *testing.T) {
+	api := fakeAPI()
+	api.CheckDistroUpdate = func(name string) (string, string, error) {
+		return "", "", fmt.Errorf("distro %q: %w", name, upstreamFake{errWithMessage("release check: rate limited")})
+	}
+	srv := httptest.NewServer(Handler(api))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/distros/otlp/update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", resp.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body["error"], "rate limited") {
+		t.Errorf("error = %q, want the check's own message", body["error"])
+	}
+}

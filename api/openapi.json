@@ -1250,6 +1250,7 @@
             }
           },
           "400": { "description": "Not updatable: the bundled collector, a user-managed entry, or an unknown name", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "502": { "description": "The upstream release check failed: GitHub unreachable, rate-limited, or its answer unusable (e.g. a tag that is not a release version)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "500": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       },
@@ -1276,6 +1277,7 @@
             }
           },
           "400": { "description": "Not updatable: the bundled collector, a user-managed entry, or an unknown name", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "502": { "description": "The upstream release check failed: GitHub unreachable, rate-limited, or its answer unusable (e.g. a tag that is not a release version)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "500": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }

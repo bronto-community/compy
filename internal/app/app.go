@@ -1327,7 +1327,9 @@ func (a *App) updatableDef(name string) (distro.Def, error) {
 func (a *App) latestVersion() (string, error) {
 	latest, err := distro.LatestVersion(a.fetchFn())
 	if err != nil {
-		return "", err
+		// GitHub's failure, not the caller's and not ours: 502 on the REST
+		// surface, and the web UI shows it without a collector log tail.
+		return "", state.Upstream(err)
 	}
 	if err := state.SaveUpdateCheck(state.UpdateCheck{Latest: latest, CheckedAt: time.Now().UTC()}); err != nil {
 		fmt.Fprintln(os.Stderr, "compy: record release check:", err)
