@@ -127,3 +127,43 @@ test("parseAttrs accepts only JSON objects", () => {
   assert.equal(H.parseAttrs("junk"), null);
   assert.equal(H.parseAttrs("null"), null);
 });
+
+/* The settings collector-table's decision ladder: one case per rung of the
+   state line (priority order matters — busy beats failed beats checking…),
+   plus the update affordance's ownership rules. */
+test("distroState decision ladder", () => {
+  const idle = {};
+  const cases = [
+    // [label, b, d, checking, want]
+    ["downloading wins over everything", { name: "contrib", selected: true, downloaded: true, definition: true, available: true },
+      { status: "downloading", pct: 40 }, false,
+      { state: "downloading… 40%", cls: " accent", glyph: "dot", updTitle: "downloading…" }],
+    ["download with no declared length shows no made-up percent", { name: "contrib", definition: true, available: true },
+      { status: "downloading" }, false, { state: "downloading… " }],
+    ["failure keeps a short reason; the ladder stops there", { name: "core", definition: true, available: true },
+      { status: "failed", error: "distro core: fetch https://example.com/very/long/url/that/never/ends: HTTP 503\nmore" }, false,
+      { state: "download failed · fetch https://example.com/very/long/url/that/…", cls: " bad" }],
+    ["release check in flight", { name: "contrib", downloaded: true, definition: true, available: true }, idle, true,
+      { state: "checking for a newer release…", cls: " accent", updTitle: "checking…" }],
+    ["bundled, built", { name: "otelcol-compy", bundled: true, downloaded: true, version: "0.104.0" }, idle, false,
+      { state: "shipped with compy · 0.104.0", updTitle: "updates with compy releases", canUpdate: false }],
+    ["bundled, not built", { name: "otelcol-compy", bundled: true }, idle, false,
+      { state: "not built — packaging/collector/build.sh", cls: " off", glyph: "ban", playTitle: "not built — packaging/collector/build.sh", dlTitle: "never downloaded — built with compy" }],
+    ["in use, installed, update known", { name: "contrib", selected: true, downloaded: true, definition: true, available: true, version: "0.104.0", latest_available: "0.105.0" }, idle, false,
+      { state: "in use · 0.104.0 · 0.105.0 available", cls: " accent", glyph: "dot", canUpdate: true, updTitle: "0.105.0 is available. update contrib", playTitle: "already in use" }],
+    ["in use but not downloaded advertises the fetch", { name: "contrib", selected: true, definition: true, available: true, fetch_version: "0.105.0" }, idle, false,
+      { state: "in use · downloads 0.105.0", glyph: "dot" }],
+    ["no build for this platform", { name: "windows-only", definition: true }, idle, false,
+      { state: "not available on macOS", cls: " off", glyph: "ban", canUpdate: false, updTitle: "not available on macOS", dlTitle: "not available on macOS" }],
+    ["installed definition", { name: "core", downloaded: true, definition: true, available: true, version: "0.104.0" }, idle, false,
+      { state: "installed · 0.104.0", cls: "", glyph: "circle", canUpdate: true, updTitle: "check for a newer release and update core", playTitle: "run every config on core", dlTitle: "already installed" }],
+    ["user entry", { name: "mine", downloaded: true, user_entry: true, path: "/opt/otelcol" }, idle, false,
+      { state: "added by you", cls: " mine", canUpdate: false, updTitle: "user-managed — update the binary at its path yourself" }],
+    ["available to download", { name: "core", definition: true, available: true, fetch_version: "0.105.0" }, idle, false,
+      { state: "available to download · downloads 0.105.0", cls: "", glyph: "download", canUpdate: false, updTitle: "nothing installed — download fetches the newest release", playTitle: "download it first", dlTitle: "download and verify core" }],
+  ];
+  for (const [label, b, d, checking, want] of cases) {
+    const got = H.distroState(b, d, checking);
+    for (const k in want) assert.deepEqual(got[k], want[k], label + ": " + k);
+  }
+});

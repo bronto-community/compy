@@ -93,10 +93,94 @@ function parseAttrs(s) {
   return null;
 }
 
+/* ── the settings collector-table's per-row decision ladder ───────────
+   distroState derives everything the row's look depends on — the state
+   line, its class, the leading glyph, whether the update affordance
+   applies, and the three action-button titles — from the row (b), its
+   download state (d: {status, pct, error}), and whether a release check
+   is in flight. Flat early returns instead of the nested ternaries this
+   started as; pure (only its arguments), so it runs under node --test.
+   app.js's distroRow renders what this returns. */
+function distroState(b, d, checking) {
+  const busy = d.status === "downloading";
+  const failed = d.status === "failed";
+  const inUse = !!b.selected;
+  const here = !!b.downloaded;
+  const blocked = !!b.definition && !b.available;
+  const mine = !!b.user_entry && !b.definition;
+  const bundled = !!b.bundled;
+  const ver = b.version ? " · " + b.version : "";
+  // The persisted release check (background or on-demand) claims a newer
+  // version; only installed updatable rows carry it, and it clears once the
+  // update pulls (the version in effect catches up). An undownloaded row
+  // instead says what a download would fetch: the persisted latest, or the
+  // compiled-in pin when no check has run yet.
+  const avail = b.latest_available ? " · " + b.latest_available + " available" : "";
+  const fetches = b.fetch_version ? " · downloads " + b.fetch_version : "";
+
+  // A real fetch failure is a Go error with a URL in it — too long for a
+  // 1fr cell. The row shows one short line; the whole thing is the tooltip.
+  const reason = (d.error || "").split("\n")[0].replace(/^distro [^:]+: /, "");
+  const short = reason.length > 46 ? reason.slice(0, 45) + "…" : reason;
+
+  const state = (() => {
+    if (busy) return "downloading… " + (d.pct == null ? "" : d.pct + "%");
+    if (failed) return short ? "download failed · " + short : "download failed";
+    if (checking) return "checking for a newer release…";
+    if (bundled) return here ? "shipped with compy" + ver : "not built — packaging/collector/build.sh";
+    if (inUse) return "in use" + ver + (here ? avail : fetches);
+    if (blocked) return "not available on macOS";
+    if (here) return mine ? "added by you" : "installed" + ver + avail;
+    return "available to download" + fetches;
+  })();
+  const cls = busy || checking || inUse ? " accent"
+    : failed ? " bad"
+      : blocked || (bundled && !here) ? " off"
+        : mine ? " mine" : "";
+  const glyph = inUse ? "dot" : blocked || (bundled && !here) ? "ban" : here ? "circle" : "download";
+
+  // The update affordance belongs to INSTALLED pinned definitions only: the
+  // bundled collector updates with compy releases, a user-managed path is
+  // the user's to update, and an undownloaded row has nothing to update —
+  // its download fetches the newest release directly. Each disabled title
+  // says so.
+  const canUpdate = !!b.definition && !b.user_entry && !blocked && here;
+  const updTitle = (() => {
+    if (bundled) return "updates with compy releases";
+    if (!b.definition || b.user_entry) return "user-managed — update the binary at its path yourself";
+    if (blocked) return "not available on macOS";
+    if (!here) return "nothing installed — download fetches the newest release";
+    if (busy) return "downloading…";
+    if (checking) return "checking…";
+    if (b.latest_available) return b.latest_available + " is available. update " + b.name;
+    return "check for a newer release and update " + b.name;
+  })();
+  const playTitle = (() => {
+    if (inUse) return "already in use";
+    if (here) return "run every config on " + b.name;
+    if (bundled) return "not built — packaging/collector/build.sh";
+    return "download it first";
+  })();
+  const dlTitle = (() => {
+    if (bundled) return "never downloaded — built with compy";
+    if (busy) return "downloading…";
+    if (failed) return "try again";
+    if (blocked) return "not available on macOS";
+    if (here) return "already installed";
+    return "download and verify " + b.name;
+  })();
+
+  return {
+    state, cls, glyph, canUpdate, playTitle, dlTitle, updTitle,
+    busy, failed, inUse, here, blocked, mine, bundled,
+  };
+}
+
 /* node --test bridge; a no-op in the browser. */
 if (typeof module !== "undefined") {
   module.exports = {
     slug, originOf, hostOf, missingRequired, nameList, freePresetName,
     portsCompact, yamlLineOf, fmtCount, parseZapLine, parseAttrs,
+    distroState,
   };
 }

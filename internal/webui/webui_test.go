@@ -1061,7 +1061,7 @@ func TestServesAppShellStaticFiles(t *testing.T) {
 var extractedHelpers = []string{
 	"slug", "originOf", "hostOf", "missingRequired", "nameList",
 	"freePresetName", "portsCompact", "yamlLineOf", "fmtCount",
-	"parseZapLine", "parseAttrs",
+	"parseZapLine", "parseAttrs", "distroState",
 }
 
 func TestHelpersLiveInHelpersJSOnly(t *testing.T) {
