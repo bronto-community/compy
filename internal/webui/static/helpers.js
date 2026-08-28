@@ -102,6 +102,50 @@ function parseAttrs(s) {
   return null;
 }
 
+/* ── log pane scroll + incremental diff ───────────────────────────────
+   atLogBottom: within the threshold of the end counts as pinned (tail
+   mode); scrolling further up holds position across refreshes instead. */
+function atLogBottom(scrollTop, clientHeight, scrollHeight) {
+  return scrollHeight - clientHeight - scrollTop <= 40;
+}
+/* logDiff aligns the previously rendered (filtered) entry list with the
+   new one so the pane can recycle the unchanged rows: the server tail is
+   a sliding window over an append-only file, so the common refresh drops
+   a few entries off the top and adds a few at the bottom, and everything
+   between is identical. Returns {dropped, from} — old entries [0,dropped)
+   fell out of the window, old entries [dropped, old.length-1) are
+   reusable verbatim, and rendering resumes at new index `from`
+   (= old.length-1-dropped: the last old entry always re-renders, because
+   a poll can catch it mid-dump and its continuation lines grow). null
+   means no clean alignment — rebuild the pane.
+   The window almost never slides to an entry boundary: a multi-line debug
+   dump straddles the cut, so the new list's first entry is the tail
+   fragment of an old entry. headCut reports that case — the pane keeps the
+   old entry's rows (a few lines older than the strict window, gone at the
+   next boundary) instead of re-rendering the fragment above the reused
+   middle.
+   ponytail: O(old²) worst case on logs of identical lines; fine at the
+   500-line window, revisit if the window grows 10x. */
+function logDiff(oldE, newE) {
+  if (!newE.length) return null;
+  for (let d = 0; d < oldE.length; d++) {
+    const kept = oldE.length - d;
+    if (kept < 2 || newE.length < kept) break;
+    const head = oldE[d].raw;
+    const headCut = head !== newE[0].raw;
+    if (headCut && !head.endsWith("\n" + newE[0].raw)) continue;
+    let ok = true;
+    for (let i = 1; i < kept - 1; i++) {
+      if (oldE[d + i].raw !== newE[i].raw) { ok = false; break; }
+    }
+    if (!ok) continue;
+    const oldLast = oldE[oldE.length - 1].raw, newAt = newE[kept - 1].raw;
+    if (newAt !== oldLast && !newAt.startsWith(oldLast + "\n")) continue;
+    return { dropped: d, headCut, from: kept - 1 };
+  }
+  return null;
+}
+
 /* ── the settings collector-table's per-row decision ladder ───────────
    distroState derives everything the row's look depends on — the state
    line, its class, the leading glyph, whether the update affordance
@@ -191,6 +235,7 @@ if (typeof module !== "undefined") {
     slug, originOf, hostOf, missingRequired, nameList, freePresetName,
     compyVersionLine,
     portsCompact, yamlLineOf, fmtCount, parseZapLine, parseAttrs,
+    atLogBottom, logDiff,
     distroState,
   };
 }

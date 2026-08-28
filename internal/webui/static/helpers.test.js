@@ -182,3 +182,40 @@ test("compyVersionLine", () => {
     assert.equal(H.compyVersionLine(version, update), want, name);
   }
 });
+
+/* The log pane's tail-mode scroll rule and its incremental-render diff. */
+test("atLogBottom", () => {
+  const cases = [
+    ["exactly at the end", 900, 100, 1000, true],
+    ["within the 40px threshold", 865, 100, 1000, true],
+    ["just past the threshold", 859, 100, 1000, false],
+    ["scrolled to the top", 0, 100, 1000, false],
+    ["content shorter than the pane", 0, 100, 80, true],
+  ];
+  for (const [name, top, client, scroll, want] of cases) {
+    assert.equal(H.atLogBottom(top, client, scroll), want, name);
+  }
+});
+
+test("logDiff", () => {
+  const e = (raw) => ({ raw });
+  const [a, b, c, d, x] = ["a", "b", "c", "d", "x"].map(e);
+  const dump = e("a\ndump line 1\ndump line 2");
+  const cases = [
+    ["pure append", [a, b], [a, b, c], { dropped: 0, headCut: false, from: 1 }],
+    ["no change re-renders only the last entry", [a, b], [a, b], { dropped: 0, headCut: false, from: 1 }],
+    ["window slid: dropped off the top, appended below", [a, b, c], [b, c, d], { dropped: 1, headCut: false, from: 1 }],
+    ["window slid mid-dump: head is a fragment of the old entry", [dump, b, c], [e("dump line 2"), b, c, d], { dropped: 0, headCut: true, from: 2 }],
+    ["slid past one entry AND cut the next", [a, dump, c], [e("dump line 2"), c, d], { dropped: 1, headCut: true, from: 1 }],
+    ["head fragment not at a line boundary", [dump, b], [e("line 2"), b], null],
+    ["last entry grew a continuation", [a, b], [a, e("b\ncont"), c], { dropped: 0, headCut: false, from: 1 }],
+    ["last entry grew mid-line (not at a boundary)", [a, b], [a, e("bcd")], null],
+    ["different content", [a, b], [x, c], null],
+    ["shrunk (reset)", [a, b, c], [a], null],
+    ["was empty", [], [a], null],
+    ["single old entry, window slid past it", [a], [b, c], null],
+  ];
+  for (const [name, oldE, newE, want] of cases) {
+    assert.deepEqual(H.logDiff(oldE, newE), want, name);
+  }
+});
