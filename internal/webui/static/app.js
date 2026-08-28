@@ -136,6 +136,7 @@ const S = {
   presetsOpenId: null,
   inline: null,            // { name, preset, isNew }
   inlineName: "",
+  inlineDraft: null,       // { KEY: value } — the inline editor's working copy
   preflight: null,         // { name, preset, missing } — activation held for missing required values
   helpOpen: {},            // { page: true } while its help strip is open (opt-in, not persisted)
 
@@ -315,6 +316,11 @@ async function loadCore() {
   const [status, configs] = await Promise.all([api("/api/status"), api("/api/configs")]);
   S.status = status;
   S.configs = configs || [];
+  // The manual port assignment only makes sense against a nonconforming
+  // verdict; when the fresh status says conforming (or claims nothing),
+  // close it. State change on data arrival, never mid-render.
+  const v = status && status.running ? status.conformance : null;
+  if (!v || v.conforming) S.adoptAsk = false;
 }
 async function loadCollector() {
   const [health, log] = await Promise.all([
@@ -431,6 +437,11 @@ function restoreFocus(f) {
   }
 }
 
+/* The render rule: a state change that affects LAYOUT — rows appearing,
+   panels opening, text that moves its neighbours — goes through render();
+   a change that affects exactly one control (a save button's label, a
+   confirm verb's disabled bit) flips that control in place, because a full
+   render would rebuild the focused input under the user's caret. */
 function render() {
   const f = captureFocus();
   renderSidebar();
@@ -451,7 +462,9 @@ function render() {
    anything else is a continuation of the entry above (the dump keeps its
    parent's level for filtering). Total: unknown shapes become a bare
    entry, malformed JSON tails stay in the message text. */
+let logCache = { log: null, entries: [] }; // memo: renderSidebar + the log pane both parse per render
 function logEntries() {
+  if (logCache.log === S.log) return logCache.entries;
   const entries = [];
   for (const line of S.log.split("\n")) {
     if (!line.trim()) continue;
@@ -463,6 +476,7 @@ function logEntries() {
       p.raw += "\n" + line;
     } else entries.push({ time: "", level: "", text: line, caller: "", attrs: null, cont: [], raw: line });
   }
+  logCache = { log: S.log, entries };
   return entries;
 }
 // parseZapLine/parseAttrs live in helpers.js.
@@ -522,7 +536,6 @@ function renderSidebar() {
   if (v && !v.conforming) {
     box.appendChild(portsWarning(v));
   } else {
-    S.adoptAsk = false;
     /* The secondary port — whichever one the advertised protocol's
        endpoint does NOT use — missing is only a soft addendum. */
     const grpcPrimary = S.status && S.status.protocol === "grpc";
@@ -953,10 +966,14 @@ function openInline(name, preset, isNew) {
   // A new preset opens with a generated available name already in the
   // field, so plus → save works with zero typing; gen is what the name
   // field opened with, which is what dirtiness is measured against.
-  const gen = isNew ? freePresetName(presetsOf(byName(name) || { meta: {} })) : "";
+  const info = byName(name);
+  const gen = isNew ? freePresetName(presetsOf(info || { meta: {} })) : "";
   S.inline = { name, preset, isNew, gen };
   S.inlineName = isNew ? gen : preset;
-  S.inlineDraft = null; // never inherit another preset's half-edited draft
+  // The draft starts as a copy of the stored values (a new preset seeds
+  // from the currently selected one) — created here, never mid-render.
+  const base = info ? (((info.meta && info.meta.presets) || {})[isNew ? selectedPreset(info) : preset]) || {} : {};
+  S.inlineDraft = Object.assign({}, base);
   S.presetsOpenId = null;
   render();
 }
@@ -989,8 +1006,7 @@ function inlineSaveSync() {
 }
 function inlinePresetEditor(info) {
   const p = S.inline;
-  const values = ((info.meta.presets || {})[p.isNew ? selectedPreset(info) : p.preset]) || {};
-  const draft = S.inlineDraft || (S.inlineDraft = Object.assign({}, values));
+  const draft = S.inlineDraft || {}; // created by openInline
   const dirty = inlineDirty();
   return el("div", { class: "inline" }, [
     el("div", { class: "top" }, [
@@ -1428,7 +1444,7 @@ function screenEditor() {
         attrs: { spellcheck: "false", size: Math.max(p.length, 4), "data-fk": "chip:" + p, "aria-label": "rename this preset" },
         props: { value: p },
         on: { change: (e) => renamePreset(info, p, e.target.value) },
-      }) : el("button", { class: "pick", text: p, on: { click: () => { S.preset = p; S.presetSel[info.name] = p; render(); } } }),
+      }) : el("button", { class: "pick", text: p, on: { click: () => { flushValue(); S.preset = p; S.presetSel[info.name] = p; render(); } } }),
       el("button", { class: "mini", title: "duplicate this preset", on: { click: () => dupPreset(info, p) } }, [icon("copy", 12)]),
       el("button", {
         class: "mini del", title: delTitle,
@@ -1557,21 +1573,40 @@ function screenEditor() {
 }
 
 /* value edits are instant (everything but activate/restart/save is), and
-   land on the preset they belong to. */
-let valueTimer = null;
+   land on the preset they belong to. One shared debounce timer serves the
+   whole band, so a pending PUT is flushed — fired immediately, never
+   dropped — whenever the target (config, preset) changes: by an edit on
+   another preset, or by switching presets in the chips. */
+let valueTimer = null, valuePending = null; // valuePending: { name, preset, values, key }
+async function putPending(p) {
+  try {
+    await apiJSON(cfgURL(p.name) + "/presets/" + enc(p.preset), "PUT", { values: p.values });
+    await loadCore();
+    flashSaved("ed:" + p.key);
+  } catch (e) { showError(e); }
+}
+function flushValue() {
+  if (!valueTimer) return;
+  clearTimeout(valueTimer);
+  valueTimer = null;
+  const p = valuePending;
+  valuePending = null;
+  if (p) putPending(p);
+}
 function queueValue(info, key, value) {
   const preset = S.preset;
   if (!preset) return;
+  if (valuePending && (valuePending.name !== info.name || valuePending.preset !== preset)) flushValue();
   const values = Object.assign({}, (info.meta.presets || {})[preset] || {});
   values[key] = value;
   info.meta.presets[preset] = values; // keep the render in step with the field
+  valuePending = { name: info.name, preset, values, key };
   if (valueTimer) clearTimeout(valueTimer);
-  valueTimer = setTimeout(async () => {
-    try {
-      await apiJSON(cfgURL(info.name) + "/presets/" + enc(preset), "PUT", { values });
-      await loadCore();
-      flashSaved("ed:" + key);
-    } catch (e) { showError(e); }
+  valueTimer = setTimeout(() => {
+    valueTimer = null;
+    const p = valuePending;
+    valuePending = null;
+    putPending(p);
   }, 500);
 }
 
@@ -2112,7 +2147,7 @@ async function doFactoryReset() {
       busyId: null, err: null, errName: null, errKept: null,
       newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
       confirm: null, confirmVerb: null, confirmId: null, confirmKind: null,
-      presetSel: {}, presetsOpenId: null, inline: null, inlineName: "",
+      presetSel: {}, presetsOpenId: null, inline: null, inlineName: "", inlineDraft: null,
       dl: {}, up: {}, addName: "", addPath: "", settings: null, portsSaved: false,
       resetArm: false, resetTyped: "",
     });
