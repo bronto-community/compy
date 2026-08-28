@@ -20,7 +20,6 @@ import (
 	"github.com/bronto-community/compy/internal/envvars"
 	"github.com/bronto-community/compy/internal/launchd"
 	"github.com/bronto-community/compy/internal/state"
-	"github.com/bronto-community/compy/internal/webui"
 )
 
 // probeTimeout is how long Activate waits for the collector to accept
@@ -129,16 +128,6 @@ func (a *App) Configs() ([]cfgstore.Info, error) { return cfgstore.List(a.Dir) }
 // Config returns one configuration's info and YAML.
 func (a *App) Config(name string) (cfgstore.Info, string, error) {
 	return cfgstore.Get(a.Dir, name)
-}
-
-// configDetail is the web UI's view of one configuration: its Info plus
-// YAML.
-func (a *App) configDetail(name string) (any, error) {
-	info, yaml, err := a.Config(name)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"info": info, "yaml": yaml}, nil
 }
 
 // ActiveConfig returns the active configuration's name and its active
@@ -701,19 +690,6 @@ func (a *App) EnvInfo() (map[string]string, string, error) {
 // GetSettings returns compy's global settings.
 func (a *App) GetSettings() (state.Settings, error) { return state.LoadSettings() }
 
-// settingsMap is the web UI's view of Settings.
-func (a *App) settingsMap() (map[string]any, error) {
-	s, err := a.GetSettings()
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"grpc_port": s.GRPCPort,
-		"http_port": s.HTTPPort,
-		"protocol":  s.EffectiveProtocol(),
-	}, nil
-}
-
 // PutSettings partially updates compy's global settings (nil = unchanged);
 // grpcP/httpP must be in 1-65535, protocol one of grpc, http/protobuf,
 // http/json. Port changes take effect on the next Apply/Activate, not
@@ -793,96 +769,4 @@ func (a *App) SetOSEnv(on bool) error {
 	}
 	s.OSEnv = on
 	return state.SaveSettings(s)
-}
-
-// statusMap is the web UI's view of Status (plus the OTLP endpoint it
-// displays).
-func (a *App) statusMap() (map[string]any, error) {
-	st, err := a.Status()
-	if err != nil {
-		return nil, err
-	}
-	// The displayed endpoint follows the advertised protocol: grpc points at
-	// the gRPC port, both http flavors at the HTTP port.
-	endPort := st.HTTPPort
-	if st.Protocol == "grpc" {
-		endPort = st.GRPCPort
-	}
-	m := map[string]any{
-		"running":   st.Running,
-		"distro":    st.Distro,
-		"grpc_port": st.GRPCPort,
-		"http_port": st.HTTPPort,
-		"protocol":  st.Protocol,
-		"endpoint":  fmt.Sprintf("http://127.0.0.1:%d", endPort),
-		"config":    st.Config,
-		"preset":    st.Preset,
-		"os_env":    st.OSEnv,
-		"recent":    st.Recent,
-		"listening": st.Listening,
-	}
-	if st.Conformance != nil {
-		m["conformance"] = st.Conformance
-	}
-	return m, nil
-}
-
-// WebUIAPI wires the web UI's closures onto App methods: the full v2 REST
-// surface (docs/superpowers/plans/2026-08-25-compy-v2-p2-rest.md).
-func (a *App) WebUIAPI() webui.API {
-	return webui.API{
-		Status:   a.statusMap,
-		Log:      a.Log,
-		Env:      a.EnvInfo,
-		SetOSEnv: a.SetOSEnv,
-
-		GetSettings: a.settingsMap,
-		PutSettings: a.PutSettings,
-		AdoptPorts:  a.AdoptPorts,
-
-		Health:       a.Health,
-		Apply:        a.Apply,
-		Stop:         a.Stop,
-		Start:        a.Start,
-		Validate:     a.Validate,
-		FactoryReset: a.FactoryReset,
-
-		Configs:                 func() (any, error) { return a.Configs() },
-		CreateConfig:            a.CreateConfig,
-		CreateFromURL:           a.CreateFromURL,
-		GetConfig:               a.configDetail,
-		PutConfigYAML:           a.WriteConfigYAML,
-		PutConfigYAMLNoValidate: a.WriteConfigYAMLNoValidate,
-		PutConfigMeta:           a.UpdateConfigMeta,
-		DeleteConfig:            a.DeleteConfig,
-		CopyConfig:              a.CopyConfig,
-		Activate:                a.Activate,
-		ValidateConfig:          a.ValidateConfig,
-		Sync:                    a.Sync,
-		Resync:                  a.Resync,
-		Reset:                   a.Reset,
-		RenameConfig:            a.RenameConfig,
-		SyncAll:                 a.SyncAll,
-
-		PutPreset:    a.ReplacePreset,
-		DeletePreset: a.DeletePreset,
-		UsePreset:    a.UsePreset,
-		RenamePreset: a.RenamePreset,
-
-		Distros: func() (any, error) { return a.Distros() },
-		AddDistro: func(name, path string) (string, error) {
-			warning := a.AddDistroWarning(name)
-			if err := a.AddDistro(name, path); err != nil {
-				return "", err
-			}
-			return warning, nil
-		},
-		SetDistroPath:     a.SetDistroPath,
-		RemoveDistro:      a.RemoveDistro,
-		UseDistro:         a.UseDistro,
-		FetchDistro:       a.StartFetchDistro,
-		DownloadProgress:  a.DownloadProgress,
-		CheckDistroUpdate: a.CheckDistroUpdate,
-		UpdateDistro:      a.StartUpdateDistro,
-	}
 }
