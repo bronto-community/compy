@@ -7,6 +7,15 @@ name: Integration
 on:
   schedule:
     - cron: "17 3 * * *"
+  # Collector-touching changes get the real-binary run before merge, not
+  # only at the next nightly.
+  pull_request:
+    paths:
+      - "internal/collector/**"
+      - "internal/cfgstore/**"
+      - "internal/distro/**"
+      - "integration/**"
+      - "go.mod"
   workflow_dispatch:
 
 permissions:
