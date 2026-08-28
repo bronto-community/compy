@@ -122,6 +122,33 @@ func IsBadRequest(err error) bool {
 	return errors.As(err, &b)
 }
 
+// upstreamErr marks an error as an upstream service's failure — the GitHub
+// release check timing out, rate-limiting, or answering garbage — rather
+// than the caller's mistake (400) or ours (500). The REST layer answers 502
+// for a marked error, and the web UI shows its message WITHOUT the
+// collector log tail it appends to a 500: the collector has nothing to do
+// with an upstream that would not answer.
+//
+// Like BadRequest it lives here, in the leaf package, and internal/webui
+// matches it structurally (an Upstream() bool method).
+type upstreamErr struct{ error }
+
+// Upstream reports true, satisfying webui's upstreamer interface.
+func (upstreamErr) Upstream() bool { return true }
+
+// Unwrap keeps the marked error reachable through errors.Is/As.
+func (e upstreamErr) Unwrap() error { return e.error }
+
+// Upstream marks err as an upstream service's failure, keeping its message
+// untouched.
+func Upstream(err error) error { return upstreamErr{err} }
+
+// IsUpstream reports whether err, or anything it wraps, was marked.
+func IsUpstream(err error) bool {
+	var u upstreamErr
+	return errors.As(err, &u)
+}
+
 // stillRunningErr carries what is running instead, when an activation fails
 // and the previous configuration is put back. The REST layer copies it into
 // the error body as "still_running" so the failure panel can reassure with

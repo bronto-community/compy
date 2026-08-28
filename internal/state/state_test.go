@@ -1,6 +1,8 @@
 package state
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -155,5 +157,22 @@ func TestDistrosRoundTrip(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+// The upstream mark must survive fmt.Errorf("%w") wrapping — a marker a
+// single %w drops is a marker nobody can rely on (same contract as
+// BadRequest).
+func TestUpstreamMarkSurvivesWrapping(t *testing.T) {
+	err := Upstream(errors.New("release check: rate limited"))
+	wrapped := fmt.Errorf("distro %q: %w", "otlp", err)
+	if !IsUpstream(err) || !IsUpstream(wrapped) {
+		t.Fatalf("IsUpstream = (%v, %v), want true for the marked error and its wrap", IsUpstream(err), IsUpstream(wrapped))
+	}
+	if IsUpstream(errors.New("plain")) || IsBadRequest(err) {
+		t.Fatal("upstream mark must not leak into other classifications")
+	}
+	if wrapped.Error() != `distro "otlp": release check: rate limited` {
+		t.Fatalf("message changed by marking: %q", wrapped.Error())
 	}
 }

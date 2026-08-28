@@ -309,13 +309,18 @@ function savedMark(key) { return S.flash === key ? span("savedmark sans", "saved
    The design gives activation and save failures their own panels, which is
    where the collector's diagnostic belongs. Everything else — a rename that
    collides, a distro that won't remove — lands here: message only for a 4xx
-   (the caller's own mistake), message plus a log tail for a 5xx. */
+   (the caller's own mistake) and for a 502 (an upstream service's failure —
+   the collector has nothing to do with it); message plus a log tail for a
+   500. A 500 whose message is already multi-line carries its own embedded
+   tail (the backend builds those as "...: err\n<tail>", still_running ones
+   included): show THAT as the tail — fetching another would double it. */
 let lastError = null;
 async function showError(err) {
   const msg = err && err.message ? err.message : String(err);
-  lastError = { msg, tail: "" };
+  const nl = msg.indexOf("\n");
+  lastError = nl < 0 ? { msg, tail: "" } : { msg: msg.slice(0, nl), tail: msg.slice(nl + 1) };
   render();
-  if (err && typeof err.status === "number" && err.status >= 500) {
+  if (err && err.status === 500 && nl < 0) {
     try {
       const j = await api("/api/log?lines=20");
       if (j.log && lastError && lastError.msg === msg) { lastError.tail = j.log; render(); }

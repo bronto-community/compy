@@ -85,6 +85,14 @@ type API struct {
 // keeps this package free of internal dependencies in both directions.
 type badRequester interface{ BadRequest() bool }
 
+// upstreamer is how a closure error asks to be reported as 502 Bad Gateway:
+// an upstream service (the GitHub release check) failed, so neither the
+// caller's 400 nor our 500 — and the page appends its collector log tail to
+// a 500 only, which keeps an upstream hiccup from wearing an unrelated
+// collector diagnostic. state.Upstream marks them; webui matches the
+// behaviour rather than the type, as with badRequester.
+type upstreamer interface{ Upstream() bool }
+
 // stillRunner is how a closure error says what kept running when it failed:
 // the error body gains a "still_running" field naming it. state.StillRunning
 // marks them; webui matches the behaviour rather than the type, as with
@@ -98,6 +106,11 @@ type stillRunner interface{ StillRunning() string }
 func isBadRequest(err error) bool {
 	var b badRequester
 	return errors.As(err, &b) && b.BadRequest()
+}
+
+func isUpstream(err error) bool {
+	var u upstreamer
+	return errors.As(err, &u) && u.Upstream()
 }
 
 // route is one API endpoint: the drift test (TestOpenAPIDriftAgainstRoutes)
@@ -274,13 +287,16 @@ func writeErr(w http.ResponseWriter, status int, err error) {
 
 // writeClosureErr reports an error returned by an App closure: a
 // state.BadRequest-marked one (a bad name, an unknown configuration, a
-// config the collector rejects) as 400, everything else as the default 500.
+// config the collector rejects) as 400, a state.Upstream-marked one (the
+// GitHub release check failed) as 502, everything else as the default 500.
 // Every handler routes its closure's error through here so any closure gets
-// 400 just by marking its error, with no per-handler check.
+// its status just by marking its error, with no per-handler check.
 func writeClosureErr(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	if isBadRequest(err) {
 		status = http.StatusBadRequest
+	} else if isUpstream(err) {
+		status = http.StatusBadGateway
 	}
 	writeErr(w, status, err)
 }
