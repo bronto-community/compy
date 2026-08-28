@@ -45,7 +45,11 @@ jobs:
           echo "cur=$cur" >> "$GITHUB_OUTPUT"
       - name: Apply the bump
         if: steps.latest.outputs.new != ''
-        run: python3 .github/scripts/bump-collector.py '${{ steps.latest.outputs.new }}'
+        env:
+          # Env-var indirection: an upstream tag interpolated with ${{ }}
+          # into the run line would be parsed as shell (Actions injection).
+          NEW: ${{ steps.latest.outputs.new }}
+        run: python3 .github/scripts/bump-collector.py "$NEW"
       - name: Open PR
         if: steps.latest.outputs.new != ''
         uses: peter-evans/create-pull-request@v7
