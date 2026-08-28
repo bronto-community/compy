@@ -658,3 +658,15 @@ with the text above.
   status, and the tray's warnings segment ("restart needed"); the
   restart action heals the baked path. The cask's postflight relaunches
   the tray; the collector's restart stays the user's call.
+- 2026-08-28 (log pane live tail): the collector screen's log view is a
+  real tail now. It pins to the bottom by default — new lines, a
+  restart's startup banner included (launchd appends to the same file),
+  land where the eye already is — and stays pinned across the 3s
+  refresh; scrolling up out of the bottom 40px holds the exact row in
+  place across refreshes (re-pin by scrolling back down). Focusing the
+  filter no longer freezes the refresh, so "live tail" stays true while
+  filtering; the pause toggle is still the way to stop it. The count
+  label reads "N of the last 500 lines" when the file exceeds the fetch
+  window. Under a debug-verbosity flood the refresh recycles unchanged
+  rows and skips off-screen layout (content-visibility), so a tick costs
+  ~3ms instead of ~20ms.
