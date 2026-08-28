@@ -83,6 +83,20 @@ func portsSegment(ports []int) string {
 	return strings.Join(parts, " ")
 }
 
+// updateLines renders the disabled availability lines under the status
+// block: one for a newer collector release, one for a newer compy release
+// (with the way to get it — the tray hosts no actions). "" hides a line;
+// both known shows both.
+func updateLines(collectorLatest, compyLatest string) (collectorLine, compyLine string) {
+	if collectorLatest != "" {
+		collectorLine = "Collector " + collectorLatest + " available"
+	}
+	if compyLatest != "" {
+		compyLine = "compy " + compyLatest + " available — brew upgrade compy"
+	}
+	return collectorLine, compyLine
+}
+
 // alphabetical orders configuration names case-insensitively (2026-08-26
 // amendment: the whole menu is alphabetical — supersedes the v4 recency
 // ordering, which read as "what is the order here?"). Names equal under

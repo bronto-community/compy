@@ -48,6 +48,11 @@ func (a *App) statusMap() (map[string]any, error) {
 		"os_env":    st.OSEnv,
 		"recent":    st.Recent,
 		"listening": st.Listening,
+
+		"compy_version": st.CompyVersion,
+	}
+	if st.CompyUpdate != "" {
+		m["compy_update"] = st.CompyUpdate
 	}
 	if st.Conformance != nil {
 		m["conformance"] = st.Conformance

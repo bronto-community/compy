@@ -50,6 +50,14 @@
           "conformance": {
             "$ref": "#/components/schemas/PortsVerdict",
             "description": "Whether an app following compy's advertised endpoint would reach the running collector. Absent when stopped or when port detection is unavailable — no detection, no claim."
+          },
+          "compy_version": {
+            "type": "string",
+            "description": "The running compy build itself, as displayed: \"0.1.0\" for a release, \"dev · <12-char revision>\" (+dirty when built from a modified tree) for a dev build, \"unknown\" without build info."
+          },
+          "compy_update": {
+            "type": "string",
+            "description": "A newer compy release the background check knows of (e.g. \"0.2.0\"). Present only on release builds with a strictly newer release known — a dev build never claims."
           }
         }
       },

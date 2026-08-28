@@ -291,6 +291,12 @@ func SaveSettings(s Settings) error {
 type UpdateCheck struct {
 	Latest    string    `json:"latest"`
 	CheckedAt time.Time `json:"checked_at"`
+	// CompyLatest is compy's own newest known release, recorded by the same
+	// background check but written independently of the collector fields —
+	// either half failing (compy's lookup 404s while the repo is private)
+	// leaves the other's record intact. Absent in files written before it
+	// existed; those still load (omitempty keeps the shape stable).
+	CompyLatest string `json:"compy_latest,omitempty"`
 }
 
 // LoadUpdateCheck loads distro-updates.json; a missing file yields the zero

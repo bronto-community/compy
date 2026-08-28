@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,11 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bronto-community/compy/internal/distro"
 	"github.com/bronto-community/compy/internal/launchd"
 	"github.com/bronto-community/compy/internal/state"
+	"github.com/bronto-community/compy/internal/version"
 )
 
 // download is one collector binary's in-flight (or finished) fetch, as the
@@ -543,10 +546,67 @@ func (a *App) latestVersion() (string, error) {
 		// surface, and the web UI shows it without a collector log tail.
 		return "", state.Upstream(err)
 	}
-	if err := state.SaveUpdateCheck(state.UpdateCheck{Latest: latest, CheckedAt: time.Now().UTC()}); err != nil {
+	// Load-modify-save: the compy half of the record (CompyLatest) belongs
+	// to its own independent check and must survive this one.
+	chk, _ := state.LoadUpdateCheck()
+	chk.Latest = latest
+	chk.CheckedAt = time.Now().UTC()
+	if err := state.SaveUpdateCheck(chk); err != nil {
 		fmt.Fprintln(os.Stderr, "compy: record release check:", err)
 	}
 	return latest, nil
+}
+
+// compyReleaseAPI is compy's own latest-release lookup; a var so tests can
+// point the injected fetch at a stub. While the repo is private the
+// unauthenticated call 404s — checkCompyUpdate's failure is silent by
+// design and self-resolves when the repo goes public.
+var compyReleaseAPI = "https://api.github.com/repos/bronto-community/compy/releases/latest"
+
+// checkCompyUpdate records compy's own newest release beside the collector
+// result. Written independently of latestVersion's fields: either half
+// failing leaves the other's record intact.
+func (a *App) checkCompyUpdate() error {
+	rc, _, err := a.fetchFn()(compyReleaseAPI)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	var r struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(rc, 1<<20)).Decode(&r); err != nil {
+		return fmt.Errorf("compy release check: %w", err)
+	}
+	v := strings.TrimPrefix(r.TagName, "v")
+	if v == "" {
+		return errors.New("compy release check: no tag_name in the response")
+	}
+	chk, _ := state.LoadUpdateCheck()
+	chk.CompyLatest = v
+	return state.SaveUpdateCheck(chk)
+}
+
+// CompyUpdateAvailable reports compy's newest known release when it is
+// strictly newer than this build — release builds only: a dev build never
+// claims (its version line already says dev, and semver against a commit is
+// meaningless). Read-only like UpdateAvailable: a file read, never network.
+func (a *App) CompyUpdateAvailable() string {
+	chk, err := state.LoadUpdateCheck()
+	if err != nil {
+		return ""
+	}
+	return compyUpdateFrom(chk.CompyLatest, version.Release())
+}
+
+// compyUpdateFrom is the claiming rule: only a release build (non-empty
+// releaseVersion) with a strictly newer known release claims anything.
+// NewerVersion's malformed-refuses-to-claim rule guards both sides.
+func compyUpdateFrom(latestKnown, releaseVersion string) string {
+	if releaseVersion == "" || !distro.NewerVersion(latestKnown, releaseVersion) {
+		return ""
+	}
+	return latestKnown
 }
 
 // updateCheckInterval is the background release-check cadence. The tray's
@@ -564,6 +624,11 @@ func (a *App) MaybeCheckUpdates() {
 	}
 	if _, err := a.latestVersion(); err != nil {
 		fmt.Fprintln(os.Stderr, "compy: release check:", err)
+	}
+	// compy's own release: independent of the collector half — its 404
+	// (private repo, unauthenticated) must not poison the record above.
+	if err := a.checkCompyUpdate(); err != nil {
+		fmt.Fprintln(os.Stderr, "compy: compy release check:", err)
 	}
 }
 

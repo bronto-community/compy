@@ -167,3 +167,18 @@ test("distroState decision ladder", () => {
     for (const k in want) assert.deepEqual(got[k], want[k], label + ": " + k);
   }
 });
+
+/* The settings screen's quiet build line. The update half only appears when
+   the backend claims one — which it only does on release builds. */
+test("compyVersionLine", () => {
+  const cases = [
+    ["release, no update", "0.1.0", "", "compy 0.1.0"],
+    ["release with update", "0.1.0", "0.2.0", "compy 0.1.0 · 0.2.0 available — brew upgrade compy"],
+    ["dev build (backend never sends an update)", "dev · 787da79a1b2c", "", "compy dev · 787da79a1b2c"],
+    ["no status yet", "", "", ""],
+    ["no status yet ignores a stray update", undefined, "0.2.0", ""],
+  ];
+  for (const [name, version, update, want] of cases) {
+    assert.equal(H.compyVersionLine(version, update), want, name);
+  }
+});

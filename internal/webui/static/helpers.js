@@ -33,6 +33,15 @@ function missingRequired(info, preset) {
     .filter((v) => !v.has_default && !/^COMPY_/.test(v.name) && !(values[v.name] || "").trim())
     .map((v) => v.name);
 }
+/* The settings screen's quiet build line: the running compy version, plus —
+   when the backend claims one (release builds only) — the newer release and
+   how to get it. "" when no version is known yet (first status not in). */
+function compyVersionLine(version, update) {
+  if (!version) return "";
+  let s = "compy " + version;
+  if (update) s += " · " + update + " available — brew upgrade compy";
+  return s;
+}
 function nameList(names) {
   return names.length === 1 ? names[0]
     : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
@@ -180,6 +189,7 @@ function distroState(b, d, checking) {
 if (typeof module !== "undefined") {
   module.exports = {
     slug, originOf, hostOf, missingRequired, nameList, freePresetName,
+    compyVersionLine,
     portsCompact, yamlLineOf, fmtCount, parseZapLine, parseAttrs,
     distroState,
   };

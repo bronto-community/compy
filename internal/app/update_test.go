@@ -192,10 +192,12 @@ func TestUpdateDistroPullsRecordsAndResolves(t *testing.T) {
 	}
 }
 
-// countingFetch wraps fetch, counting GitHub releases-listing calls.
+// countingFetch wraps fetch, counting COLLECTOR releases-listing calls —
+// compy's own latest-release lookup (its background check sibling) is
+// deliberately not counted.
 func countingFetch(fetch distro.Fetch, calls *int) distro.Fetch {
 	return func(url string) (io.ReadCloser, int64, error) {
-		if strings.Contains(url, "api.github.com") {
+		if strings.Contains(url, "api.github.com") && !strings.Contains(url, "bronto-community/compy") {
 			*calls++
 		}
 		return fetch(url)

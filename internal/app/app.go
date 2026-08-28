@@ -20,6 +20,7 @@ import (
 	"github.com/bronto-community/compy/internal/envvars"
 	"github.com/bronto-community/compy/internal/launchd"
 	"github.com/bronto-community/compy/internal/state"
+	"github.com/bronto-community/compy/internal/version"
 )
 
 // probeTimeout is how long Activate waits for the collector to accept
@@ -87,6 +88,12 @@ type Status struct {
 	// advertised endpoint would reach this collector. nil when stopped or
 	// when detection is unavailable (no detection means no claim).
 	Conformance *PortsVerdict `json:"conformance,omitempty"`
+	// CompyVersion is the running compy build itself, as rendered for
+	// display: "0.1.0" (release), "dev · 787da79a1b2c" (+dirty), "unknown".
+	CompyVersion string `json:"compy_version"`
+	// CompyUpdate is a newer compy release the background check knows of —
+	// release builds only (a dev build never claims); "" means none known.
+	CompyUpdate string `json:"compy_update,omitempty"`
 }
 
 // EndpointPort is the port the advertised OTLP endpoint uses: the gRPC port
@@ -456,7 +463,9 @@ func (a *App) Status() (Status, error) {
 		// The telemetry port (otelcol's :8888 default, health's knowledge)
 		// is excluded from the verdict's OTLP candidates. The primary port is
 		// whichever the advertised protocol's endpoint uses.
-		Conformance: portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, collector.TelemetryPort(), s.EffectiveProtocol() == "grpc"),
+		Conformance:  portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, collector.TelemetryPort(), s.EffectiveProtocol() == "grpc"),
+		CompyVersion: version.String(),
+		CompyUpdate:  a.CompyUpdateAvailable(),
 	}, nil
 }
 

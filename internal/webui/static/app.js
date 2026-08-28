@@ -569,6 +569,12 @@ function renderSidebar() {
       el("button", { class: "act adopt", text: "add values", on: { click: openDroppingEditor } }),
     ]));
   }
+
+  /* the build itself, quietly at the sidebar's very bottom: "compy 0.1.0" /
+     "compy dev · 787da79a1b2c" (status.compy_version, rendered server-side
+     so every surface agrees). Empty until the first status arrives. */
+  const ver = document.getElementById("side-ver");
+  ver.textContent = S.status && S.status.compy_version ? "compy " + S.status.compy_version : "";
 }
 
 function portsWarning(v) {
@@ -2079,6 +2085,13 @@ function screenSettings() {
     ]),
     envGuide(),
   ]));
+
+  /* one quiet line under the app card: the running build, and — release
+     builds with a newer release known — how to get it (compyVersionLine,
+     helpers.js). dev builds never carry the update half: the backend only
+     claims on stamped releases. */
+  const verLine = compyVersionLine(S.status && S.status.compy_version, S.status && S.status.compy_update);
+  if (verLine) wrap.appendChild(el("div", { class: "ver-line sans", text: verLine }));
 
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
     span("title", "global variables"),

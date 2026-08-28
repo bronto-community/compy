@@ -26,6 +26,7 @@ import (
 	"github.com/bronto-community/compy/internal/launchd"
 	"github.com/bronto-community/compy/internal/state"
 	"github.com/bronto-community/compy/internal/tray"
+	"github.com/bronto-community/compy/internal/version"
 	"github.com/bronto-community/compy/internal/webui"
 	"github.com/bronto-community/compy/internal/window"
 )
@@ -33,6 +34,7 @@ import (
 const usage = `compy — local OpenTelemetry Collector manager
 
   compy status [--json]
+  compy version
   compy apply | validate | stop | start
   compy adopt-ports [--grpc N] [--http N]
   compy config list
@@ -98,6 +100,9 @@ func run(args []string) error {
 		return nil
 	case "status":
 		return cmdStatus(rest)
+	case "version", "-v", "--version":
+		fmt.Println(version.String())
+		return nil
 	case "apply":
 		return withApp(func(a *app.App) error { return a.Apply() })
 	case "adopt-ports":
@@ -267,8 +272,11 @@ func cmdStatus(args []string) error {
 		if st.Protocol == "grpc" {
 			otherLine = fmt.Sprintf("http %d", st.HTTPPort)
 		}
-		fmt.Printf("service:  %s\nconfig:   %s\ndistro:   %s\nendpoint: http://127.0.0.1:%d (%s; %s)\n",
-			running, config, distro, endPort, st.Protocol, otherLine)
+		fmt.Printf("service:  %s\nconfig:   %s\ndistro:   %s\nendpoint: http://127.0.0.1:%d (%s; %s)\ncompy:    %s\n",
+			running, config, distro, endPort, st.Protocol, otherLine, st.CompyVersion)
+		if st.CompyUpdate != "" {
+			fmt.Printf("update:   compy %s available — brew upgrade compy\n", st.CompyUpdate)
+		}
 		if len(st.Listening) > 0 {
 			fmt.Printf("listening: %s\n", app.PortList(st.Listening))
 		}

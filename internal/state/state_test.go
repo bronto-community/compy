@@ -141,6 +141,24 @@ func TestUpdateCheckRoundTrip(t *testing.T) {
 	}
 }
 
+// A distro-updates.json written before CompyLatest existed still loads —
+// the collector fields intact, the compy field simply empty (no claim).
+func TestUpdateCheckOldFormatLoads(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("COMPY_HOME", home)
+	old := `{"latest":"0.159.0","checked_at":"2026-08-20T10:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(home, "distro-updates.json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadUpdateCheck()
+	if err != nil || got.Latest != "0.159.0" || got.CompyLatest != "" {
+		t.Fatalf("got %+v (%v), want latest 0.159.0 and no compy claim", got, err)
+	}
+	if got.CheckedAt.IsZero() {
+		t.Fatalf("checked_at lost: %+v", got)
+	}
+}
+
 func TestDistrosRoundTrip(t *testing.T) {
 	t.Setenv("COMPY_HOME", t.TempDir())
 	ds, err := LoadDistros() // no file yet

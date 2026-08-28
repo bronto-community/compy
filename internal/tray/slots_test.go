@@ -602,3 +602,23 @@ func TestWindowExe(t *testing.T) {
 		t.Errorf("dangling bundle symlink: windowExe = %q, want %q", got, exe)
 	}
 }
+
+// TestUpdateLines pins the availability notices under the status block:
+// collector and compy updates are distinguished, compy's carries the way to
+// get it, both at once shows both, and nothing known shows nothing.
+func TestUpdateLines(t *testing.T) {
+	cases := []struct {
+		name, collector, compy, want1, want2 string
+	}{
+		{"collector only", "0.161.0", "", "Collector 0.161.0 available", ""},
+		{"compy only", "", "0.2.0", "", "compy 0.2.0 available — brew upgrade compy"},
+		{"both", "0.161.0", "0.2.0", "Collector 0.161.0 available", "compy 0.2.0 available — brew upgrade compy"},
+		{"none", "", "", "", ""},
+	}
+	for _, c := range cases {
+		l1, l2 := updateLines(c.collector, c.compy)
+		if l1 != c.want1 || l2 != c.want2 {
+			t.Errorf("%s: updateLines(%q, %q) = %q, %q; want %q, %q", c.name, c.collector, c.compy, l1, l2, c.want1, c.want2)
+		}
+	}
+}

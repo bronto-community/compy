@@ -34,6 +34,10 @@ builds:
       - CGO_ENABLED=1
     goos: [darwin]
     goarch: [arm64, amd64]
+    # Stamps the release version (compy version, /api/status compy_version);
+    # unstamped builds render dev · <commit> from the VCS build info instead.
+    ldflags:
+      - -s -w -X github.com/bronto-community/compy/internal/version.release={{ .Version }}
     hooks:
       post:
         - cmd: sh .github/scripts/goreleaser-extras.sh "{{ .Path }}" "{{ .Target }}"
@@ -46,6 +50,8 @@ builds:
       - CGO_ENABLED=0
     goos: [linux]
     goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/bronto-community/compy/internal/version.release={{ .Version }}
 
 archives:
   # The darwin archives carry the full install: compy plus the staged

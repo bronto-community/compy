@@ -46,12 +46,15 @@ type menu struct {
 	status      *systray.MenuItem
 	statusLine2 *systray.MenuItem
 
-	// updates is the disabled "Update available · 0.x.y" line under the
-	// status block, hidden while nothing newer is known; updatesLine caches
-	// what it currently shows so the 5s resync only touches systray on a
-	// change (the setIcon/itemIcons discipline).
-	updates     *systray.MenuItem
-	updatesLine string
+	// updates is the disabled "Collector 0.x.y available" line under the
+	// status block and compyUpdates its "compy 0.x available — brew upgrade
+	// compy" sibling, each hidden while nothing newer is known; the *Line
+	// fields cache what they currently show so the 5s resync only touches
+	// systray on a change (the setIcon/itemIcons discipline).
+	updates          *systray.MenuItem
+	updatesLine      string
+	compyUpdates     *systray.MenuItem
+	compyUpdatesLine string
 
 	slots       []*systray.MenuItem            // pre-created inline config rows (fixed menu position)
 	slotNames   []string                       // slotNames[i] = config shown in slots[i], "" = hidden
@@ -122,6 +125,9 @@ func onReady(a *app.App) {
 	m.updates = systray.AddMenuItem("", "a newer collector release is available. update it in Open compy → settings")
 	m.updates.Disable()
 	m.updates.Hide()
+	m.compyUpdates = systray.AddMenuItem("", "a newer compy release is available: brew upgrade compy")
+	m.compyUpdates.Disable()
+	m.compyUpdates.Hide()
 	systray.AddSeparator()
 	header := systray.AddMenuItem("CONFIGURATION", "your configurations")
 	header.Disable()
@@ -332,27 +338,36 @@ func (m *menu) resolvePresetClick(item *systray.MenuItem) (presetTarget, bool) {
 	return target, ok
 }
 
-// syncUpdatesLine shows the disabled availability line when the persisted
-// release check knows a newer version than some pinned distro runs — a
-// read-only file check via app.UpdateAvailable, never network. Called from
-// sync(), so under m.mu everywhere but onReady's initial call. Read-only on
-// purpose: updating still lives in the settings screen and the CLI
-// (deliberately no actions here, like the no-per-backend-toggles rule).
+// syncUpdatesLine shows the disabled availability lines when the persisted
+// release check knows a newer collector than some pinned distro runs, or a
+// newer compy than this build — read-only file checks via
+// app.UpdateAvailable / app.CompyUpdateAvailable, never network. Called
+// from sync(), so under m.mu everywhere but onReady's initial call.
+// Read-only on purpose: updating still lives in the settings screen and the
+// CLI (deliberately no actions here, like the no-per-backend-toggles rule).
 func (m *menu) syncUpdatesLine() {
-	line := ""
-	if latest, err := m.a.UpdateAvailable(); err == nil && latest != "" {
-		line = "Update available · " + latest
+	collector := ""
+	if latest, err := m.a.UpdateAvailable(); err == nil {
+		collector = latest
 	}
-	if line == m.updatesLine {
+	l1, l2 := updateLines(collector, m.a.CompyUpdateAvailable())
+	syncNoticeItem(m.updates, &m.updatesLine, l1)
+	syncNoticeItem(m.compyUpdates, &m.compyUpdatesLine, l2)
+}
+
+// syncNoticeItem shows item with line ("" hides it), touching systray only
+// when the cached line actually changed.
+func syncNoticeItem(item *systray.MenuItem, cache *string, line string) {
+	if line == *cache {
 		return
 	}
-	m.updatesLine = line
+	*cache = line
 	if line == "" {
-		m.updates.Hide()
+		item.Hide()
 		return
 	}
-	m.updates.SetTitle(line)
-	m.updates.Show()
+	item.SetTitle(line)
+	item.Show()
 }
 
 // setIcon swaps the menu-bar icon when — and only when — the state changed,
