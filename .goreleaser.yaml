@@ -106,7 +106,34 @@ homebrew_casks:
       post:
         # Everything in the staged dir is unsigned/ad-hoc: strip quarantine
         # recursively so compy, otelcol-compy, and compy.app all run.
+        #
+        # Then, if the user had the menu-bar tray installed (its LaunchAgent
+        # plist exists), bounce the tray job so the menu bar runs the new
+        # binary immediately — the plist points at the stable
+        # /opt/homebrew/bin/compy symlink, so bootstrap mirrors `compy tray
+        # install`'s semantics. Defensive throughout: no plist → skip; a
+        # failed launchctl never fails the install. The collector job is
+        # deliberately NOT touched — restarting the user's data path unasked
+        # is not ours to do; compy itself surfaces "restart to finish the
+        # upgrade" in-app.
         install: |
           if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path.to_s]
           end
+          tray_plist = File.expand_path("~/Library/LaunchAgents/io.bronto.compy.tray.plist")
+          if File.exist?(tray_plist)
+            system_command "/bin/launchctl", args: ["bootout", "gui/#{Process.uid}/io.bronto.compy.tray"], must_succeed: false
+            system_command "/bin/launchctl", args: ["bootstrap", "gui/#{Process.uid}", tray_plist], must_succeed: false
+          end
+    # brew uninstall boots both jobs out of launchd; the plists themselves
+    # (and, zap-only, the state dir with the user's configurations) are
+    # user-created files, so per Homebrew convention they go under zap.
+    uninstall:
+      launchctl:
+        - io.bronto.compy.tray
+        - io.bronto.compy.collector
+    zap:
+      trash:
+        - "~/Library/LaunchAgents/io.bronto.compy.tray.plist"
+        - "~/Library/LaunchAgents/io.bronto.compy.collector.plist"
+        - "~/Library/Application Support/compy"

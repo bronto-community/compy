@@ -27,6 +27,11 @@
 #   otelcol-compy_<ver>_<os>_<arch>.tar.gz.sha256  ("<hex>  <name>", the same
 #                                           format as upstream's per-asset
 #                                           .sha256 files)
+#
+# SKIP_COLLECTOR=1 skips the slow OCB collector builds (a config-inspection
+# dry run — e.g. rendering the cask .rb via `release --snapshot` without
+# filling the disk); the staged dirs and dist/extra then simply lack the
+# otelcol-compy artifacts. Never set in the release workflow.
 set -eu
 
 bin=$1
@@ -68,7 +73,7 @@ collector() {
   rm -rf "$work"
 }
 
-collector "$t" "$stage"
+[ -n "${SKIP_COLLECTOR:-}" ] || collector "$t" "$stage"
 
 # App bundle, assembled next to the dist binary so nothing near the repo
 # root (a live ./compy, ./compy.app) gets touched.
@@ -82,7 +87,7 @@ cp -R "$(dirname "$bin")/compy.app" "$stage/compy.app"
 rm "$stage/compy.app/Contents/MacOS/compy"
 cp "$bin" "$stage/compy.app/Contents/MacOS/compy"
 
-if [ "$t" = darwin_arm64 ]; then
+if [ "$t" = darwin_arm64 ] && [ -z "${SKIP_COLLECTOR:-}" ]; then
   collector linux_amd64
   collector linux_arm64
 fi
