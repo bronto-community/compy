@@ -333,10 +333,16 @@ async function loadCore() {
   const v = status && status.running ? status.conformance : null;
   if (!v || v.conforming) S.adoptAsk = false;
 }
+// The log fetch window. The server tail slides over an append-only file
+// (launchd's StandardOutPath appends across restarts, nothing rotates), so
+// once the file outgrows this, every poll drops lines off the top; the
+// pane's count label says "the last N lines" then instead of implying the
+// window is everything.
+const LOG_LINES = 500;
 async function loadCollector() {
   const [health, log] = await Promise.all([
     api("/api/collector/health").catch(() => null),
-    api("/api/log?lines=500").catch(() => ({ log: "" })),
+    api("/api/log?lines=" + LOG_LINES).catch(() => ({ log: "" })),
   ]);
   S.health = health;
   S.log = (log && log.log) || "";
@@ -455,6 +461,7 @@ function restoreFocus(f) {
    render would rebuild the focused input under the user's caret. */
 function render() {
   const f = captureFocus();
+  const ls = captureLogScroll();
   renderSidebar();
   const root = screenRoot();
   clear(root);
@@ -463,6 +470,44 @@ function render() {
   else if (S.screen === "collector") root.appendChild(screenCollector());
   else root.appendChild(screenSettings());
   restoreFocus(f);
+  restoreLogScroll(ls);
+}
+
+/* Tail-mode scroll for the log pane, captured/restored around every rebuild:
+   pinned to the bottom by default (and whenever the pane first appears), so
+   new lines — a restart's banner included, the file only ever appends — show
+   up where the eye already is. Scrolling up out of the 40px at-bottom band
+   (atLogBottom) holds the view in place across refreshes instead: the
+   topmost visible row is the anchor, and since incremental refreshes recycle
+   row nodes (logRows), following that node absorbs rows dropping off the top
+   above it. A rebuilt pane (filter change, reset) loses the anchor and falls
+   back to the raw offset, which the browser clamps. */
+function captureLogScroll() {
+  const e = document.querySelector(".logs");
+  if (!e) return null;
+  const s = { top: e.scrollTop, pinned: atLogBottom(e.scrollTop, e.clientHeight, e.scrollHeight), anchor: null, off: 0 };
+  if (!s.pinned) {
+    for (const r of e.children) {
+      if (r.offsetTop + r.offsetHeight > e.scrollTop) { s.anchor = r; s.off = r.offsetTop - e.scrollTop; break; }
+    }
+  }
+  return s;
+}
+function restoreLogScroll(s) {
+  const e = document.querySelector(".logs");
+  if (!e) return;
+  if (!s || s.pinned) {
+    e.scrollTop = e.scrollHeight;
+    // The rows' content-visibility defers their real sizes to the next
+    // rendering pass, which can move the true bottom past the estimate we
+    // just scrolled to; re-pin after that pass so the pane sits exactly at
+    // the end (and the next capture still reads as pinned).
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (e.isConnected) e.scrollTop = e.scrollHeight;
+    }));
+    return;
+  }
+  e.scrollTop = s.anchor && s.anchor.isConnected ? s.anchor.offsetTop - s.off : s.top;
 }
 
 /* ── sidebar ──────────────────────────────────────────────────────── */
@@ -1938,7 +1983,10 @@ function logPane(stopped) {
     ]));
   }
   bar.appendChild(el("span", { class: "grow" }));
-  bar.appendChild(span("logcount", lineCount(shown) + " of " + lineCount(all) + " lines"));
+  // Honesty under flood: the fetch is a sliding LOG_LINES-line window, so a
+  // saturated window means the file holds more than we can show.
+  const clipped = S.log.split("\n").length >= LOG_LINES;
+  bar.appendChild(span("logcount", lineCount(shown) + " of " + (clipped ? "the last " + LOG_LINES : lineCount(all)) + " lines"));
   bar.appendChild(el("button", {
     class: "ico", title: "copy these " + lineCount(shown) + " lines",
     on: { click: () => copyText(shown.map((l) => l.raw).join("\n"), lineCount(shown) + " log lines copied") },
@@ -1951,32 +1999,67 @@ function logPane(stopped) {
     span("", stopped ? "no output" : S.tail ? "live tail" : "paused"),
   ]));
 
-  const logs = el("div", { class: "logs" });
-  for (const l of shown) {
-    const m = el("span", { class: "m" });
-    if (l.text) m.appendChild(span("", l.text));
-    if (l.attrs) for (const k in l.attrs) m.appendChild(kvPair(k, l.attrs[k]));
-    // The caller (service@…/file.go:123) is deliberately a row tooltip,
-    // not an inline cell — it earns no space at this density.
-    logs.appendChild(el("div", { class: "logline", title: l.caller || null }, [
-      span("t", l.time),
-      span(l.level ? "lv-" + l.level : "", l.level),
-      m,
-    ]));
-    for (const c of l.cont) {
-      // A continuation line that is itself a {…} object (the debug dump's
-      // trailing attrs) renders as pairs; everything else keeps its own
-      // whitespace verbatim.
-      const attrs = c.trimStart().startsWith("{") ? parseAttrs(c.trim()) : null;
-      const cm = el("span", { class: "m" });
-      if (attrs) for (const k in attrs) cm.appendChild(kvPair(k, attrs[k]));
-      else cm.textContent = c;
-      logs.appendChild(el("div", { class: "logline cont" }, [span("t", ""), span("", ""), cm]));
-    }
-  }
-  if (!shown.length) logs.appendChild(el("div", { class: "nologs", text: all.length ? "no lines match this filter." : "no output yet." }));
+  return el("div", { attrs: { style: "flex:1; min-height:0; display:flex; flex-direction:column;" } }, [bar, logRows(shown)]);
+}
 
-  return el("div", { attrs: { style: "flex:1; min-height:0; display:flex; flex-direction:column;" } }, [bar, logs]);
+// The DOM rows for one log entry: the main line plus its continuations.
+function entryRows(logs, l) {
+  const m = el("span", { class: "m" });
+  if (l.text) m.appendChild(span("", l.text));
+  if (l.attrs) for (const k in l.attrs) m.appendChild(kvPair(k, l.attrs[k]));
+  // The caller (service@…/file.go:123) is deliberately a row tooltip,
+  // not an inline cell — it earns no space at this density.
+  logs.appendChild(el("div", { class: "logline", title: l.caller || null }, [
+    span("t", l.time),
+    span(l.level ? "lv-" + l.level : "", l.level),
+    m,
+  ]));
+  for (const c of l.cont) {
+    // A continuation line that is itself a {…} object (the debug dump's
+    // trailing attrs) renders as pairs; everything else keeps its own
+    // whitespace verbatim.
+    const attrs = c.trimStart().startsWith("{") ? parseAttrs(c.trim()) : null;
+    const cm = el("span", { class: "m" });
+    if (attrs) for (const k in attrs) cm.appendChild(kvPair(k, attrs[k]));
+    else cm.textContent = c;
+    logs.appendChild(el("div", { class: "logline cont" }, [span("t", ""), span("", ""), cm]));
+  }
+}
+
+/* The .logs element persists across renders (logDom) so the 3s refresh can
+   recycle rows instead of rebuilding thousands of them: when logDiff aligns
+   the old filtered entries with the new (the common tail case — the window
+   slid, everything between is identical), drop the rows that slid off the
+   top, re-render the last previously-shown entry (a poll can catch it
+   mid-dump, growing its continuations), and append what's new. Any other
+   change — filter or level flipped, content replaced (factory reset), first
+   show — rebuilds the pane exactly as before. Scroll is render()'s job
+   (captureLogScroll/restoreLogScroll), which leans on recycled rows keeping
+   their node identity. */
+let logDom = null; // { key, shown, node }
+function logRows(shown) {
+  const key = S.level + " " + S.query.trim().toLowerCase();
+  const d = logDom && logDom.key === key ? logDiff(logDom.shown, shown) : null;
+  let logs;
+  if (d) {
+    logs = logDom.node;
+    let drop = 0;
+    for (let i = 0; i < d.dropped; i++) drop += 1 + logDom.shown[i].cont.length;
+    while (drop--) logs.removeChild(logs.firstChild);
+    let tail = 1 + logDom.shown[logDom.shown.length - 1].cont.length;
+    while (tail--) logs.removeChild(logs.lastChild);
+    for (let i = d.from; i < shown.length; i++) entryRows(logs, shown[i]);
+    // A window cut mid-entry (headCut) keeps the old head entry's rows —
+    // logDom.shown records what is actually rendered, so the next diff and
+    // the row-drop arithmetic stay in step with the DOM.
+    logDom = { key, shown: d.headCut ? [logDom.shown[d.dropped]].concat(shown.slice(1)) : shown, node: logs };
+  } else {
+    logs = el("div", { class: "logs" });
+    for (const l of shown) entryRows(logs, l);
+    if (!shown.length) logs.appendChild(el("div", { class: "nologs", text: logEntries().length ? "no lines match this filter." : "no output yet." }));
+    logDom = { key, shown, node: logs };
+  }
+  return logs;
 }
 
 // One structured-attribute pair, `key=value`; nested values render as
@@ -2466,7 +2549,11 @@ async function updateDistro(name) {
    while a slow action or an open menu/inline editor would be yanked away. */
 function refreshBlocked() {
   const a = document.activeElement;
-  const inField = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
+  // The log filter is exempt: freezing the refresh while it has focus froze
+  // the live tail under a lit "live tail" light. Its value and caret survive
+  // the re-render (S.query + captureFocus), so typing loses nothing.
+  const inField = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT")
+    && a.dataset.fk !== "logq";
   return inField || S.busyId || S.stoppingId || S.saving || S.restarting || S.presetsOpenId || S.inline
     || S.confirm || S.preflight || S.newOpen || S.unlockAsk || S.resetArm || S.resetBusy
     || document.querySelector("dialog[open]")
