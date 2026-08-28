@@ -131,7 +131,7 @@ const S = {
   note: null, noteTimer: null,
   flash: null,             // key of the control showing its brief "saved" mark
   newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
-  confirm: null, confirmVerb: null, confirmId: null, confirmKind: null,
+  confirm: null,           // { text, verb, id, kind } — the destructive inline confirm, under row `id`
   presetSel: {},           // { configName: presetName }
   presetsOpenId: null,
   inline: null,            // { name, preset, isNew }
@@ -695,7 +695,6 @@ function screenConfigs() {
   if (find && rows.length === 0) {
     scroll.appendChild(el("div", { class: "nomatch", text: "no configuration matches “" + S.find.trim() + "”" }));
   }
-  if (S.confirm) scroll.appendChild(confirmRow());
   wrap.appendChild(scroll);
   return wrap;
 }
@@ -764,13 +763,33 @@ function failurePanel() {
   ]);
 }
 
-function confirmRow() {
-  return el("div", { class: "confirm" }, [
-    el("span", { class: "q sans", text: S.confirm }),
+/* One shared confirm shape — sentence · grow · cancel · verb — used by the
+   destructive confirm row, the yaml unlock-ask, and the activation
+   pre-flight. tone is the verb's extra class (danger/accent); opts: cls
+   (wrapper class, names the site), cancel (cancel label), mid (an extra
+   button before the verb — the pre-flight's "add values"), verbTitle /
+   verbDisabled (the pre-flight's in-flight lockout). The typed
+   factory-reset confirm and ask() are deliberately not this shape. */
+function confirmBar(text, verb, tone, onVerb, onCancel, opts) {
+  opts = opts || {};
+  return el("div", { class: opts.cls || "confirm" }, [
+    el("span", { class: "q sans", text }),
     el("span", { class: "grow" }),
-    el("button", { class: "act", text: "keep it", on: { click: () => { S.confirm = null; render(); } } }),
-    el("button", { class: "btn danger", text: S.confirmVerb, on: { click: runConfirm } }),
+    el("button", { class: "act", text: opts.cancel || "cancel", on: { click: onCancel } }),
+    opts.mid,
+    el("button", {
+      class: "btn " + tone, text: verb,
+      title: opts.verbTitle || null,
+      attrs: opts.verbDisabled ? { disabled: "" } : null,
+      on: { click: onVerb },
+    }),
   ]);
+}
+
+function confirmRow() {
+  const c = S.confirm;
+  return confirmBar(c.text, c.verb, "danger", runConfirm,
+    () => { S.confirm = null; render(); }, { cancel: "keep it" });
 }
 
 function configRow(info) {
@@ -896,8 +915,7 @@ function configRow(info) {
       attrs: isActiveCfg ? { disabled: "" } : null,
       on: {
         click: () => {
-          S.confirm = "delete " + name + " and its presets?";
-          S.confirmVerb = "delete"; S.confirmId = name; S.confirmKind = "delete";
+          S.confirm = { text: "delete " + name + " and its presets?", verb: "delete", id: name, kind: "delete" };
           render();
         },
       },
@@ -905,6 +923,7 @@ function configRow(info) {
   ]));
 
   const wrap = el("div", { class: "cfg-row-wrap" }, [row]);
+  if (S.confirm && S.confirm.id === name) wrap.appendChild(confirmRow());
   if (S.preflight && S.preflight.name === name) wrap.appendChild(preflightPanel(info));
   if (S.inline && S.inline.name === name) wrap.appendChild(inlinePresetEditor(info));
   return wrap;
@@ -916,8 +935,7 @@ function syncAction(info, origin, host) {
     return {
       on: true, title: "reset to the version that ships with compy",
       run: () => {
-        S.confirm = "reset " + info.name + " to the version that ships with compy? your changes are lost.";
-        S.confirmVerb = "reset"; S.confirmId = info.name; S.confirmKind = "reset";
+        S.confirm = { text: "reset " + info.name + " to the version that ships with compy? your changes are lost.", verb: "reset", id: info.name, kind: "reset" };
         render();
       },
     };
@@ -927,8 +945,7 @@ function syncAction(info, origin, host) {
   return {
     on: true, title: "discard my edits and re-sync from " + host,
     run: () => {
-      S.confirm = "re-syncing " + info.name + " throws away your edits.";
-      S.confirmVerb = "discard & re-sync"; S.confirmId = info.name; S.confirmKind = "resync";
+      S.confirm = { text: "re-syncing " + info.name + " throws away your edits.", verb: "discard & re-sync", id: info.name, kind: "resync" };
       render();
     },
   };
@@ -1123,31 +1140,22 @@ function preflightActivate(name, preset) {
 }
 function preflightPanel(info) {
   const p = S.preflight;
-  const names = p.missing;
-  const list = names.length === 1 ? names[0]
-    : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
-  return el("div", { class: "preflight" }, [
-    el("span", { class: "q sans", text: p.name + " needs " + list + " before it can send anywhere. add a preset with values, or activate anyway." }),
-    el("span", { class: "grow" }),
-    el("button", { class: "act", text: "cancel", on: { click: () => { S.preflight = null; render(); } } }),
-    el("button", {
-      class: "btn", text: "add values",
-      on: {
-        click: () => {
-          // The existing inline preset editor, on the real preset this
-          // activation would use (every config keeps at least one).
-          S.preflight = null;
-          openInline(p.name, p.preset, false);
-        },
-      },
-    }),
-    el("button", {
-      class: "btn accent", text: "activate anyway",
-      title: inflight() ? inflightTitle() : null,
-      attrs: inflight() ? { disabled: "" } : null,
-      on: { click: () => { S.preflight = null; activate(p.name, p.preset); } },
-    }),
-  ]);
+  return confirmBar(
+    p.name + " needs " + nameList(p.missing) + " before it can send anywhere. add a preset with values, or activate anyway.",
+    "activate anyway", "accent",
+    () => { S.preflight = null; activate(p.name, p.preset); },
+    () => { S.preflight = null; render(); },
+    {
+      cls: "preflight",
+      // The existing inline preset editor, on the real preset this
+      // activation would use (every config keeps at least one).
+      mid: el("button", {
+        class: "btn", text: "add values",
+        on: { click: () => { S.preflight = null; openInline(p.name, p.preset, false); } },
+      }),
+      verbTitle: inflight() ? inflightTitle() : null,
+      verbDisabled: inflight(),
+    });
 }
 /* The row's stop control: the collector screen's stop flow (POST
    /api/service/stop, no confirmation there either), plus the row's
@@ -1211,8 +1219,8 @@ async function duplicate(name) {
 }
 
 async function runConfirm() {
-  const name = S.confirmId, kind = S.confirmKind;
-  S.confirm = null; S.confirmId = null; S.confirmKind = null;
+  const name = S.confirm.id, kind = S.confirm.kind;
+  S.confirm = null;
   render();
   try {
     if (kind === "delete") {
@@ -1520,17 +1528,14 @@ function screenEditor() {
     ]) : null,
   ]));
   if (S.unlockAsk) {
-    pane.appendChild(el("div", { class: "unlock-ask" }, [
-      el("span", {
-        class: "q sans",
-        text: origin === "url"
-          ? "editing disconnects this from " + host + ". it stops re-syncing."
-          : "your version stays through compy updates.",
-      }),
-      el("span", { class: "grow" }),
-      el("button", { class: "act", text: "cancel", on: { click: () => { S.unlockAsk = false; render(); } } }),
-      el("button", { class: "btn accent", text: "make it mine", on: { click: () => { S.unlockAsk = false; S.unlocked = true; render(); } } }),
-    ]));
+    pane.appendChild(confirmBar(
+      origin === "url"
+        ? "editing disconnects this from " + host + ". it stops re-syncing."
+        : "your version stays through compy updates.",
+      "make it mine", "accent",
+      () => { S.unlockAsk = false; S.unlocked = true; render(); },
+      () => { S.unlockAsk = false; render(); },
+      { cls: "unlock-ask" }));
   }
   const host2 = el("div", { class: "cm-host" });
   pane.appendChild(host2);
@@ -1631,8 +1636,7 @@ async function setRemoteURL(info, url) {
 }
 async function headerResync(info, origin) {
   if (origin === "builtin") {
-    S.confirm = "reset " + info.name + " to the version that ships with compy? your changes are lost.";
-    S.confirmVerb = "reset"; S.confirmId = info.name; S.confirmKind = "reset";
+    S.confirm = { text: "reset " + info.name + " to the version that ships with compy? your changes are lost.", verb: "reset", id: info.name, kind: "reset" };
     go("#/configs");
     return;
   }
@@ -2146,7 +2150,7 @@ async function doFactoryReset() {
       yaml: "", yamlOf: null, find: "",
       busyId: null, err: null, errName: null, errKept: null,
       newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
-      confirm: null, confirmVerb: null, confirmId: null, confirmKind: null,
+      confirm: null,
       presetSel: {}, presetsOpenId: null, inline: null, inlineName: "", inlineDraft: null,
       dl: {}, up: {}, addName: "", addPath: "", settings: null, portsSaved: false,
       resetArm: false, resetTyped: "",
