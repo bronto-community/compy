@@ -128,6 +128,29 @@ func TestOTelBinShortLinkResolution(t *testing.T) {
 	}
 }
 
+// A redirect hop off the otelbin host (or the host asked) is refused, never
+// followed: a hostile otelbin must not bounce compy into blind GETs at
+// arbitrary — including internal — hosts (S3).
+func TestOTelBinRedirectOffHostRefused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://evil.example/#config="+otelbinExampleEncoded)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	_, err := otelbinYAML(client, srv.URL+"/s/abc123")
+	if err == nil || !strings.Contains(err.Error(), "does not understand") ||
+		!strings.Contains(err.Error(), "evil.example") {
+		t.Fatalf("off-host redirect: want 'does not understand (redirect to evil.example)', got %v", err)
+	}
+}
+
 // A fragment-form otelbin URL through the normal create path lands as a
 // plain LOCAL config — no network, no remote_url, no pristine hash.
 func TestCreateFromOTelBinFragmentURL(t *testing.T) {

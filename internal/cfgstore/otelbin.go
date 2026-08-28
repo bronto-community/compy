@@ -27,7 +27,11 @@ func IsOTelBinURL(raw string) bool {
 	if err != nil {
 		return false
 	}
-	h := strings.ToLower(u.Hostname())
+	return isOTelBinHost(u.Hostname())
+}
+
+func isOTelBinHost(h string) bool {
+	h = strings.ToLower(h)
 	return h == "otelbin.io" || h == "www.otelbin.io"
 }
 
@@ -51,6 +55,7 @@ func otelbinYAML(client *http.Client, raw string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("not a valid otelbin link: %w", err)
 	}
+	start := strings.ToLower(u.Hostname())
 	for range 5 {
 		if frag := u.EscapedFragment(); frag != "" {
 			return decodeOTelBinFragment(frag)
@@ -66,6 +71,13 @@ func otelbinYAML(client *http.Client, raw string) (string, error) {
 		}
 		if u, err = u.Parse(loc); err != nil {
 			return "", fmt.Errorf("otelbin returned something compy does not understand (bad redirect: %v)", err)
+		}
+		// Every hop must satisfy the same host check as the initial link
+		// (start covers the tests' stub server; live, start IS otelbin):
+		// a hostile otelbin must not be able to bounce compy into blind
+		// GETs at arbitrary — including internal — hosts.
+		if h := strings.ToLower(u.Hostname()); !isOTelBinHost(h) && h != start {
+			return "", fmt.Errorf("otelbin returned something compy does not understand (redirect to %s)", u.Hostname())
 		}
 	}
 	return "", errors.New("otelbin returned something compy does not understand (too many redirects)")
