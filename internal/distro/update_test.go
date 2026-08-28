@@ -55,6 +55,20 @@ func TestLatestVersionHonestErrors(t *testing.T) {
 	}
 }
 
+// The tag becomes filesystem paths and download URLs, so anything that is
+// not a plain dot-separated version — traversal shapes included — must be
+// refused at the parse, not passed along.
+func TestLatestVersionRefusesNonVersionTags(t *testing.T) {
+	for _, tag := range []string{`v../../../evil`, `v0.161.0/../evil`, `vgarbage`, `v0.161.0 rm -rf`} {
+		fetch := func(string) (io.ReadCloser, int64, error) {
+			return jsonBody(`[{"tag_name":"` + tag + `","prerelease":false}]`)
+		}
+		if _, err := LatestVersion(fetch); err == nil || !strings.Contains(err.Error(), "not a release version") {
+			t.Errorf("tag %q: want 'not a release version' error, got %v", tag, err)
+		}
+	}
+}
+
 func TestNewerVersion(t *testing.T) {
 	cases := []struct {
 		latest, current string

@@ -1480,7 +1480,10 @@ func (a *App) applyDistroUpdate(d distro.Def, version string, progress distro.Pr
 // updated=false with err=nil means name is already the newest release.
 func (a *App) UpdateDistro(name string, progress distro.Progress) (current, latest string, updated bool, err error) {
 	d, current, latest, err := a.checkDistroUpdate(name)
-	if err != nil || latest == current {
+	// Strictly newer only — an equal or OLDER upstream answer is "already
+	// newest", never a silent downgrade (NewerVersion also refuses any
+	// malformed version outright).
+	if err != nil || !distro.NewerVersion(latest, current) {
 		return current, latest, false, err
 	}
 	return current, latest, true, a.applyDistroUpdate(d, latest, progress)
@@ -1495,8 +1498,8 @@ func (a *App) StartUpdateDistro(name string) (current, latest string, started bo
 	if err != nil {
 		return "", "", false, err
 	}
-	if latest == current {
-		return current, latest, false, nil
+	if !distro.NewerVersion(latest, current) {
+		return current, latest, false, nil // equal/older/malformed: never a downgrade
 	}
 	if !a.beginDownload(name) {
 		return current, latest, true, nil
