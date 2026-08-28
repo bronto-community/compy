@@ -126,6 +126,14 @@ function atLogBottom(scrollTop, clientHeight, scrollHeight) {
    middle.
    ponytail: O(old²) worst case on logs of identical lines; fine at the
    500-line window, revisit if the window grows 10x. */
+/* sameShown: the zero-op tick's test — same visible entries, line for line.
+   O(n) string compares over the ~500-line window, cheaper than one DOM
+   mutation; true means the pane needs no work at all this refresh. */
+function sameShown(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i].raw !== b[i].raw) return false;
+  return true;
+}
 function logDiff(oldE, newE) {
   if (!newE.length) return null;
   for (let d = 0; d < oldE.length; d++) {
@@ -235,7 +243,7 @@ if (typeof module !== "undefined") {
     slug, originOf, hostOf, missingRequired, nameList, freePresetName,
     compyVersionLine,
     portsCompact, yamlLineOf, fmtCount, parseZapLine, parseAttrs,
-    atLogBottom, logDiff,
+    atLogBottom, logDiff, sameShown,
     distroState,
   };
 }

@@ -197,6 +197,14 @@ test("atLogBottom", () => {
   }
 });
 
+test("sameShown", () => {
+  const e = (raw) => ({ raw });
+  assert.equal(H.sameShown([e("a"), e("b")], [e("a"), e("b")]), true, "identical");
+  assert.equal(H.sameShown([], []), true, "both empty");
+  assert.equal(H.sameShown([e("a")], [e("a"), e("b")]), false, "appended");
+  assert.equal(H.sameShown([e("a"), e("b")], [e("a"), e("b\ncont")]), false, "last entry grew");
+});
+
 test("logDiff", () => {
   const e = (raw) => ({ raw });
   const [a, b, c, d, x] = ["a", "b", "c", "d", "x"].map(e);

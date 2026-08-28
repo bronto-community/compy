@@ -496,6 +496,14 @@ function captureLogScroll() {
 function restoreLogScroll(s) {
   const e = document.querySelector(".logs");
   if (!e) return;
+  if (s && logDom && logDom.changed === false) {
+    // Zero-op tick: the rows are untouched, so nothing moved — no re-pin,
+    // no anchor walk, no rAF dance. Re-adopting the container into the
+    // fresh screen DOM resets its scrollTop to 0 (a detached element loses
+    // its scroll offset), so put the exact offset back and stop.
+    if (e.scrollTop !== s.top) e.scrollTop = s.top;
+    return;
+  }
   if (!s || s.pinned) {
     e.scrollTop = e.scrollHeight;
     // The rows' content-visibility defers their real sizes to the next
@@ -2030,15 +2038,30 @@ function entryRows(logs, l) {
    recycle rows instead of rebuilding thousands of them: when logDiff aligns
    the old filtered entries with the new (the common tail case — the window
    slid, everything between is identical), drop the rows that slid off the
-   top, re-render the last previously-shown entry (a poll can catch it
-   mid-dump, growing its continuations), and append what's new. Any other
+   top, re-render the last previously-shown entry only when it actually grew
+   (a poll can catch it mid-dump), and append what's new. Any other
    change — filter or level flipped, content replaced (factory reset), first
-   show — rebuilds the pane exactly as before. Scroll is render()'s job
+   show — rebuilds the pane exactly as before. And the most common tick of
+   all — no visible change (sameShown) — touches nothing: zero DOM
+   operations inside the container, no scroll movement, no repaint; the
+   whole pane costs one appendChild (render()'s re-adoption of the
+   persistent node into the fresh screen). Scroll is render()'s job
    (captureLogScroll/restoreLogScroll), which leans on recycled rows keeping
    their node identity. */
-let logDom = null; // { key, shown, node }
+let logDom = null; // { key, shown, node, msg, changed }
 function logRows(shown) {
-  const key = S.level + " " + S.query.trim().toLowerCase();
+  const key = S.level + " " + S.query.trim().toLowerCase();
+  // The empty pane's message is part of the rendered identity: two empty
+  // views can differ ("no output yet." vs "no lines match this filter.").
+  const msg = shown.length ? "" : (logEntries().length ? "no lines match this filter." : "no output yet.");
+  if (logDom && logDom.key === key && logDom.msg === msg && sameShown(logDom.shown, shown)) {
+    // The common 3s tick: same filter, same visible lines (new lines the
+    // filter hides included). ZERO DOM operations inside the container —
+    // render() re-adopts it untouched, nothing repaints, and changed:false
+    // tells restoreLogScroll not to move anything either.
+    logDom = { key, shown, node: logDom.node, msg, changed: false };
+    return logDom.node;
+  }
   const d = logDom && logDom.key === key ? logDiff(logDom.shown, shown) : null;
   let logs;
   if (d) {
@@ -2046,18 +2069,26 @@ function logRows(shown) {
     let drop = 0;
     for (let i = 0; i < d.dropped; i++) drop += 1 + logDom.shown[i].cont.length;
     while (drop--) logs.removeChild(logs.firstChild);
-    let tail = 1 + logDom.shown[logDom.shown.length - 1].cont.length;
-    while (tail--) logs.removeChild(logs.lastChild);
-    for (let i = d.from; i < shown.length; i++) entryRows(logs, shown[i]);
+    // logDiff re-offers the last old entry (d.from) because a poll can catch
+    // it mid-dump; re-render its rows only when it actually grew — a pure
+    // append then touches no existing row at all (kept rows: zero removals).
+    let from = d.from;
+    if (shown[from].raw === logDom.shown[logDom.shown.length - 1].raw) {
+      from++;
+    } else {
+      let tail = 1 + logDom.shown[logDom.shown.length - 1].cont.length;
+      while (tail--) logs.removeChild(logs.lastChild);
+    }
+    for (let i = from; i < shown.length; i++) entryRows(logs, shown[i]);
     // A window cut mid-entry (headCut) keeps the old head entry's rows —
     // logDom.shown records what is actually rendered, so the next diff and
     // the row-drop arithmetic stay in step with the DOM.
-    logDom = { key, shown: d.headCut ? [logDom.shown[d.dropped]].concat(shown.slice(1)) : shown, node: logs };
+    logDom = { key, shown: d.headCut ? [logDom.shown[d.dropped]].concat(shown.slice(1)) : shown, node: logs, msg, changed: true };
   } else {
     logs = el("div", { class: "logs" });
     for (const l of shown) entryRows(logs, l);
-    if (!shown.length) logs.appendChild(el("div", { class: "nologs", text: logEntries().length ? "no lines match this filter." : "no output yet." }));
-    logDom = { key, shown, node: logs };
+    if (msg) logs.appendChild(el("div", { class: "nologs", text: msg }));
+    logDom = { key, shown, node: logs, msg, changed: true };
   }
   return logs;
 }
