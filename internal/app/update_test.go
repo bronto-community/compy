@@ -97,11 +97,17 @@ func installDistro(t *testing.T, a *app.App, name, binary, version string) strin
 }
 
 func tarGzWith(t *testing.T, name string) []byte {
+	return tarGzScript(t, name, "#!/bin/sh\nexit 0\n")
+}
+
+// tarGzScript is tarGzWith with the archived collector's script under the
+// caller's control — a rejecting binary ("exit 1") is how a pulled update
+// that the active configuration does not run with is staged.
+func tarGzScript(t *testing.T, name, content string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-	content := "#!/bin/sh\nexit 0\n"
 	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(content))}); err != nil {
 		t.Fatal(err)
 	}
@@ -519,6 +525,208 @@ func TestEnsureDistroPinFallbackUsesCompiledSHA(t *testing.T) {
 	}
 	if len(urls) != 1 || urls[0] != d.URLs[plat] {
 		t.Fatalf("fetched %v, want exactly the pinned URL %s (no .sha256 asset)", urls, d.URLs[plat])
+	}
+}
+
+// selectDistro makes name the settings-selected default distro.
+func selectDistro(t *testing.T, name string) {
+	t.Helper()
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Distro = name
+	if err := state.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUpdateDistroSwapsRunningCollector: updating the distro in use while
+// the collector runs re-applies the active configuration onto the new
+// binary — launchd sees a fresh bootstrap, the plist points into the new
+// versioned dir, and settings record the pulled version.
+func TestUpdateDistroSwapsRunningCollector(t *testing.T) {
+	calls := setup(t, "state = running")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Fetch = updateFetch(t, "0.160.0", tarGzWith(t, "otelcol-otlp"))
+	installDistro(t, a, "otlp", "otelcol-otlp", "0.159.0")
+	selectDistro(t, "otlp")
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatalf("Activate(debug) on otlp 0.159.0: %v", err)
+	}
+
+	*calls = nil
+	current, latest, updated, err := a.UpdateDistro("otlp", nil)
+	if err != nil || !updated || current != "0.159.0" || latest != "0.160.0" {
+		t.Fatalf("UpdateDistro = (%q, %q, %v, %v), want a 0.159.0→0.160.0 update", current, latest, updated, err)
+	}
+	if !called(*calls, "bootstrap") {
+		t.Errorf("running collector was not re-applied onto the new version: %v", *calls)
+	}
+	if plist := readPlist(t); !strings.Contains(plist, filepath.Join("distros", "otlp-0.160.0", "otelcol-otlp")) {
+		t.Errorf("plist does not point at the new binary:\n%s", plist)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DistroVersions["otlp"] != "0.160.0" {
+		t.Errorf("DistroVersions = %v, want otlp 0.160.0", s.DistroVersions)
+	}
+}
+
+// TestUpdateDistroRejectedConfigKeepsVersion pins applyDistroUpdate's first
+// failure branch: the new collector REJECTS the active configuration —
+// nothing reached launchd, the old binary keeps running, and the recorded
+// version honestly stands (the next restart uses it). The error names the
+// new version, carries the collector's own diagnostic, and stays a 400.
+func TestUpdateDistroRejectedConfigKeepsVersion(t *testing.T) {
+	calls := setup(t, "state = running")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Fetch = updateFetch(t, "0.160.0", tarGzScript(t, "otelcol-otlp", "#!/bin/sh\necho 'unknown type' >&2\nexit 1\n"))
+	installDistro(t, a, "otlp", "otelcol-otlp", "0.159.0")
+	selectDistro(t, "otlp")
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	*calls = nil
+	_, _, updated, err := a.UpdateDistro("otlp", nil)
+	if err == nil || !updated {
+		t.Fatalf("UpdateDistro = (updated %v, err %v), want the rejected-config error", updated, err)
+	}
+	if !strings.Contains(err.Error(), "otlp is now 0.160.0") || !strings.Contains(err.Error(), "does not run with it") {
+		t.Errorf("error = %q, want it to say the update stands but the config does not run with it", err)
+	}
+	if !strings.Contains(err.Error(), "unknown type") {
+		t.Errorf("error = %q, want the collector's own diagnostic", err)
+	}
+	if !state.IsBadRequest(err) {
+		t.Errorf("a config the new collector rejects is the caller's to fix; error not BadRequest-marked: %v", err)
+	}
+	if called(*calls, "bootstrap") {
+		t.Errorf("a rejected config still reached launchd: %v", *calls)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DistroVersions["otlp"] != "0.160.0" {
+		t.Errorf("DistroVersions = %v, want the update to stand at 0.160.0", s.DistroVersions)
+	}
+}
+
+// TestUpdateDistroStartFailureRollsBack pins the second failure branch: the
+// new collector VALIDATES but will not start. The last-good restore puts
+// settings.json — version record included — back, and the error names both
+// versions so the user knows what actually runs.
+func TestUpdateDistroStartFailureRollsBack(t *testing.T) {
+	// launchd: up for the initial activation, up for applyDistroUpdate's
+	// am-I-running check, down at the failing activation's check, back up
+	// once the previous setup is restored.
+	setupStaged(t, "state = running", "state = running", "", "state = running")
+	port := listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Fetch = updateFetch(t, "0.160.0", tarGzWith(t, "otelcol-otlp"))
+	installDistro(t, a, "otlp", "otelcol-otlp", "0.159.0")
+	selectDistro(t, "otlp")
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing answers the probe from here on: the new collector never
+	// comes up, and the restore path runs.
+	closeListener(t, port)
+	_, _, updated, err := a.UpdateDistro("otlp", nil)
+	if err == nil || !updated {
+		t.Fatalf("UpdateDistro = (updated %v, err %v), want the did-not-start error", updated, err)
+	}
+	if !strings.Contains(err.Error(), "otlp 0.160.0 did not start") || !strings.Contains(err.Error(), "still 0.159.0") {
+		t.Errorf("error = %q, want it to name both versions (0.160.0 failed, 0.159.0 restored)", err)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DistroVersions["otlp"] != "0.159.0" {
+		t.Errorf("DistroVersions = %v, want the last-good restore to put 0.159.0 back", s.DistroVersions)
+	}
+}
+
+// TestStartUpdateDistroAsync: the REST update answers at once, downloads in
+// the background reporting through DownloadProgress, and a second Start
+// while one is in flight joins it instead of racing a second extract into
+// the same directory (beginDownload's dedup).
+func TestStartUpdateDistroAsync(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unblock := make(chan struct{})
+	tarFetches := 0
+	inner := updateFetch(t, "0.160.0", tarGzWith(t, "otelcol-otlp"))
+	a.Fetch = func(url string) (io.ReadCloser, int64, error) {
+		if strings.HasSuffix(url, ".tar.gz") { // not the tarball's .sha256 asset
+			tarFetches++
+			<-unblock
+		}
+		return inner(url)
+	}
+	installDistro(t, a, "otlp", "otelcol-otlp", "0.159.0")
+
+	current, latest, started, err := a.StartUpdateDistro("otlp")
+	if err != nil || !started || current != "0.159.0" || latest != "0.160.0" {
+		t.Fatalf("StartUpdateDistro = (%q, %q, %v, %v), want a started 0.159.0→0.160.0 update", current, latest, started, err)
+	}
+	// In flight: a second Start reports started without spawning another
+	// download.
+	if _, _, started, err := a.StartUpdateDistro("otlp"); err != nil || !started {
+		t.Fatalf("second StartUpdateDistro = (started %v, err %v), want (true, nil) — join, not refuse", started, err)
+	}
+	close(unblock)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		p, err := a.DownloadProgress("otlp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := p.(map[string]any)["status"]
+		if st == "done" {
+			break
+		}
+		if st == "failed" {
+			t.Fatalf("download failed: %v", p)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("download never finished: %v", p)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if tarFetches != 1 {
+		t.Errorf("tarball fetched %d times, want 1 (the second Start must not race a second download)", tarFetches)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DistroVersions["otlp"] != "0.160.0" {
+		t.Errorf("DistroVersions = %v, want otlp 0.160.0 once the async update lands", s.DistroVersions)
 	}
 }
 
