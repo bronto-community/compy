@@ -1304,6 +1304,73 @@ func TestRouteTableSmoke(t *testing.T) {
 	}
 }
 
+// cssTokenBlock extracts the `--name: value` custom-property pairs of the
+// first block following selector in css. The media-wrapped light block works
+// too: the search starts at the inner selector, and the block ends at the
+// first closing brace.
+func cssTokenBlock(t *testing.T, css, selector string) map[string]string {
+	t.Helper()
+	i := strings.Index(css, selector)
+	if i < 0 {
+		t.Fatalf("app.css: selector %q not found", selector)
+	}
+	open := strings.Index(css[i:], "{")
+	close := strings.Index(css[i:], "}")
+	if open < 0 || close < 0 || close < open {
+		t.Fatalf("app.css: no block after %q", selector)
+	}
+	tokens := map[string]string{}
+	for _, decl := range strings.Split(css[i+open+1:i+close], ";") {
+		name, value, ok := strings.Cut(decl, ":")
+		name = strings.TrimSpace(name)
+		if !ok || !strings.HasPrefix(name, "--") {
+			continue
+		}
+		tokens[name] = strings.TrimSpace(value)
+	}
+	if len(tokens) == 0 {
+		t.Fatalf("app.css: block after %q holds no --tokens", selector)
+	}
+	return tokens
+}
+
+// TestThemeTokenBlocksLockstep guards the deliberate duplication in app.css:
+// the dark dictionary lives on :root (fallback) AND :root[data-theme=dark],
+// the light one under the prefers-color-scheme media query AND
+// :root[data-theme=light]. Nothing else keeps the twins identical — a token
+// edited in one block and not its twin silently splits system-follow theming
+// from the explicit choice.
+func TestThemeTokenBlocksLockstep(t *testing.T) {
+	src, err := staticFiles.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(src)
+	pairs := []struct {
+		name       string
+		selA, selB string
+	}{
+		{"dark", ":root {", `:root[data-theme="dark"]`},
+		{"light", `:root:not([data-theme="dark"])`, `:root[data-theme="light"]`},
+	}
+	for _, p := range pairs {
+		a := cssTokenBlock(t, css, p.selA)
+		b := cssTokenBlock(t, css, p.selB)
+		for name, va := range a {
+			if vb, ok := b[name]; !ok {
+				t.Errorf("%s: %s defined in %q but missing in %q", p.name, name, p.selA, p.selB)
+			} else if va != vb {
+				t.Errorf("%s: %s = %q in %q but %q in %q", p.name, name, va, p.selA, vb, p.selB)
+			}
+		}
+		for name := range b {
+			if _, ok := a[name]; !ok {
+				t.Errorf("%s: %s defined in %q but missing in %q", p.name, name, p.selB, p.selA)
+			}
+		}
+	}
+}
+
 // markBadRequest stands in for internal/state.BadRequest: webui recognises a
 // marked error structurally (a BadRequest() bool method), so these tests
 // don't need — and this package must not have — the import.

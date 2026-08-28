@@ -200,8 +200,10 @@ func TestWebUIDeleteLastPresetRefused(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	msg, _ := body["error"].(string)
-	if !strings.Contains(msg, "at least one preset") {
-		t.Fatalf("error = %q, want the keeps-at-least-one message", msg)
+	// The 400 (the BadRequest marker surviving the wiring) plus a non-empty
+	// message is the wiring's whole claim; the sentence itself is pinned once,
+	// in cfgstore's TestDeleteLastPresetRefused.
+	if msg, _ := body["error"].(string); msg == "" {
+		t.Fatalf("400 body = %v, want a non-empty error message", body)
 	}
 }
