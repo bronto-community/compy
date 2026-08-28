@@ -1,7 +1,11 @@
 package cfgstore
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1014,6 +1018,37 @@ func TestDeleteLastPresetRefused(t *testing.T) {
 	}
 	if err := DeletePreset(root, "cfg", "default"); err == nil {
 		t.Fatal("DeletePreset survivor: want refusal, got nil")
+	}
+}
+
+// HTTPFetch is the production Fetch behind CreateFromURL/Sync/SyncAll; its
+// caps have never run under test: the happy path, a non-200 answer, and a
+// body past the 5MB limit (which must be refused, not slurped).
+func TestHTTPFetch(t *testing.T) {
+	const limit = 5 * 1024 * 1024
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ok.yaml":
+			fmt.Fprint(w, "receivers: {}\n")
+		case "/huge.yaml":
+			w.Write(bytes.Repeat([]byte("a"), limit+1))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	data, err := HTTPFetch(srv.URL + "/ok.yaml")
+	if err != nil || string(data) != "receivers: {}\n" {
+		t.Fatalf("HTTPFetch ok = %q, %v", data, err)
+	}
+
+	if _, err := HTTPFetch(srv.URL + "/gone.yaml"); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Fatalf("HTTPFetch 404 = %v, want an HTTP 404 error", err)
+	}
+
+	if _, err := HTTPFetch(srv.URL + "/huge.yaml"); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("HTTPFetch oversized = %v, want the 5MB-limit refusal", err)
 	}
 }
 

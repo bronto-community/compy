@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1789,6 +1792,70 @@ func TestGenuineFaultsStay500(t *testing.T) {
 			t.Errorf("UseDistro err = %q: that sentence claims the config is incompatible, which is not what happened", err)
 		}
 	})
+}
+
+// TestSyncAllOverHTTP runs SyncAll end to end over the REAL fetch path
+// (cfgstore.HTTPFetch against an httptest server): an unmodified remote
+// config syncs, a locally modified one is skipped, and a source that has
+// gone 404 surfaces as the partial-failure shape — the names synced so far
+// plus the fetch error.
+func TestSyncAllOverHTTP(t *testing.T) {
+	setup(t, "")
+
+	var mu sync.Mutex
+	bodies := map[string]string{
+		"/a.yaml": "a: v1\n",
+		"/b.yaml": "b: v1\n",
+		"/c.yaml": "c: v1\n",
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		body, ok := bodies[r.URL.Path]
+		mu.Unlock()
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, body)
+	}))
+	defer srv.Close()
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"a", "b", "c"} {
+		if err := a.CreateFromURL("r-"+n, srv.URL+"/"+n+".yaml"); err != nil {
+			t.Fatalf("CreateFromURL r-%s: %v", n, err)
+		}
+	}
+	// r-b gains a local edit: SyncAll must leave it alone.
+	if err := a.WriteConfigYAML("r-b", "b: mine\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Upstream moves on: a.yaml has new content, c.yaml is gone.
+	mu.Lock()
+	bodies["/a.yaml"] = "a: v2\n"
+	delete(bodies, "/c.yaml")
+	mu.Unlock()
+
+	synced, err := a.SyncAll()
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Fatalf("SyncAll err = %v, want the 404 fetch failure surfaced", err)
+	}
+	if !state.IsBadRequest(err) {
+		t.Errorf("SyncAll fetch failure not BadRequest-marked: %v", err)
+	}
+	if len(synced) != 1 || synced[0] != "r-a" {
+		t.Fatalf("SyncAll synced = %v, want [r-a] (r-b modified, r-c failed)", synced)
+	}
+	info, yaml, err := a.Config("r-a")
+	if err != nil || yaml != "a: v2\n" || info.Modified {
+		t.Errorf("r-a after sync = %q modified=%v (%v), want the new upstream content, unmodified", yaml, info.Modified, err)
+	}
+	if _, yaml, _ := a.Config("r-b"); yaml != "b: mine\n" {
+		t.Errorf("r-b after SyncAll = %q, want the local edit untouched", yaml)
+	}
 }
 
 // TestActivateStartupFailureRestoresPrevious is the design's failure
