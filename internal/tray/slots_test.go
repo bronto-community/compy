@@ -564,9 +564,33 @@ func TestWindowExe(t *testing.T) {
 		t.Errorf("bundle beside exe: windowExe = %q, want %q", got, bundled)
 	}
 
+	rdir, err := filepath.EvalSymlinks(dir) // TempDir may itself hold symlinks (/var → /private/var)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(rdir, "compy.app", "Contents", "MacOS", "compy")
+
 	// Running from inside the bundle already: nothing further to prefer.
-	if got := windowExe(bundled); got != bundled {
+	// (bundled is itself a symlink, so windowExe hands back its resolved
+	// bundle path — the same file.)
+	if got := windowExe(bundled); got != bundled && got != want {
 		t.Errorf("exe inside bundle: windowExe = %q, want %q", got, bundled)
+	}
+
+	// Homebrew layout: the running exe is a symlink (/opt/homebrew/bin/compy)
+	// into the Caskroom, where the bundle sits next to the real binary — the
+	// symlink's own directory has no bundle, so windowExe must look next to
+	// the symlink's target.
+	bindir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bindir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(bindir, "compy")
+	if err := os.Symlink(exe, link); err != nil {
+		t.Fatal(err)
+	}
+	if got := windowExe(link); got != want {
+		t.Errorf("symlinked exe (Homebrew): windowExe = %q, want %q", got, want)
 	}
 
 	// A dangling symlink (binary rebuilt elsewhere, bundle left behind)

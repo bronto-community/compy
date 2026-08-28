@@ -314,13 +314,31 @@ func (w *windowProc) alive() bool {
 // the binary: AppKit derives app identity — menu name, Dock icon — from the
 // bundle containing the executable's path, so only that spawn gets the
 // compy name and icon (verified empirically; a symlinked bundle binary
-// works too). No bundle, or exe already inside one: exe itself, unchanged.
+// works too). exe itself may be a symlink — Homebrew's /opt/homebrew/bin/
+// compy points into the Caskroom, where the bundle sits next to the real
+// binary — so when nothing sits next to the symlink, look next to its
+// target too. No bundle anywhere, or exe already inside one: exe itself,
+// unchanged.
 func windowExe(exe string) string {
-	cand := filepath.Join(filepath.Dir(exe), "compy.app", "Contents", "MacOS", "compy")
-	if fi, err := os.Stat(cand); err == nil && fi.Mode().IsRegular() && fi.Mode()&0111 != 0 {
-		return cand
+	if p, ok := bundleBinary(filepath.Dir(exe)); ok {
+		return p
+	}
+	if r, err := filepath.EvalSymlinks(exe); err == nil && r != exe {
+		if p, ok := bundleBinary(filepath.Dir(r)); ok {
+			return p
+		}
 	}
 	return exe
+}
+
+// bundleBinary reports the compy.app bundle binary under dir, if a runnable
+// one is there.
+func bundleBinary(dir string) (string, bool) {
+	cand := filepath.Join(dir, "compy.app", "Contents", "MacOS", "compy")
+	if fi, err := os.Stat(cand); err == nil && fi.Mode().IsRegular() && fi.Mode()&0111 != 0 {
+		return cand, true
+	}
+	return "", false
 }
 
 // openWindow raises the window from a previous click if it is still open,
