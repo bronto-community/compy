@@ -5,10 +5,15 @@
 #   go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean
 #
 # Beyond the compy binaries, a post-build hook (.github/scripts/
-# goreleaser-extras.sh) produces the otelcol-compy collector tarballs (with
-# per-asset .sha256 files, matching the upstream format compy's updater
-# reads) and the compy.app zip; release.extra_files picks them up from
-# dist/extra/.
+# goreleaser-extras.sh) produces the otelcol-compy collector tarballs and
+# the compy.app zip (release.extra_files picks them up from dist/extra/),
+# plus a per-arch staging dir (dist/stage/<os>_<arch>/: otelcol-compy, its
+# .version stamp, compy.app) that the darwin archives fold in — so the
+# Homebrew cask's Caskroom staging dir holds the bundled collector and the
+# app bundle right next to the compy binary, where compy's bundled-collector
+# detection (internal/distro.Bundled) and the tray's window spawn
+# (internal/tray windowExe) look for them after resolving the
+# /opt/homebrew/bin/compy symlink.
 version: 2
 
 project_name: compy
@@ -19,7 +24,9 @@ before:
 
 builds:
   # darwin needs cgo; amd64 cross-compiles from the arm64 runner because
-  # clang targets both architectures.
+  # clang targets both architectures. The extras hook runs per darwin
+  # target: each stages its own arch, the arm64 one also builds the linux
+  # collector tarballs and the compy.app zip.
   - id: compy-darwin
     main: ./cmd/compy
     binary: compy
@@ -41,8 +48,22 @@ builds:
     goarch: [amd64, arm64]
 
 archives:
-  - id: compy
-    ids: [compy-darwin, compy-linux]
+  # The darwin archives carry the full install: compy plus the staged
+  # otelcol-compy (+ .version) and compy.app from the extras hook, laid out
+  # flat so extraction — including Homebrew's into the Caskroom — puts them
+  # next to the binary.
+  - id: compy-darwin
+    ids: [compy-darwin]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - src: "dist/stage/{{ .Os }}_{{ .Arch }}/**"
+        dst: .
+  - id: compy-linux
+    ids: [compy-linux]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
@@ -65,7 +86,7 @@ release:
 # release workflow passes --skip=homebrew instead of failing.
 homebrew_casks:
   - name: compy
-    ids: [compy]
+    ids: [compy-darwin]
     directory: Casks
     description: Local OpenTelemetry Collector manager for the dev loop
     homepage: https://github.com/bronto-community/compy
@@ -77,7 +98,9 @@ homebrew_casks:
       token: "{{ envOrDefault \"HOMEBREW_TAP_TOKEN\" \"\" }}"
     hooks:
       post:
+        # Everything in the staged dir is unsigned/ad-hoc: strip quarantine
+        # recursively so compy, otelcol-compy, and compy.app all run.
         install: |
           if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/compy"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path.to_s]
           end
