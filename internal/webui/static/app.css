@@ -676,6 +676,13 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .srow .lbl .n { font-size: 11.5px; color: var(--dim); }
 .srow.clickable { cursor: pointer; }
 .srow.clickable:hover { background: var(--raise); }
+/* The os-env switch row is a real <button> (keyboard-operable): reset the
+   UA button box so it renders exactly like the div rows around it. */
+button.srow {
+  width: 100%; margin: 0; background: none; border: 0;
+  border-bottom: 1px solid var(--divider); text-align: left;
+}
+button.srow:focus-visible { outline: 1px solid var(--border3); outline-offset: -1px; }
 /* envguide: the shell-side alternatives under the OS-env toggle. One entry
    per way — label line above, full-width command line beneath, the copy
    button always at the command line's end. */

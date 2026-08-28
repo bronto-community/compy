@@ -2017,9 +2017,11 @@ function screenSettings() {
       ]),
       el("span", { class: "grow" }), savedMark("protocol"), pseg,
     ]),
-    el("div", {
+    // A real <button> so the switch is keyboard-operable (Enter/Space) for
+    // free; role/aria-checked keep it announced as a switch.
+    el("button", {
       class: "srow clickable", on: { click: () => setOSEnv(!osEnvOn) },
-      attrs: { role: "switch", "aria-checked": osEnvOn ? "true" : "false", tabindex: "0" },
+      attrs: { type: "button", role: "switch", "aria-checked": osEnvOn ? "true" : "false" },
     }, [
       el("span", { class: "lbl" }, [
         span("t", "set OTEL_* variables system-wide"),
