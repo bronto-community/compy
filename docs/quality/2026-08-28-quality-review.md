@@ -5,6 +5,12 @@ and architecture, testing and coverage, security, and frontend. This report
 merges their findings and ends in a ranked action list. Nothing was changed
 in this pass.
 
+**Status (2026-08-28, end of day): all 25 actions landed** across four
+batches (correctness/security `f411ea6..bdef084`, tests `fe44526..fc93c83`,
+structure through `bd25844`, polish through the a11y round). Nothing was
+skipped; adjustments are noted in the batch commit messages. The deliberate
+non-actions below remain non-actions.
+
 ## Verdict
 
 The codebase is in unusually good shape for ~25 feature rounds in four days.
