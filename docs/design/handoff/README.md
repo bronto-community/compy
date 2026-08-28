@@ -644,3 +644,10 @@ with the text above.
   is identical on all four screens: directly under the page's header
   line, above the content — which moved the collector screen's tiles
   out of its header block and the settings strip below the "app" title.
+
+- 2026-08-28 (upgrade smoothing): after a brew upgrade replaces the
+  Caskroom, the app surfaces one line — "compy was upgraded — restart
+  the collector to run the new version" — in the sidebar, settings, CLI
+  status, and the tray's warnings segment ("restart needed"); the
+  restart action heals the baked path. The cask's postflight relaunches
+  the tray; the collector's restart stays the user's call.
