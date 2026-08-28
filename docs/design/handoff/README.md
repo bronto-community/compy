@@ -645,6 +645,13 @@ with the text above.
   line, above the content — which moved the collector screen's tiles
   out of its header block and the settings strip below the "app" title.
 
+- 2026-08-28 (empty values never exported): a preset value saved empty (or
+  whitespace-only) is omitted from the collector's environment — an
+  exported-but-empty variable would defeat the yaml's own `${env:VAR:-default}`
+  fallback, so a partially filled preset now lets the defaults fire instead of
+  failing validation. The value card's "default" origin hint carries a tooltip
+  when its value is empty — "empty — the yaml default applies" — no other copy
+  or layout change.
 - 2026-08-28 (upgrade smoothing): after a brew upgrade replaces the
   Caskroom, the app surfaces one line — "compy was upgraded — restart
   the collector to run the new version" — in the sidebar, settings, CLI

@@ -1133,7 +1133,11 @@ function valueCards(info, values, onEdit, scope) {
         // The editor band auto-saves (queueValue); its card carries the
         // brief "saved" mark. The inline editor saves via its button.
         scope === "ed" ? savedMark("ed:" + v.name) : null,
-        span("origin", v.has_default ? "default" : yamlLineOf(yaml, v.name)),
+        // Empty value + yaml default: the default applies at runtime (an
+        // empty value is never exported — it would defeat the fallback).
+        v.has_default
+          ? el("span", { class: "origin", text: "default", title: raw.trim() ? "" : "empty — the yaml default applies" })
+          : span("origin", yamlLineOf(yaml, v.name)),
       ]),
       el("div", { class: "v" }, [
         el("input", {

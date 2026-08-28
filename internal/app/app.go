@@ -7,10 +7,10 @@ package app
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -171,10 +171,18 @@ func (a *App) ActiveConfig() (string, string, error) {
 // activationEnv is the LaunchAgent's EnvironmentVariables dict: the active
 // preset's values plus compy's port variables, which the preset may not override
 // (shipped configs bind their receivers to them).
+//
+// Empty and whitespace-only preset values are omitted: the preset editor
+// saves a value for every referenced variable, empty included, and an
+// exported-but-empty VAR defeats the yaml's own `${env:VAR:-default}`
+// fallback (set-but-empty is "set" to the collector). Whitespace is not a
+// value, per cfgstore.MissingRequired's rule.
 func activationEnv(values map[string]string, s state.Settings) map[string]string {
-	env := maps.Clone(values)
-	if env == nil {
-		env = map[string]string{}
+	env := map[string]string{}
+	for k, v := range values {
+		if strings.TrimSpace(v) != "" {
+			env[k] = v
+		}
 	}
 	env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
 	env["COMPY_HTTP_PORT"] = strconv.Itoa(s.HTTPPort)

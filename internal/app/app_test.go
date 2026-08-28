@@ -2931,6 +2931,43 @@ func TestActivateEmptyPresetUsesDefault(t *testing.T) {
 	}
 }
 
+// A preset value saved as the empty string must not reach the LaunchAgent's
+// environment: exported-but-empty defeats the yaml's own
+// ${env:VAR:-default} fallback (the collector treats set-but-empty as set).
+// The preset editor writes every referenced var's value, empty included, so
+// this is the common partially-filled-preset case.
+func TestActivateOmitsEmptyPresetValues(t *testing.T) {
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	yaml := "exporters:\n  otlphttp:\n    endpoint: ${env:BRONTO_ENDPOINT:-https://ingestion.eu.bronto.io}\n"
+	if err := a.CreateConfig("mine", yaml); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetVar("mine", "prod", "BRONTO_ENDPOINT", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetVar("mine", "prod", "BRONTO_API_KEY", "s3cret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("mine", "prod"); err != nil {
+		t.Fatalf("Activate = %v, want nil", err)
+	}
+
+	plist := readPlist(t)
+	if strings.Contains(plist, "BRONTO_ENDPOINT") {
+		t.Errorf("plist exports empty BRONTO_ENDPOINT, defeating the yaml default:\n%s", plist)
+	}
+	if !strings.Contains(plist, "<key>BRONTO_API_KEY</key><string>s3cret</string>") {
+		t.Errorf("plist missing the real value:\n%s", plist)
+	}
+}
+
 // app.New backfills the every-config-has-a-preset invariant onto a
 // pre-invariant config found on disk.
 func TestNewBackfillsPresetlessConfig(t *testing.T) {
