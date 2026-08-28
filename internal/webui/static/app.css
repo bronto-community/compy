@@ -10,12 +10,12 @@
 
 /* ── theme dictionaries ───────────────────────────────────────────── */
 :root {
-  --desk: #131312; --logbg: #171716; --window: #1b1b1a; --raise: #212120;
+  --logbg: #171716; --window: #1b1b1a; --raise: #212120;
   --panel: #262625; --divider: #2b2b28; --border: #363631; --border2: #302f2b;
   --border3: #4b4a44; --scroll: #3f3e38;
   --text: #F1EFE7; --text2: #E2DECC; --text3: #C3BC9F; --muted: #9E9782;
   --dim: #857F6B; --dim2: #6C6759; --faint: #57544A;
-  --accent: #ECAA0D; --accentLine: #99753F; --accentBg: #2E2A1A; --accentHi: #FFC839;
+  --accent: #ECAA0D; --accentLine: #99753F; --accentBg: #2E2A1A;
   --ok: #53DFA9; --okBg: #0A3424;
   --err: #C1583B; --errText: #FC9F85; --diag: #D2A392; --errBg: #241715;
   --errLine: #4A241C; --errDiv: #3A211A; --errHover: #2E1A15;
@@ -24,12 +24,12 @@
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --desk: #E2DECC; --logbg: #F8F7F3; --window: #FDFCFA; --raise: #F1EFE7;
+    --logbg: #F8F7F3; --window: #FDFCFA; --raise: #F1EFE7;
     --panel: #F8F7F3; --divider: #E9E5D9; --border: #D8D2C0; --border2: #E2DECC;
     --border3: #C3BC9F; --scroll: #C3BC9F;
     --text: #444441; --text2: #4E4C46; --text3: #5C5A51; --muted: #6E6B5E;
     --dim: #857F6B; --dim2: #7C7767; --faint: #8A8474;
-    --accent: #99753F; --accentLine: #C9A45E; --accentBg: #F5EEDD; --accentHi: #ECAA0D;
+    --accent: #99753F; --accentLine: #C9A45E; --accentBg: #F5EEDD;
     --ok: #17885B; --okBg: #E4F7EE;
     --err: #C1583B; --errText: #A6412A; --diag: #7A3E2C; --errBg: #FCEDE7;
     --errLine: #E8BEAE; --errDiv: #EFD6CA; --errHover: #F7E0D6;
@@ -38,12 +38,12 @@
   }
 }
 :root[data-theme="light"] {
-  --desk: #E2DECC; --logbg: #F8F7F3; --window: #FDFCFA; --raise: #F1EFE7;
+  --logbg: #F8F7F3; --window: #FDFCFA; --raise: #F1EFE7;
   --panel: #F8F7F3; --divider: #E9E5D9; --border: #D8D2C0; --border2: #E2DECC;
   --border3: #C3BC9F; --scroll: #C3BC9F;
   --text: #444441; --text2: #4E4C46; --text3: #5C5A51; --muted: #6E6B5E;
   --dim: #857F6B; --dim2: #7C7767; --faint: #8A8474;
-  --accent: #99753F; --accentLine: #C9A45E; --accentBg: #F5EEDD; --accentHi: #ECAA0D;
+  --accent: #99753F; --accentLine: #C9A45E; --accentBg: #F5EEDD;
   --ok: #17885B; --okBg: #E4F7EE;
   --err: #C1583B; --errText: #A6412A; --diag: #7A3E2C; --errBg: #FCEDE7;
   --errLine: #E8BEAE; --errDiv: #EFD6CA; --errHover: #F7E0D6;
@@ -51,12 +51,12 @@
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --desk: #131312; --logbg: #171716; --window: #1b1b1a; --raise: #212120;
+  --logbg: #171716; --window: #1b1b1a; --raise: #212120;
   --panel: #262625; --divider: #2b2b28; --border: #363631; --border2: #302f2b;
   --border3: #4b4a44; --scroll: #3f3e38;
   --text: #F1EFE7; --text2: #E2DECC; --text3: #C3BC9F; --muted: #9E9782;
   --dim: #857F6B; --dim2: #6C6759; --faint: #57544A;
-  --accent: #ECAA0D; --accentLine: #99753F; --accentBg: #2E2A1A; --accentHi: #FFC839;
+  --accent: #ECAA0D; --accentLine: #99753F; --accentBg: #2E2A1A;
   --ok: #53DFA9; --okBg: #0A3424;
   --err: #C1583B; --errText: #FC9F85; --diag: #D2A392; --errBg: #241715;
   --errLine: #4A241C; --errDiv: #3A211A; --errHover: #2E1A15;
@@ -68,14 +68,6 @@
 @font-face {
   font-family: "JetBrains Mono"; font-style: normal; font-weight: 400;
   font-display: swap; src: url("vendor/fonts/jetbrains-mono-latin-400.woff2") format("woff2");
-}
-@font-face {
-  font-family: "JetBrains Mono"; font-style: normal; font-weight: 500;
-  font-display: swap; src: url("vendor/fonts/jetbrains-mono-latin-500.woff2") format("woff2");
-}
-@font-face {
-  font-family: "JetBrains Mono"; font-style: normal; font-weight: 700;
-  font-display: swap; src: url("vendor/fonts/jetbrains-mono-latin-700.woff2") format("woff2");
 }
 @font-face {
   font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400;
@@ -162,7 +154,6 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .side-status .pw-soft { font-size: 10.5px; color: var(--dim2); }
 .side-status .portwarn .act { align-self: flex-start; padding: 0; text-align: left; }
 .side-status .portwarn .act.adopt { color: var(--accent); }
-.side-status .portwarn .act.adopt[disabled] { color: var(--faint); }
 .side-status .portwarn .pw-row { display: flex; gap: 6px; align-items: center; }
 .side-status .portwarn select.field { flex: 1; min-width: 0; font-size: 11px; padding: 3px 4px; }
 .dot5 { width: 5px; height: 5px; border-radius: 50%; flex: 0 0 auto; }
@@ -201,8 +192,8 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .btn.danger:hover { background: var(--errHover); }
 .btn.quiet { color: var(--muted); }
 .btn.quiet:hover { color: var(--err); border-color: var(--err); }
-.btn[disabled], .act[disabled] { color: var(--faint); cursor: default; }
-.btn[disabled]:hover { border-color: var(--border3); color: var(--faint); }
+.btn[disabled]:hover { border-color: var(--border3); color: var(--text); }
+.act[disabled]:hover { color: var(--muted); }
 
 /* the brief "saved" an auto-saving control leaves beside itself */
 .savedmark { font-size: 10.5px; letter-spacing: .04em; color: var(--muted); white-space: nowrap; }
@@ -217,8 +208,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ico:focus-visible { outline: 1px solid var(--border3); outline-offset: -1px; }
 .ico.del:hover { color: var(--err); }
 .ico.accent { color: var(--accent); }
-.ico[disabled] { color: var(--faint); cursor: default; }
-.ico[disabled]:hover { background: none; color: var(--faint); }
+.ico[disabled]:hover { background: none; color: var(--dim); }
 
 .field {
   font-family: inherit; font-size: 13px; color: var(--text);
@@ -341,7 +331,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
    the same footprint (the delete icon's idiom, button-shaped) */
 .play.stop { color: var(--err); border-color: var(--errLine); }
 .play.stop:hover { background: var(--errHover); }
-.play[disabled] { color: var(--faint); border-color: var(--border); cursor: default; }
+.play[disabled] { border-color: var(--border); }
 .play[disabled]:hover { background: none; }
 .addp { /* row-level "add preset" (was a pencil, which read as edit-the-config) */
   display: flex; cursor: pointer; color: var(--dim); background: none;
@@ -502,8 +492,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .chip .mini { display: flex; cursor: pointer; color: var(--dim); background: none; border: 0; padding: 0 0 0 2px; }
 .chip .mini:hover { color: var(--text); }
 .chip .mini.del:hover { color: var(--err); }
-.chip .mini[disabled] { color: var(--faint); cursor: default; }
-.chip .mini[disabled]:hover { color: var(--faint); }
+.chip .mini[disabled]:hover { color: var(--dim); }
 .chip-add {
   display: flex; color: var(--muted); cursor: pointer; background: none;
   border: 1px dashed var(--border3); border-radius: 4px; padding: 6px 10px;
@@ -771,14 +760,15 @@ button.srow:focus-visible { outline: 1px solid var(--border3); outline-offset: -
 .btn.danger[disabled]:hover { background: none; }
 
 /* ── disabled controls: unmistakably muted, never hidden ──────────────
-   Every button-ish control fades as a group; the per-class colour rules
-   above keep the exact tone, and the explaining tooltip stays. */
+   Every button-ish control fades as a group — opacity alone, never a
+   faint colour on top (the stack fell under 3:1). The per-class colour
+   rules above keep the exact tone, the hover pins below keep it steady,
+   and the explaining tooltip stays. */
 .btn[disabled], .act[disabled], .ico[disabled], .play[disabled],
 .mini[disabled], .tail[disabled], .lvl[disabled], .reveal[disabled] {
   opacity: .45; cursor: default;
 }
-.mini[disabled] { color: var(--faint); }
-.mini[disabled]:hover { color: var(--faint); }
+.mini[disabled]:hover { color: var(--dim); }
 .tail[disabled]:hover { color: var(--muted); }
 
 /* ── in-page dialog (WKWebView has no native prompt/confirm) ──────── */
@@ -791,9 +781,12 @@ dialog.ask .q { font-size: 12.5px; margin: 0 0 12px; color: var(--text2); }
 dialog.ask input { width: 100%; margin-bottom: 12px; }
 dialog.ask .row { display: flex; justify-content: flex-end; gap: 10px; }
 
-/* ── error strip: the last-resort surface for a failure with no panel ─ */
+/* ── error strip: the last-resort surface for a failure with no panel ─
+   No horizontal margin of its own: every mount sits in a container that
+   already carries the 24px inset (.strip-wrap, or the settings pane's own
+   padding), so it lines up with .note and the other strips. */
 .errbar {
-  margin: 14px 24px 0; border: 1px solid var(--errLine); border-radius: 6px;
+  margin: 14px 0 0; border: 1px solid var(--errLine); border-radius: 6px;
   background: var(--errBg); overflow: hidden;
 }
 .errbar .failbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
@@ -804,4 +797,27 @@ dialog.ask .row { display: flex; justify-content: flex-end; gap: 10px; }
 }
 .settings > .strip-wrap { padding: 0; }
 .settings .gethelp { margin-top: 0; }
-.hidden { display: none !important; }
+
+/* ── field-adjacent errors ────────────────────────────────────────────
+   The one surface a name collision (or any per-field mistake) lands on:
+   a small err-toned line right by the field it belongs to — never the
+   success-styled note, never the screen-level error strip. The new-config
+   strip's .foot.bad is the same idiom with its own footprint. */
+.field-err { font-size: 11.5px; color: var(--err); }
+
+/* ── keyboard focus ───────────────────────────────────────────────────
+   One grouped rule for every interactive class without its own
+   focus-visible treatment above; same outline idiom throughout. */
+.preset-sel:focus-visible, .play:focus-visible, .addp:focus-visible,
+.pick:focus-visible, .mini:focus-visible, .menu-add:focus-visible,
+.chip input:focus-visible, .chip-add:focus-visible, .reveal:focus-visible,
+.lvl:focus-visible, .tail:focus-visible, .tile .link:focus-visible,
+.seg button:focus-visible {
+  outline: 1px solid var(--border3); outline-offset: 2px;
+}
+
+/* screen-reader-only live regions (index.html); visually nothing */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
