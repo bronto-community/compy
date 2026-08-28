@@ -411,11 +411,18 @@ const screenRoot = () => document.getElementById("screen");
 // keystroke re-render the whole screen without eating the next one.
 function captureFocus() {
   const a = document.activeElement;
+  if (a && cm && cm.getWrapperElement().contains(a)) return { cm: true };
   if (!a || !a.dataset || !a.dataset.fk) return null;
   return { fk: a.dataset.fk, start: a.selectionStart, end: a.selectionEnd };
 }
 function restoreFocus(f) {
   if (!f) return;
+  if (f.cm) {
+    // The editor reattaches in its own microtask (screenEditor queued it
+    // before this one runs); focus after it, on the surviving instance.
+    queueMicrotask(() => { if (cm) cm.focus(); });
+    return;
+  }
   const e = document.querySelector('[data-fk="' + f.fk.replace(/"/g, '\\"') + '"]');
   if (!e) return;
   e.focus();
@@ -1319,8 +1326,15 @@ async function copyText(text, confirmation) {
 }
 
 /* ── screen 2: configuration editor ───────────────────────────────── */
-let cm = null, cmDirty = false;
-function destroyEditor() { cm = null; cmDirty = false; }
+/* The CodeMirror instance survives re-renders: rebuilding it on every
+   render reset scroll and cursor whenever a background refresh or a note
+   timer redrew the screen. cmFor/cmRO name what the instance was built for
+   (config name, readOnly); a render for the same pair re-adopts the live
+   instance. cmBase is the server YAML it last synced to — setValue only
+   when the server text changed AND the editor is clean; a clean, unchanged
+   editor is not touched at all. */
+let cm = null, cmDirty = false, cmFor = null, cmRO = false, cmBase = null;
+function destroyEditor() { cm = null; cmDirty = false; cmFor = null; cmBase = null; }
 function editorDirty() { return S.screen === "editor" && !!cm && cmDirty; }
 // Flip the header save button in place on a cm keystroke — re-rendering the
 // screen would rebuild CodeMirror under the caret.
@@ -1511,12 +1525,31 @@ function screenEditor() {
   const editable = !locked;
   queueMicrotask(() => {
     if (!host2.isConnected) return;
+    if (cm && cmFor === info.name && cmRO === !editable) {
+      // Same config, same readonly-ness: re-adopt the live instance.
+      // Scroll and cursor live in its doc, and refresh() restores them
+      // after the reattach.
+      host2.appendChild(cm.getWrapperElement());
+      if (!cmDirty && yaml !== cmBase) {
+        // A save already left the editor holding the new server text;
+        // setValue only when the text really differs (it resets the caret).
+        if (cm.getValue() !== yaml) {
+          cm.setValue(yaml); // the change handler fires; stay clean
+          cmDirty = false;
+          edSaveSync();
+        }
+        cmBase = yaml;
+      }
+      cm.refresh();
+      return;
+    }
     const keep = cm ? cm.getValue() : null;
     const dirty = cmDirty;
     cm = CodeMirror(host2, {
       value: dirty && keep != null ? keep : yaml,
       mode: "yaml", lineNumbers: true, readOnly: !editable, lineWrapping: false, viewportMargin: 20,
     });
+    cmFor = info.name; cmRO = !editable; cmBase = yaml;
     cmDirty = dirty;
     cm.on("change", () => { cmDirty = true; edSaveSync(); });
   });
