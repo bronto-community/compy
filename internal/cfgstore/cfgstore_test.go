@@ -1016,3 +1016,31 @@ func TestDeleteLastPresetRefused(t *testing.T) {
 		t.Fatal("DeletePreset survivor: want refusal, got nil")
 	}
 }
+
+// An empty variable name — the CLI shape `compy presets set cfg prod
+// =value` — is the caller's mistake (400-marked), never a nameless entry in
+// the LaunchAgent environment (G2). WritePreset (the REST body path) guards
+// the same way.
+func TestEmptyVarKeyRefused(t *testing.T) {
+	root := t.TempDir()
+	if err := Create(root, "cfg", "receivers: {}\n"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for _, key := range []string{"", "  ", "\t"} {
+		err := SetVar(root, "cfg", "prod", key, "value")
+		if err == nil || !state.IsBadRequest(err) {
+			t.Errorf("SetVar key %q = %v, want a BadRequest-marked error", key, err)
+		}
+	}
+	err := WritePreset(root, "cfg", "prod", map[string]string{"": "value"})
+	if err == nil || !state.IsBadRequest(err) {
+		t.Errorf("WritePreset with empty key = %v, want a BadRequest-marked error", err)
+	}
+	info, _, err := Get(root, "cfg")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, ok := info.Meta.Presets["prod"]; ok {
+		t.Fatalf("refused writes still created the preset: %+v", info.Meta.Presets)
+	}
+}
