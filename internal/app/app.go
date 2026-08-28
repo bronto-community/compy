@@ -89,6 +89,16 @@ type Status struct {
 	Conformance *PortsVerdict `json:"conformance,omitempty"`
 }
 
+// EndpointPort is the port the advertised OTLP endpoint uses: the gRPC port
+// when the advertised protocol is grpc, the HTTP port for both http flavors.
+// The one protocol→port rule — every displayed endpoint derives from it.
+func (st Status) EndpointPort() int {
+	if st.Protocol == "grpc" {
+		return st.GRPCPort
+	}
+	return st.HTTPPort
+}
+
 // New resolves the state dir, migrates a v1 layout if one is found, and
 // materializes the shipped default configurations.
 func New() (*App, error) {

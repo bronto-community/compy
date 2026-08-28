@@ -36,19 +36,13 @@ func (a *App) statusMap() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The displayed endpoint follows the advertised protocol: grpc points at
-	// the gRPC port, both http flavors at the HTTP port.
-	endPort := st.HTTPPort
-	if st.Protocol == "grpc" {
-		endPort = st.GRPCPort
-	}
 	m := map[string]any{
 		"running":   st.Running,
 		"distro":    st.Distro,
 		"grpc_port": st.GRPCPort,
 		"http_port": st.HTTPPort,
 		"protocol":  st.Protocol,
-		"endpoint":  fmt.Sprintf("http://127.0.0.1:%d", endPort),
+		"endpoint":  fmt.Sprintf("http://127.0.0.1:%d", st.EndpointPort()),
 		"config":    st.Config,
 		"preset":    st.Preset,
 		"os_env":    st.OSEnv,

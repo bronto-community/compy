@@ -60,8 +60,9 @@ func portsVerdict(running bool, listening []int, grpcPort, httpPort, telemetryPo
 // tests can stub the network probe.
 var probeHTTPPort = collector.IsHTTPPort
 
-// portList renders ports as ":6000 :6001" for messages.
-func portList(ports []int) string {
+// PortList renders ports as ":6000 :6001" for messages — shared with the
+// CLI's status/adopt-ports output.
+func PortList(ports []int) string {
 	parts := make([]string, len(ports))
 	for i, p := range ports {
 		parts[i] = fmt.Sprintf(":%d", p)
@@ -96,7 +97,7 @@ func (a *App) AdoptPorts(grpcP, httpP *int) error {
 	} else {
 		for _, p := range []*int{grpcP, httpP} {
 			if p != nil && !slices.Contains(v.Actual, *p) {
-				return state.BadRequest(fmt.Errorf("port %d is not one of this config's detected listeners (%s)", *p, portList(v.Actual)))
+				return state.BadRequest(fmt.Errorf("port %d is not one of this config's detected listeners (%s)", *p, PortList(v.Actual)))
 			}
 		}
 	}
@@ -114,7 +115,7 @@ func classifyCandidates(cands []int, grpcPrimary bool) (grpcP, httpP *int, err e
 		return nil, nil, state.BadRequest(errors.New("nothing to adopt: no non-telemetry listeners detected"))
 	}
 	if len(cands) > 2 {
-		return nil, nil, state.BadRequest(fmt.Errorf("this config listens on more ports than compy advertises (%s) — say which is which, e.g. `compy adopt-ports --grpc %d --http %d`", portList(cands), cands[0], cands[1]))
+		return nil, nil, state.BadRequest(fmt.Errorf("this config listens on more ports than compy advertises (%s) — say which is which, e.g. `compy adopt-ports --grpc %d --http %d`", PortList(cands), cands[0], cands[1]))
 	}
 	var httpish, rest []int
 	for _, p := range cands {
@@ -130,7 +131,7 @@ func classifyCandidates(cands []int, grpcPrimary bool) (grpcP, httpP *int, err e
 		if grpcPrimary && len(httpish) == 0 && len(rest) == 1 {
 			return &rest[0], nil, nil
 		}
-		return nil, nil, state.BadRequest(fmt.Errorf("can't tell which of %s is the otlp/http port — say which is which, e.g. `compy adopt-ports --grpc N --http N`", portList(cands)))
+		return nil, nil, state.BadRequest(fmt.Errorf("can't tell which of %s is the otlp/http port — say which is which, e.g. `compy adopt-ports --grpc N --http N`", PortList(cands)))
 	}
 	httpP = &httpish[0]
 	if len(rest) == 1 {

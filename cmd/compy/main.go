@@ -263,14 +263,14 @@ func cmdStatus(args []string) error {
 		}
 		// The endpoint line follows the advertised protocol: grpc points at
 		// the gRPC port, both http flavors at the HTTP port.
-		endPort, otherLine := st.HTTPPort, fmt.Sprintf("grpc %d", st.GRPCPort)
+		endPort, otherLine := st.EndpointPort(), fmt.Sprintf("grpc %d", st.GRPCPort)
 		if st.Protocol == "grpc" {
-			endPort, otherLine = st.GRPCPort, fmt.Sprintf("http %d", st.HTTPPort)
+			otherLine = fmt.Sprintf("http %d", st.HTTPPort)
 		}
 		fmt.Printf("service:  %s\nconfig:   %s\ndistro:   %s\nendpoint: http://127.0.0.1:%d (%s; %s)\n",
 			running, config, distro, endPort, st.Protocol, otherLine)
 		if len(st.Listening) > 0 {
-			fmt.Printf("listening: %s\n", portsLine(st.Listening))
+			fmt.Printf("listening: %s\n", app.PortList(st.Listening))
 		}
 		// The verdict warns when an app following compy's advertised env
 		// would miss this collector; the secondary port missing alone is
@@ -283,7 +283,7 @@ func cmdStatus(args []string) error {
 			if !v.Conforming {
 				listens := "no other ports"
 				if len(v.Actual) > 0 {
-					listens = portsLine(v.Actual)
+					listens = app.PortList(v.Actual)
 				}
 				fmt.Printf("warning: apps point at :%d; this config listens on %s (run `compy adopt-ports`, or bind ${env:%s} in the config)\n", endPort, listens, advVar)
 			} else if st.Protocol == "grpc" && v.MissingHTTP {
@@ -300,15 +300,6 @@ func cmdStatus(args []string) error {
 		}
 		return nil
 	})
-}
-
-// portsLine renders ports as ":6000 :6001".
-func portsLine(ports []int) string {
-	parts := make([]string, len(ports))
-	for i, p := range ports {
-		parts[i] = fmt.Sprintf(":%d", p)
-	}
-	return strings.Join(parts, " ")
 }
 
 // cmdAdoptPorts points the advertised ports at the running config's actual
