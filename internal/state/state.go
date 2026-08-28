@@ -28,8 +28,10 @@ type Settings struct {
 	// the collector's receivers serve all of them regardless.
 	Protocol string `json:"protocol,omitempty"`
 
-	// Recent is the configurations that have run, most recent first. The
-	// menu bar orders by it (the window sorts alphabetically everywhere).
+	// Recent is the most recently activated configurations, newest first.
+	// Nothing in compy consumes it today (the menu bar went alphabetical);
+	// it stays maintained because /api/status exposes it — a committed part
+	// of the REST contract external consumers may order by.
 	Recent []string `json:"recent,omitempty"`
 
 	// DistroVersions records pulled-update versions per shipped distro name
@@ -40,13 +42,13 @@ type Settings struct {
 	DistroVersions map[string]string `json:"distro_versions,omitempty"`
 }
 
-// recentCap is how many configurations Recent keeps. The menu shows ten and
-// overflows the rest into More…; twice that is plenty of history for an
-// ordering nobody scrolls.
+// recentCap is how many configurations Recent keeps; plenty of history for
+// an ordering nobody scrolls.
 const recentCap = 20
 
 // Remember returns recent with name moved to the front, keeping every other
-// entry's order and dropping the oldest past the cap.
+// entry's order and dropping the oldest past the cap. Nothing in compy reads
+// the result today — see Settings.Recent for why it is still maintained.
 func Remember(recent []string, name string) []string {
 	out := make([]string, 0, len(recent)+1)
 	out = append(out, name)

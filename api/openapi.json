@@ -39,7 +39,7 @@
           "os_env": { "type": "boolean" },
           "recent": {
             "type": "array",
-            "description": "Configurations that have run, most recent first (the menu bar's ordering).",
+            "description": "The most recently activated configurations, newest first.",
             "items": { "type": "string" }
           },
           "listening": {
