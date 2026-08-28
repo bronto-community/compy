@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -1097,6 +1098,209 @@ func TestNoInnerHTMLInAppJS(t *testing.T) {
 				t.Errorf("app.js uses %s — build nodes with el()/createElementNS instead:\n%s", banned, trimmed)
 			}
 		}
+	}
+}
+
+// recordingAPI is an API whose every closure appends its field name to rec
+// and returns errFn() as its error — the machinery behind the route-table
+// smoke test, which needs to know, for any route, whether the right closure
+// ran and how its error is reported.
+func recordingAPI(rec *[]string, errFn func() error) API {
+	r := func(name string) { *rec = append(*rec, name) }
+	return API{
+		Status:   func() (map[string]any, error) { r("Status"); return map[string]any{}, errFn() },
+		Log:      func(lines int) (string, error) { r("Log"); return "", errFn() },
+		Env:      func() (map[string]string, string, error) { r("Env"); return map[string]string{}, "", errFn() },
+		SetOSEnv: func(on bool) error { r("SetOSEnv"); return errFn() },
+
+		GetSettings: func() (map[string]any, error) { r("GetSettings"); return map[string]any{}, errFn() },
+		PutSettings: func(grpcPort, httpPort *int, protocol *string) error { r("PutSettings"); return errFn() },
+		AdoptPorts:  func(grpcPort, httpPort *int) error { r("AdoptPorts"); return errFn() },
+
+		Health:       func() (any, error) { r("Health"); return map[string]any{}, errFn() },
+		Apply:        func() error { r("Apply"); return errFn() },
+		Stop:         func() error { r("Stop"); return errFn() },
+		Start:        func() error { r("Start"); return errFn() },
+		Validate:     func() error { r("Validate"); return errFn() },
+		FactoryReset: func() error { r("FactoryReset"); return errFn() },
+
+		Configs:       func() (any, error) { r("Configs"); return []any{}, errFn() },
+		CreateConfig:  func(name, yaml string) error { r("CreateConfig"); return errFn() },
+		CreateFromURL: func(name, url string) error { r("CreateFromURL"); return errFn() },
+		GetConfig:     func(name string) (any, error) { r("GetConfig"); return map[string]any{}, errFn() },
+		PutConfigYAML: func(name, yaml string) error { r("PutConfigYAML"); return errFn() },
+		PutConfigYAMLNoValidate: func(name, yaml string) (bool, error) {
+			r("PutConfigYAMLNoValidate")
+			return false, errFn()
+		},
+		PutConfigMeta:  func(name string, remoteURL *string) error { r("PutConfigMeta"); return errFn() },
+		DeleteConfig:   func(name string) error { r("DeleteConfig"); return errFn() },
+		CopyConfig:     func(src, dst string) error { r("CopyConfig"); return errFn() },
+		Activate:       func(name, preset string) error { r("Activate"); return errFn() },
+		ValidateConfig: func(name string) error { r("ValidateConfig"); return errFn() },
+		Sync:           func(name string) error { r("Sync"); return errFn() },
+		Resync:         func(name string) error { r("Resync"); return errFn() },
+		Reset:          func(name string) error { r("Reset"); return errFn() },
+		RenameConfig:   func(from, to string) error { r("RenameConfig"); return errFn() },
+		SyncAll:        func() ([]string, error) { r("SyncAll"); return nil, errFn() },
+
+		PutPreset:    func(name, preset string, values map[string]string) error { r("PutPreset"); return errFn() },
+		DeletePreset: func(name, preset string) error { r("DeletePreset"); return errFn() },
+		UsePreset:    func(name, preset string) error { r("UsePreset"); return errFn() },
+		RenamePreset: func(name, from, to string) error { r("RenamePreset"); return errFn() },
+
+		Distros:          func() (any, error) { r("Distros"); return []any{}, errFn() },
+		AddDistro:        func(name, path string) (string, error) { r("AddDistro"); return "", errFn() },
+		SetDistroPath:    func(name, path string) (string, error) { r("SetDistroPath"); return "", errFn() },
+		RemoveDistro:     func(name string) (bool, error) { r("RemoveDistro"); return false, errFn() },
+		UseDistro:        func(name string) error { r("UseDistro"); return errFn() },
+		FetchDistro:      func(name string) error { r("FetchDistro"); return errFn() },
+		DownloadProgress: func(name string) (any, error) { r("DownloadProgress"); return map[string]any{}, errFn() },
+
+		CheckDistroUpdate: func(name string) (string, string, error) { r("CheckDistroUpdate"); return "", "", errFn() },
+		UpdateDistro: func(name string) (string, string, bool, error) {
+			r("UpdateDistro")
+			return "", "", false, errFn()
+		},
+	}
+}
+
+// upstreamErr marks err the way internal/state.Upstream does, structurally.
+func markUpstream(err error) error { return upstreamFake{err} }
+
+// TestRouteTableSmoke drives EVERY route in routes() end to end through
+// Handler: (a) a valid request reaches exactly its closure and answers 200;
+// (b) a malformed JSON body is a 400 that never calls the closure; (c) a
+// closure error maps plain→500, BadRequest→400, Upstream→502 on every
+// route, not just the ones with bespoke tests. The expectations table below
+// must name every route — a new route fails this test until it's added.
+func TestRouteTableSmoke(t *testing.T) {
+	// closure: the API field the route must call. decodes: the handler
+	// JSON-decodes a body (so a malformed one must 400 before the closure).
+	type exp struct {
+		closure string
+		decodes bool
+	}
+	expects := map[string]exp{
+		"GET /api/status":               {"Status", false},
+		"GET /api/log":                  {"Log", false},
+		"GET /api/env":                  {"Env", false},
+		"POST /api/os-env":              {"SetOSEnv", true},
+		"GET /api/settings":             {"GetSettings", false},
+		"PUT /api/settings":             {"PutSettings", true},
+		"GET /api/collector/health":     {"Health", false},
+		"POST /api/service/adopt-ports": {"AdoptPorts", true},
+		"POST /api/service/apply":       {"Apply", false},
+		"POST /api/service/stop":        {"Stop", false},
+		"POST /api/service/start":       {"Start", false},
+		"POST /api/service/validate":    {"Validate", false},
+		"POST /api/factory-reset":       {"FactoryReset", false},
+
+		"GET /api/configs":                                 {"Configs", false},
+		"POST /api/configs":                                {"CreateConfig", true},
+		"POST /api/configs/from-url":                       {"CreateFromURL", true},
+		"GET /api/configs/{name}":                          {"GetConfig", false},
+		"PUT /api/configs/{name}/yaml":                     {"PutConfigYAML", false}, // raw text body, no JSON decode
+		"PUT /api/configs/{name}/meta":                     {"PutConfigMeta", true},
+		"DELETE /api/configs/{name}":                       {"DeleteConfig", false},
+		"POST /api/configs/{name}/copy":                    {"CopyConfig", true},
+		"POST /api/configs/{name}/activate":                {"Activate", true},
+		"POST /api/configs/{name}/validate":                {"ValidateConfig", false},
+		"POST /api/configs/{name}/sync":                    {"Sync", false},
+		"POST /api/configs/{name}/resync":                  {"Resync", false},
+		"POST /api/configs/{name}/reset":                   {"Reset", false},
+		"POST /api/configs/{name}/rename":                  {"RenameConfig", true},
+		"POST /api/configs/sync-all":                       {"SyncAll", false},
+		"PUT /api/configs/{name}/presets/{preset}":         {"PutPreset", true},
+		"DELETE /api/configs/{name}/presets/{preset}":      {"DeletePreset", false},
+		"POST /api/configs/{name}/presets/{preset}/use":    {"UsePreset", false},
+		"POST /api/configs/{name}/presets/{preset}/rename": {"RenamePreset", true},
+
+		"GET /api/distros":                 {"Distros", false},
+		"POST /api/distros":                {"AddDistro", true},
+		"PUT /api/distros/{name}":          {"SetDistroPath", true},
+		"DELETE /api/distros/{name}":       {"RemoveDistro", false},
+		"POST /api/distros/{name}/use":     {"UseDistro", false},
+		"POST /api/distros/{name}/fetch":   {"FetchDistro", false},
+		"GET /api/distros/{name}/progress": {"DownloadProgress", false},
+		"GET /api/distros/{name}/update":   {"CheckDistroUpdate", false},
+		"POST /api/distros/{name}/update":  {"UpdateDistro", false},
+	}
+
+	var rec []string
+	var apiErr error
+	api := recordingAPI(&rec, func() error { return apiErr })
+	handler := Handler(api)
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		var req *http.Request
+		if body == "" {
+			req = httptest.NewRequest(method, path, nil)
+		} else {
+			req = httptest.NewRequest(method, path, strings.NewReader(body))
+		}
+		req.Host = "localhost"
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w
+	}
+
+	for _, rt := range routes() {
+		key := rt.Method + " " + rt.Pattern
+		want, ok := expects[key]
+		if !ok {
+			t.Errorf("route %q has no expectation — add it to the smoke test's table", key)
+			continue
+		}
+		delete(expects, key)
+		path := strings.NewReplacer("{name}", "debug", "{preset}", "prod").Replace(rt.Pattern)
+
+		t.Run(key, func(t *testing.T) {
+			// (a) valid request: 200, and the right closure ran.
+			rec, apiErr = nil, nil
+			w := do(rt.Method, path, "")
+			if w.Code != http.StatusOK {
+				t.Errorf("valid request = %d, want 200 (body %s)", w.Code, w.Body)
+			}
+			if !slices.Contains(rec, want.closure) {
+				t.Errorf("valid request ran %v, want %s", rec, want.closure)
+			}
+
+			// (b) malformed JSON body: 400, closure never called.
+			if want.decodes {
+				rec = nil
+				w = do(rt.Method, path, `{"bad`)
+				if w.Code != http.StatusBadRequest {
+					t.Errorf("malformed body = %d, want 400", w.Code)
+				}
+				if len(rec) != 0 {
+					t.Errorf("malformed body still ran %v", rec)
+				}
+			}
+
+			// (c) closure errors: plain→500, BadRequest→400, Upstream→502.
+			for _, c := range []struct {
+				err  error
+				code int
+			}{
+				{errWithMessage("disk on fire"), http.StatusInternalServerError},
+				{markBadRequest(errWithMessage("your mistake")), http.StatusBadRequest},
+				{markUpstream(errWithMessage("github down")), http.StatusBadGateway},
+			} {
+				rec, apiErr = nil, c.err
+				w = do(rt.Method, path, "")
+				if w.Code != c.code {
+					t.Errorf("closure error %v = %d, want %d", c.err, w.Code, c.code)
+				}
+				var body map[string]string
+				if err := json.NewDecoder(w.Body).Decode(&body); err != nil || body["error"] == "" {
+					t.Errorf("closure error body = %v, %v, want a non-empty error field", body, err)
+				}
+			}
+		})
+	}
+	for key := range expects {
+		t.Errorf("expectation %q matches no route — remove it", key)
 	}
 }
 
