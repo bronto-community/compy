@@ -187,17 +187,11 @@ function osTheme() {
   return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-/* ── derived helpers ──────────────────────────────────────────────── */
-function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
-function originOf(info) {
-  if (info.provenance === "remote") return "url";
-  if (info.provenance === "shipped") return "builtin";
-  return "user";
-}
-function hostOf(info) {
-  const u = (info.meta && info.meta.remote_url) || "";
-  try { return new URL(u).host; } catch (e) { return u; }
-}
+/* ── derived helpers ──────────────────────────────────────────────────
+   The pure ones (slug, originOf, hostOf, missingRequired, nameList,
+   freePresetName, portsCompact, yamlLineOf, fmtCount, parseZapLine,
+   parseAttrs) live in helpers.js, loaded before this file; the ones here
+   read S. */
 function presetsOf(info) {
   // Info.meta.presets is a JSON object, so it carries no ordering; the
   // window sorts alphabetically, as the CLI does.
@@ -209,16 +203,6 @@ function selectedPreset(info) {
   return list.indexOf(want) > -1 ? want : list[0] || "";
 }
 function byName(name) { return S.configs.find((c) => c.name === name) || null; }
-/* The activation pre-flight rule, shared with the CLI's warning (cfgstore.
-   MissingRequired): required means the yaml has no `:-fallback`
-   (has_default false), the name isn't compy-injected (COMPY_*), and the
-   preset holds no non-empty value. */
-function missingRequired(info, preset) {
-  const values = ((info.meta && info.meta.presets) || {})[preset] || {};
-  return (info.vars || [])
-    .filter((v) => !v.has_default && !/^COMPY_/.test(v.name) && !(values[v.name] || "").trim())
-    .map((v) => v.name);
-}
 function isRunningCfg(name) {
   return !!(S.status && S.status.running && S.status.config === name);
 }
@@ -232,10 +216,6 @@ function isSecret(key) { return /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUT
    (detected OS-side via lsof, /api/status "listening") are ever claimed —
    never a guess from settings or YAML. Nothing detected, nothing shown. */
 function detectedPorts() { return (S.status && S.status.listening) || []; }
-function portsCompact(ports) {
-  if (ports.length > 4) return ports.length + " ports open";
-  return ports.map((p) => ":" + p).join(" ");
-}
 /* What we know about a detected port: the settings grpc/http port, or the
    port the health scrape actually answered on. Anything else is bare. */
 function portLabel(p) {
@@ -253,10 +233,6 @@ function portLabel(p) {
 function droppingVars() {
   return (S.health && S.health.dropping && S.health.dropping.vars) || [];
 }
-function nameList(names) {
-  return names.length === 1 ? names[0]
-    : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
-}
 function droppingText(vars) {
   return "dropping data — " + nameList(vars) + (vars.length === 1 ? " has" : " have") + " no value";
 }
@@ -271,13 +247,6 @@ function openDroppingEditor() {
   openInline(name, preset, false);
   if (S.screen !== "configs") go("#/configs");
 }
-function fmtCount(n) {
-  if (n == null) return "—";
-  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, "") + "m";
-  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
-  return String(n);
-}
-
 /* ── transient notes (the design's ~3s one-liners) ────────────────── */
 function noteStrip() {
   if (!S.note) return null;
@@ -489,32 +458,7 @@ function logEntries() {
   }
   return entries;
 }
-function parseZapLine(line) {
-  const f = line.split("\t");
-  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(f[0] || "")) return null;
-  const lvl = (f[1] || "").trim().toLowerCase();
-  if (["error", "warn", "info", "debug"].indexOf(lvl) < 0) return null;
-  let i = 2, caller = "";
-  if (/\.go:\d+$/.test(f[2] || "")) { caller = f[2]; i = 3; }
-  // A trailing {…} field is structured attrs — but only when a message
-  // field precedes it, and only if it actually parses to an object.
-  let end = f.length, attrs = null;
-  if (f.length - i >= 2 && /^\{/.test(f[f.length - 1])) {
-    attrs = parseAttrs(f[f.length - 1]);
-    if (attrs) end = f.length - 1;
-  }
-  return {
-    time: f[0].slice(11, 19), level: lvl, text: f.slice(i, end).join(" "),
-    caller, attrs, cont: [], raw: line,
-  };
-}
-function parseAttrs(s) {
-  try {
-    const o = JSON.parse(s);
-    if (o && typeof o === "object" && !Array.isArray(o)) return o;
-  } catch (_) { /* malformed tail stays in the message text */ }
-  return null;
-}
+// parseZapLine/parseAttrs live in helpers.js.
 // D2, per-surface literal: the sidebar badge sums warn and error entries and
 // labels the total "warn" (the menu bar's own count is warn-only; that
 // surface is the tray's).
@@ -998,12 +942,6 @@ function presetMenu(info, list) {
 }
 
 /* ── inline preset editor (the pencil, under its row) ─────────────── */
-/* The generated new-preset name: "default" is every config's invariant
-   first preset, so the scheme continues it — preset-2, preset-3, … —
-   first free wins. Never random; the field stays editable. */
-function freePresetName(list) {
-  for (let i = 2; ; i++) if (list.indexOf("preset-" + i) < 0) return "preset-" + i;
-}
 function openInline(name, preset, isNew) {
   // A new preset opens with a generated available name already in the
   // field, so plus → save works with zero typing; gen is what the name
@@ -1138,13 +1076,6 @@ function valueCards(info, values, onEdit, scope) {
   }
   return grid;
 }
-function yamlLineOf(yaml, key) {
-  if (!yaml) return "";
-  const lines = yaml.split("\n");
-  for (let i = 0; i < lines.length; i++) if (lines[i].includes("${env:" + key) || lines[i].includes("${" + key)) return "line " + (i + 1);
-  return "";
-}
-
 /* ── configurations: actions ──────────────────────────────────────── */
 /* Every activation on this screen goes through the pre-flight: a config
    whose required values are missing would start a collector that silently
