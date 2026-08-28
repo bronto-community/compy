@@ -32,6 +32,8 @@ jobs:
         run: go vet ./...
       - name: go test
         run: go test ./...
+      - name: js helper tests (node stdlib runner, no npm)
+        run: node --test internal/webui/static/*.test.js
       - name: linux cross-build (CGO off)
         run: GOOS=linux CGO_ENABLED=0 go build -o /dev/null ./cmd/compy
 

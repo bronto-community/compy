@@ -825,6 +825,9 @@ func TestReadMetaAcceptsLegacyKeys(t *testing.T) {
 func TestMissingRequired(t *testing.T) {
 	// The activation pre-flight rule: required means has_default false,
 	// not COMPY_-prefixed, and no non-empty value in the resolved preset.
+	//
+	// internal/webui/static/helpers.test.js mirrors this table verbatim
+	// against the JS missingRequired — keep these tables identical.
 	info := Info{
 		Meta: Meta{
 			ActivePreset: "staging",

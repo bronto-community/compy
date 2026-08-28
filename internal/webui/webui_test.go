@@ -1018,7 +1018,7 @@ func TestServesVendoredCodeMirror(t *testing.T) {
 // served, replacing the P1 stopgap page.
 func TestServesAppShellStaticFiles(t *testing.T) {
 	api := fakeAPI()
-	for _, path := range []string{"/", "/app.css", "/app.js"} {
+	for _, path := range []string{"/", "/app.css", "/app.js", "/helpers.js"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Host = "localhost"
 		rec := httptest.NewRecorder()
@@ -1043,6 +1043,43 @@ func TestServesAppShellStaticFiles(t *testing.T) {
 	for _, ref := range []string{"vendor/codemirror.min.css", "vendor/codemirror.min.js", "vendor/yaml.min.js"} {
 		if !strings.Contains(body, ref) {
 			t.Fatalf("index.html doesn't reference %s, got: %s", ref, body)
+		}
+	}
+	// The pure helpers load before app.js — app.js reaches them by bare
+	// name, so the order is load-bearing.
+	h, a := strings.Index(body, `src="helpers.js"`), strings.Index(body, `src="app.js"`)
+	if h < 0 || a < 0 || h > a {
+		t.Fatalf("index.html must load helpers.js before app.js (helpers at %d, app at %d)", h, a)
+	}
+}
+
+// extractedHelpers is the list of pure functions that moved from app.js to
+// helpers.js. TestHelpersLiveInHelpersJSOnly (grep-shaped, like
+// TestNoInnerHTMLInAppJS) keeps each defined exactly once: in helpers.js,
+// never redefined back in app.js where the copy would silently shadow —
+// classic scripts share one global scope, last definition wins.
+var extractedHelpers = []string{
+	"slug", "originOf", "hostOf", "missingRequired", "nameList",
+	"freePresetName", "portsCompact", "yamlLineOf", "fmtCount",
+	"parseZapLine", "parseAttrs",
+}
+
+func TestHelpersLiveInHelpersJSOnly(t *testing.T) {
+	appJS, err := staticFiles.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helpersJS, err := staticFiles.ReadFile("static/helpers.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range extractedHelpers {
+		def := "function " + name + "("
+		if !strings.Contains(string(helpersJS), def) {
+			t.Errorf("helpers.js does not define %s", name)
+		}
+		if strings.Contains(string(appJS), def) {
+			t.Errorf("app.js redefines %s — it lives in helpers.js now; delete the copy", name)
 		}
 	}
 }
