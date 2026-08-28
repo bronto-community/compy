@@ -425,7 +425,7 @@ func (a *App) SetDistroPath(name, path string) (string, error) {
 // override "reverts" to the shipped definition (still selectable, and
 // downloads on next use); removing an entry with no shipped definition
 // drops it from the registry entirely — the response's "reverted" field
-// says which happened. It returns a webui.BadRequest-marked error (400) for
+// says which happened. It returns a state.BadRequest-marked error (400) for
 // a pure definition name with no user entry (nothing to remove) or for the
 // selected distro (pick another default first).
 func (a *App) RemoveDistro(name string) (bool, error) {

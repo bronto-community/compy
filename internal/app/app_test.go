@@ -131,13 +131,20 @@ func called(calls [][]string, sub string) bool {
 	return false
 }
 
-func readPlist(t *testing.T) string {
+// plistPath is where launchd.Install writes the collector plist
+// (~/Library/LaunchAgents/<Label>.plist; HOME is the test's temp dir).
+func plistPath(t *testing.T) string {
 	t.Helper()
-	path, err := launchd.PlistPath()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(path)
+	return filepath.Join(home, "Library", "LaunchAgents", launchd.Label+".plist")
+}
+
+func readPlist(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(plistPath(t))
 	if err != nil {
 		t.Fatalf("read plist: %v", err)
 	}
@@ -1395,7 +1402,7 @@ func TestMigrationRawModeFallsBackToCustomYAML(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "config", "custom.yaml"), []byte("custom: marker\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	settings := fmt.Sprintf(`{"grpc_port":1,"http_port":14318,"distro":"fake","enabled":[],"raw_mode":true}`)
+	settings := `{"grpc_port":1,"http_port":14318,"distro":"fake","enabled":[],"raw_mode":true}`
 	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(settings), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -2504,11 +2511,7 @@ func TestStopUninstallsTheJob(t *testing.T) {
 	if err := a.Activate("debug", ""); err != nil {
 		t.Fatal(err)
 	}
-	path, err := launchd.PlistPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(plistPath(t)); err != nil {
 		t.Fatalf("no plist after activate: %v", err)
 	}
 
@@ -2521,7 +2524,7 @@ func TestStopUninstallsTheJob(t *testing.T) {
 	}
 	// The plist has RunAtLoad: leaving it behind would resurrect the
 	// collector at the next login, which is not what "stopped" means.
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
+	if _, err := os.Stat(plistPath(t)); !os.IsNotExist(err) {
 		t.Errorf("plist still present after Stop (stat err = %v)", err)
 	}
 }
@@ -2601,10 +2604,8 @@ func TestFactoryReset(t *testing.T) {
 	if !called(*calls, "bootout") {
 		t.Errorf("FactoryReset did not boot the job out: %v", *calls)
 	}
-	if path, err := launchd.PlistPath(); err == nil {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Errorf("plist still present after FactoryReset (stat err = %v)", err)
-		}
+	if _, err := os.Stat(plistPath(t)); !os.IsNotExist(err) {
+		t.Errorf("plist still present after FactoryReset (stat err = %v)", err)
 	}
 
 	// Exactly the shipped configs, all pristine.

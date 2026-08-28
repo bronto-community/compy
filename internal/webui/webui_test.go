@@ -873,7 +873,7 @@ func TestSetDistroPathRoute(t *testing.T) {
 }
 
 // TestRemoveDistroRoute covers 200 {"reverted":...} on success and the
-// webui.BadRequest-marked 400 vs the default 500 status split.
+// BadRequest-marked 400 vs the default 500 status split.
 func TestRemoveDistroRoute(t *testing.T) {
 	api := fakeAPI()
 	var gotName string

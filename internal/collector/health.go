@@ -11,16 +11,13 @@ import (
 	"time"
 )
 
-// MetricsURL is the collector's own telemetry endpoint. otelcol exposes it
-// on localhost:8888 with no configuration at all — verified against
+// defaultMetricsPort is the collector's own telemetry port. otelcol serves
+// /metrics on localhost:8888 with no configuration at all — verified against
 // otelcol 0.135.0, whose startup fails with "binding address localhost:8888
 // for Prometheus exporter" when the port is taken, for a config with no
 // service::telemetry section — so compy's shipped configurations say nothing
 // about it and this address is simply where the numbers are. The Collector
-// screen names it on screen for the same reason.
-const MetricsURL = "http://localhost:8888/metrics"
-
-// defaultMetricsPort is where MetricsURL points; a var so tests can aim the
+// screen names it on screen for the same reason. A var so tests can aim the
 // default probe away from a real machine's :8888.
 var defaultMetricsPort = 8888
 

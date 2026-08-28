@@ -853,8 +853,8 @@ func cmdUI(args []string) error {
 		return err
 	}
 	return withApp(func(a *app.App) error {
-		// net.Listen rather than webui.Serve: with --port 0 we need the
-		// chosen port to print (and open) the URL.
+		// Listen ourselves rather than let ServeListener's server bind:
+		// with --port 0 we need the chosen port to print (and open) the URL.
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *port))
 		if err != nil {
 			return err

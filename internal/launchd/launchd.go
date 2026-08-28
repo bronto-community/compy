@@ -73,11 +73,7 @@ func sortedEnvPairs(env map[string]string) []envPair {
 	return pairs
 }
 
-// PlistPath returns ~/Library/LaunchAgents/<Label>.plist.
-func PlistPath() (string, error) {
-	return agentPlistPath(Label)
-}
-
+// agentPlistPath returns ~/Library/LaunchAgents/<label>.plist.
 func agentPlistPath(label string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -92,13 +88,9 @@ func xmlEscape(s string) string {
 	return buf.String()
 }
 
-// RenderPlist renders the collector LaunchAgent plist for bin run with args,
-// logging to logPath, with env set as EnvironmentVariables (nil/empty omits
-// the key entirely). Argv entries, logPath, and env are XML-escaped.
-func RenderPlist(bin string, args []string, logPath string, env map[string]string) []byte {
-	return renderPlist(Label, bin, args, logPath, true, env)
-}
-
+// renderPlist renders a LaunchAgent plist for bin run with args, logging to
+// logPath, with env set as EnvironmentVariables (nil/empty omits the key
+// entirely). Argv entries, logPath, and env are XML-escaped.
 func renderPlist(label, bin string, args []string, logPath string, keepAlive bool, env map[string]string) []byte {
 	argv := make([]string, 0, len(args)+1)
 	argv = append(argv, xmlEscape(bin))

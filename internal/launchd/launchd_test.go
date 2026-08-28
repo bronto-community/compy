@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenderPlist(t *testing.T) {
-	out := RenderPlist("/usr/local/bin/otelcol", []string{"--config", "a & b.yaml"}, "/tmp/a & b.log", nil)
+	out := renderPlist(Label, "/usr/local/bin/otelcol", []string{"--config", "a & b.yaml"}, "/tmp/a & b.log", true, nil)
 	s := string(out)
 
 	if !strings.Contains(s, "<key>Label</key><string>"+Label+"</string>") {
@@ -37,7 +37,7 @@ func TestRenderPlist(t *testing.T) {
 }
 
 func TestRenderPlistEnvDict(t *testing.T) {
-	out := RenderPlist("/usr/local/bin/otelcol", nil, "/tmp/a.log", map[string]string{
+	out := renderPlist(Label, "/usr/local/bin/otelcol", nil, "/tmp/a.log", true, map[string]string{
 		"ZEBRA": "z & q",
 		"ALPHA": "a",
 	})
@@ -71,7 +71,7 @@ func TestInstallCallsLaunchctl(t *testing.T) {
 		t.Fatalf("Install: %v", err)
 	}
 
-	path, err := PlistPath()
+	path, err := agentPlistPath(Label)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestInfoParsesPid(t *testing.T) {
 func TestPlistPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	path, err := PlistPath()
+	path, err := agentPlistPath(Label)
 	if err != nil {
 		t.Fatal(err)
 	}

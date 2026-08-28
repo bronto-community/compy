@@ -198,15 +198,6 @@ func Handler(api API) http.Handler {
 	return hostCheck(mux)
 }
 
-// Serve starts the web UI listening on addr.
-func Serve(addr string, api API) error {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	return ServeListener(ln, api)
-}
-
 // ServeListener serves the web UI on an existing listener. Keep-alives are
 // off deliberately: macOS's URL loader silently retries an idempotent
 // request when a pooled connection has gone stale, but never a POST — which
