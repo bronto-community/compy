@@ -1932,6 +1932,57 @@ func TestActivateStartupFailureRestoresPrevious(t *testing.T) {
 	}
 }
 
+// TestActivateRestoreFailureIsSaidOutLoud pins restorePrevious's own
+// failure branch: the snapshot exists (so a restore is attempted) but is
+// unreadable, and the error must carry BOTH failures — the activation's
+// diagnostic and "restoring the last working setup failed too" — never a
+// silent restore failure behind the first message.
+func TestActivateRestoreFailureIsSaidOutLoud(t *testing.T) {
+	// Running for the initial activation, down at the failing one's check.
+	setupStaged(t, "state = running", "")
+	fakeDistro(t, "exit 0")
+	port := listenPort(t)
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("other", "receivers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.LogPath(), []byte("boom: cannot start\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Corrupt the snapshot between the success and the failure: HasSnapshot
+	// (the file exists) still says a restore is possible, but reading it
+	// fails — the branch under test.
+	snap := filepath.Join(a.Dir, "last-good", "settings.json")
+	if err := os.WriteFile(snap, []byte("{corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	closeListener(t, port)
+
+	err = a.Activate("other", "")
+	if err == nil {
+		t.Fatal("Activate(other) = nil, want a startup failure")
+	}
+	if !strings.Contains(err.Error(), "cannot start") {
+		t.Errorf("error = %q, want the activation's own diagnostic kept", err)
+	}
+	if !strings.Contains(err.Error(), "restoring the last working setup failed too") {
+		t.Errorf("error = %q, want the restore failure said out loud", err)
+	}
+	// A restore that never ran must not be claimed as still running.
+	var sr interface{ StillRunning() string }
+	if errors.As(err, &sr) {
+		t.Errorf("error claims %q still running after the restore itself failed", sr.StillRunning())
+	}
+}
+
 // TestActivateValidateFailureChangesNothing: a config the collector rejects
 // never reaches launchd, so there is nothing to restore.
 func TestActivateValidateFailureChangesNothing(t *testing.T) {
