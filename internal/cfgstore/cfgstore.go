@@ -587,6 +587,16 @@ func Rename(root, from, to string) error {
 	return nil
 }
 
+// validateVarKey refuses an empty (or all-whitespace) variable name — the
+// CLI shape `compy presets set c p =value` — before it can flow into the
+// LaunchAgent environment as a nameless entry.
+func validateVarKey(key string) error {
+	if strings.TrimSpace(key) == "" {
+		return userErrf("variable name must not be empty")
+	}
+	return nil
+}
+
 // SetVar sets a key/value pair in a preset, creating the preset on first
 // write.
 func SetVar(root, name, preset, key, value string) error {
@@ -594,6 +604,9 @@ func SetVar(root, name, preset, key, value string) error {
 		return err
 	}
 	if err := validatePresetName(preset); err != nil {
+		return err
+	}
+	if err := validateVarKey(key); err != nil {
 		return err
 	}
 	m, err := readMeta(root, name)
@@ -621,6 +634,11 @@ func WritePreset(root, name, preset string, values map[string]string) error {
 	}
 	if err := validatePresetName(preset); err != nil {
 		return err
+	}
+	for key := range values {
+		if err := validateVarKey(key); err != nil {
+			return err
+		}
 	}
 	m, err := readMeta(root, name)
 	if err != nil {
