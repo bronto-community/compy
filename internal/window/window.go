@@ -32,6 +32,7 @@ func Run(a *app.App) error {
 
 	w := webview.New(false)
 	defer w.Destroy()
+	installMainMenu() // after New (app is launched), before Run; enables Cmd+C/V/X/A/Z
 	w.SetTitle("compy")
 	w.SetSize(1240, 838, webview.HintNone)
 	w.Navigate(fmt.Sprintf("http://127.0.0.1:%d/", ln.Addr().(*net.TCPAddr).Port))
