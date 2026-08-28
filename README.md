@@ -24,6 +24,15 @@ activation just works, nothing to download.
 While this repo is private, `brew` additionally needs a
 `HOMEBREW_GITHUB_API_TOKEN` that can read it.
 
+**Upgrading.** `brew upgrade compy` is the whole upgrade: the menu bar
+restarts itself onto the new version, and a running collector keeps
+running the old one until you restart it — compy says so (a "restart
+needed" note in the menu bar, window, and `compy status`) and the restart
+from any of them finishes the upgrade. **Uninstalling.** `brew uninstall
+compy` stops the collector and the menu bar; add `--zap` to also remove
+the LaunchAgents and compy's state directory (`~/Library/Application
+Support/compy` — your configurations included).
+
 Building from source instead is covered under
 [Development](#development).
 

@@ -31,6 +31,23 @@ the staged install in its postflight; a manually downloaded archive needs
 the same `xattr -dr com.apple.quarantine` by hand. Proper signing needs an
 Apple Developer account and certificate secrets in this repo.
 
+## Upgrade / uninstall behavior of the cask
+
+The generated cask carries the lifecycle: its postflight strips quarantine
+and, when the tray LaunchAgent is installed, bounces it so the menu bar
+runs the new binary immediately after `brew upgrade` (the tray plist
+points at the stable `/opt/homebrew/bin/compy` symlink). The collector job
+is deliberately left alone — its plist bakes the resolved (versioned
+Caskroom) binary path, so after an upgrade compy surfaces "restart the
+collector to run the new version" (`stale_binary` in `/api/status`) and
+the next restart re-resolves it. `uninstall` boots both launchd labels
+out; `zap` additionally trashes the two LaunchAgents plists and
+`~/Library/Application Support/compy`. To inspect the rendered cask
+without the slow collector builds:
+`SKIP_COLLECTOR=1 go run github.com/goreleaser/goreleaser/v2@latest
+release --snapshot --clean --skip=publish`, then read
+`dist/homebrew/Casks/compy.rb`.
+
 ## Private-repo note for Homebrew
 
 The tap is public but the cask downloads its archive from this repo's
