@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -868,10 +869,23 @@ func (a *App) LogStats(lines int) (errors, warnings int, err error) {
 	return errors, warnings, nil
 }
 
+// fetchClient is the client behind every outbound fetch (distro archives,
+// the GitHub release listing, .sha256 assets). Deadlines sit on each phase —
+// dial, TLS handshake, first response byte — with deliberately no overall
+// Timeout: an archive is hundreds of MB and its transfer time is the user's
+// bandwidth, but a connection that stalls before answering must not wedge an
+// activation's auto-download or the tray's hourly update loop.
+var fetchClient = &http.Client{Transport: &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ResponseHeaderTimeout: 30 * time.Second,
+}}
+
 // httpFetch is distro.Fetch over plain HTTP(S), reporting Content-Length as
 // the total (-1 when the server declares none); the caller closes the body.
 func httpFetch(url string) (io.ReadCloser, int64, error) {
-	resp, err := http.Get(url)
+	resp, err := fetchClient.Get(url)
 	if err != nil {
 		return nil, 0, err
 	}
