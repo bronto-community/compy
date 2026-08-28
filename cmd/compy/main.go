@@ -277,6 +277,11 @@ func cmdStatus(args []string) error {
 		if st.CompyUpdate != "" {
 			fmt.Printf("update:   compy %s available — brew upgrade compy\n", st.CompyUpdate)
 		}
+		// The upgrade window: the plist still names a binary the upgrade
+		// deleted. A restart re-resolves it (compy start / compy apply).
+		if st.StaleBinary {
+			fmt.Println("note:     compy was upgraded — restart the collector to run the new version")
+		}
 		if len(st.Listening) > 0 {
 			fmt.Printf("listening: %s\n", app.PortList(st.Listening))
 		}

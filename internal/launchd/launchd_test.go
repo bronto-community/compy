@@ -237,6 +237,53 @@ func TestInfoParsesPid(t *testing.T) {
 	}
 }
 
+// InstalledBinary/StaleBinary read the plist Install wrote — the stale-path
+// detection after a `brew upgrade` deletes the versioned Caskroom dir the
+// baked-in binary path points into.
+func TestInstalledBinaryAndStale(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	orig := Exec
+	Exec = func(args ...string) ([]byte, error) { return nil, nil }
+	defer func() { Exec = orig }()
+
+	// No plist installed: no binary, not stale.
+	if bin, err := InstalledBinary(); err != nil || bin != "" {
+		t.Fatalf("no plist: got (%q, %v), want (\"\", nil)", bin, err)
+	}
+	if StaleBinary() {
+		t.Fatal("no plist must not be stale")
+	}
+
+	// Plist pointing at an existing binary (path with XML-escaped chars, so
+	// the parse proves it un-escapes): not stale.
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "v1 & co", "otelcol-compy")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Install(bin, []string{"--config", "x.yaml"}, "/tmp/out.log", nil); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	got, err := InstalledBinary()
+	if err != nil || got != bin {
+		t.Fatalf("InstalledBinary = (%q, %v), want %q", got, err, bin)
+	}
+	if StaleBinary() {
+		t.Fatal("existing binary must not be stale")
+	}
+
+	// The upgrade: the versioned dir is deleted, the plist still names it.
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if !StaleBinary() {
+		t.Fatal("deleted binary must be stale")
+	}
+}
+
 func TestPlistPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

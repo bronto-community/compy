@@ -36,7 +36,14 @@ import (
 // window's add-values flow, so the chip just names the state.
 func statusLines(st app.Status, warns int, dropping bool) (line1, line2 string) {
 	if !st.Running {
-		return "○ Stopped", "no listeners"
+		line2 = "no listeners"
+		// Stale plist while stopped: the user rebooted (or stopped) inside
+		// the brew-upgrade window and launchd's login start failed on the
+		// deleted binary. Start re-resolves and finishes the upgrade.
+		if st.StaleBinary {
+			line2 += " · restart needed"
+		}
+		return "○ Stopped", line2
 	}
 	line1 = "● Running · " + st.Config
 	if st.Preset != "" {
@@ -62,6 +69,15 @@ func statusLines(st app.Status, warns int, dropping bool) (line1, line2 string) 
 			line2 += " · "
 		}
 		line2 += "ports mismatch"
+	}
+	// brew upgrade replaced the binary under the running collector: it
+	// survives on the deleted inode, but only a restart runs the new
+	// version (and any launchd restart of the stale path would fail).
+	if st.StaleBinary {
+		if line2 != "" {
+			line2 += " · "
+		}
+		line2 += "restart needed"
 	}
 	return line1, line2
 }

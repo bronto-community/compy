@@ -6,7 +6,9 @@ package launchd
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -176,6 +178,71 @@ func UninstallAgent(label string) error {
 		return err
 	}
 	return nil
+}
+
+// InstalledBinary returns the collector binary path baked into the
+// installed collector plist (ProgramArguments[0]), or "" when no plist is
+// installed.
+func InstalledBinary() (string, error) {
+	path, err := agentPlistPath(Label)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return programArg0(data), nil
+}
+
+// programArg0 pulls ProgramArguments[0] out of a rendered plist: the first
+// <string> after the ProgramArguments key. Only our own template's output
+// needs parsing (stdlib has no plist decoder), and the XML decoder
+// un-escapes what renderPlist escaped.
+func programArg0(plist []byte) string {
+	dec := xml.NewDecoder(bytes.NewReader(plist))
+	inArgs := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		t, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		switch {
+		case t.Name.Local == "key":
+			var key string
+			if dec.DecodeElement(&key, &t) == nil {
+				inArgs = key == "ProgramArguments"
+			}
+		case inArgs && t.Name.Local == "string":
+			var s string
+			if dec.DecodeElement(&s, &t) == nil {
+				return s
+			}
+			return ""
+		}
+	}
+}
+
+// StaleBinary reports whether the installed collector plist points at a
+// binary that no longer exists — the state `brew upgrade` leaves behind,
+// since activation bakes a resolved path inside the versioned Caskroom
+// directory that the upgrade then deletes. No plist (stopped), or the file
+// still present: false. The next Start/Apply/Activate re-resolves the
+// binary and re-bakes the plist, which heals it.
+func StaleBinary() bool {
+	bin, err := InstalledBinary()
+	if err != nil || bin == "" {
+		return false
+	}
+	_, err = os.Stat(bin)
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // Kickstart restarts the running (or not) job in place.

@@ -95,6 +95,23 @@ func TestStatusLines(t *testing.T) {
 			wantLine2: "no listeners",
 		},
 		{
+			// The brew-upgrade window: the plist names a deleted binary while
+			// the process survives on the inode — only a restart runs the new
+			// version, so the warnings segment says so.
+			name:      "stale binary appends restart needed while running",
+			st:        app.Status{Running: true, Config: "prod", Preset: "p", Listening: []int{14317}, StaleBinary: true},
+			wantLine1: "● Running · prod · p",
+			wantLine2: ":14317 · restart needed",
+		},
+		{
+			// Rebooted (or stopped) inside the upgrade window: launchd's
+			// login start failed on the deleted path — Start re-resolves.
+			name:      "stale binary while stopped says restart needed",
+			st:        app.Status{Running: false, Config: "prod", StaleBinary: true},
+			wantLine1: "○ Stopped",
+			wantLine2: "no listeners · restart needed",
+		},
+		{
 			name:      "warnings appended, warn-only (no error count)",
 			st:        app.Status{Running: true, Config: "prod", Preset: "default", Listening: []int{14317, 14318}},
 			warns:     2,

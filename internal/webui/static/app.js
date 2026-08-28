@@ -570,6 +570,14 @@ function renderSidebar() {
     ]));
   }
 
+  /* the brew-upgrade window (status.stale_binary): the LaunchAgent still
+     names a binary the upgrade deleted — the collector runs on the deleted
+     inode (or already failed after a reboot). One quiet line; restart (the
+     collector screen's button, or activating) re-resolves and heals it. */
+  if (S.status && S.status.stale_binary) {
+    box.appendChild(span("pw-soft", "compy was upgraded — restart the collector to run the new version"));
+  }
+
   /* the build itself, quietly at the sidebar's very bottom: "compy 0.1.0" /
      "compy dev · 787da79a1b2c" (status.compy_version, rendered server-side
      so every surface agrees). Empty until the first status arrives. */
@@ -2092,6 +2100,10 @@ function screenSettings() {
      claims on stamped releases. */
   const verLine = compyVersionLine(S.status && S.status.compy_version, S.status && S.status.compy_update);
   if (verLine) wrap.appendChild(el("div", { class: "ver-line sans", text: verLine }));
+  /* the brew-upgrade window, same quiet line as the sidebar. */
+  if (S.status && S.status.stale_binary) {
+    wrap.appendChild(el("div", { class: "ver-line sans", text: "compy was upgraded — restart the collector to run the new version" }));
+  }
 
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
     span("title", "global variables"),

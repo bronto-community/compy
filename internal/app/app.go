@@ -94,6 +94,13 @@ type Status struct {
 	// CompyUpdate is a newer compy release the background check knows of —
 	// release builds only (a dev build never claims); "" means none known.
 	CompyUpdate string `json:"compy_update,omitempty"`
+	// StaleBinary is true when the installed LaunchAgent names a collector
+	// binary that no longer exists — what `brew upgrade` leaves behind (the
+	// versioned Caskroom dir the resolved path pointed into is gone). The
+	// running process survives on the deleted inode, but any launchd restart
+	// — a reboot included — would fail; restarting through compy re-resolves
+	// the binary and heals it.
+	StaleBinary bool `json:"stale_binary,omitempty"`
 }
 
 // EndpointPort is the port the advertised OTLP endpoint uses: the gRPC port
@@ -466,6 +473,7 @@ func (a *App) Status() (Status, error) {
 		Conformance:  portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, collector.TelemetryPort(), s.EffectiveProtocol() == "grpc"),
 		CompyVersion: version.String(),
 		CompyUpdate:  a.CompyUpdateAvailable(),
+		StaleBinary:  launchd.StaleBinary(),
 	}, nil
 }
 

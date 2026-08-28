@@ -54,6 +54,9 @@ func (a *App) statusMap() (map[string]any, error) {
 	if st.CompyUpdate != "" {
 		m["compy_update"] = st.CompyUpdate
 	}
+	if st.StaleBinary {
+		m["stale_binary"] = true
+	}
 	if st.Conformance != nil {
 		m["conformance"] = st.Conformance
 	}

@@ -219,6 +219,88 @@ func TestActivateHappyPath(t *testing.T) {
 	}
 }
 
+// The brew-upgrade window: activation bakes the resolved collector path
+// into the plist; the upgrade deletes that (versioned Caskroom) directory.
+// Status must notice the plist's binary is gone (stale_binary — running on
+// the deleted inode, or already failed after a reboot), and a Start must
+// heal it: re-resolve the binary and re-bake the plist.
+func TestStatusStaleBinaryAndRestartHeals(t *testing.T) {
+	setup(t, "state = running")
+	listenPort(t)
+
+	// "v1 Caskroom": a real dir holding the collector, registered as the
+	// selected distro — the resolved path activation bakes into the plist.
+	v1 := filepath.Join(t.TempDir(), "Caskroom", "compy", "0.1.0")
+	if err := os.MkdirAll(v1, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin1 := filepath.Join(v1, "otelcol")
+	if err := os.WriteFile(bin1, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveDistros([]state.Distro{{Name: "fake", Path: bin1}}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Distro = "fake"
+	if err := state.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("debug", ""); err != nil {
+		t.Fatalf("Activate = %v, want nil", err)
+	}
+	if st, err := a.Status(); err != nil || st.StaleBinary {
+		t.Fatalf("fresh activation: StaleBinary = %v (err %v), want false", st.StaleBinary, err)
+	}
+	if !strings.Contains(readPlist(t), "<string>"+bin1+"</string>") {
+		t.Fatalf("plist did not bake the v1 path:\n%s", readPlist(t))
+	}
+
+	// The upgrade: v1 is deleted, v2 appears, the distro resolves there now.
+	v2 := strings.Replace(v1, "0.1.0", "0.2.0", 1)
+	if err := os.MkdirAll(v2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin2 := filepath.Join(v2, "otelcol")
+	if err := os.WriteFile(bin2, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(v1); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveDistros([]state.Distro{{Name: "fake", Path: bin2}}); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := a.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.StaleBinary {
+		t.Fatal("plist names a deleted binary: StaleBinary must be true")
+	}
+
+	// The heal: Start re-resolves and re-bakes the plist.
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start = %v, want nil", err)
+	}
+	plist := readPlist(t)
+	if !strings.Contains(plist, "<string>"+bin2+"</string>") || strings.Contains(plist, bin1) {
+		t.Fatalf("plist not re-baked to v2:\n%s", plist)
+	}
+	if st, err := a.Status(); err != nil || st.StaleBinary {
+		t.Fatalf("after the healing restart: StaleBinary = %v (err %v), want false", st.StaleBinary, err)
+	}
+}
+
 func TestActivateValidateFailureNoLaunchctl(t *testing.T) {
 	calls := setup(t, "")
 	fakeDistro(t, `echo "error decoding 'exporters': unknown type" >&2; exit 1`)

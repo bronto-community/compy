@@ -58,6 +58,10 @@
           "compy_update": {
             "type": "string",
             "description": "A newer compy release the background check knows of (e.g. \"0.2.0\"). Present only on release builds with a strictly newer release known — a dev build never claims."
+          },
+          "stale_binary": {
+            "type": "boolean",
+            "description": "Present (true) when the installed LaunchAgent names a collector binary that no longer exists — what `brew upgrade` leaves behind. A running collector survives on the deleted inode but any launchd restart would fail; restarting through compy re-resolves the binary and heals it."
           }
         }
       },
