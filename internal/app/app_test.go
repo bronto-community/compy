@@ -2758,3 +2758,80 @@ func TestNewBackfillsPresetlessConfig(t *testing.T) {
 		t.Errorf("backfilled meta = %+v, want an empty active default preset", info.Meta)
 	}
 }
+
+// An upstream answer that is equal or OLDER than the installed version is
+// "already newest", never a silent downgrade — and nothing downloads (S2).
+func TestUpdateDistroRefusesDowngrade(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d distro.Def
+	for _, def := range distro.Defs() {
+		if def.Name == "otlp" {
+			d = def
+		}
+	}
+	// Pre-place the pinned binary: only an installed distro is updatable.
+	bin := filepath.Join(a.Dir, "distros", d.Name+"-"+d.Version, d.Binary)
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a.Fetch = func(url string) (io.ReadCloser, int64, error) {
+		if strings.Contains(url, "releases?") {
+			body := `[{"tag_name":"v0.0.1","prerelease":false}]`
+			return io.NopCloser(strings.NewReader(body)), int64(len(body)), nil
+		}
+		t.Fatalf("a downgrade must download nothing, fetched %q", url)
+		return nil, 0, nil
+	}
+
+	current, latest, updated, err := a.UpdateDistro("otlp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated || current != d.Version || latest != "0.0.1" {
+		t.Fatalf("UpdateDistro = (%q, %q, %v), want already-newest no-op at %q", current, latest, updated, d.Version)
+	}
+	if _, _, started, err := a.StartUpdateDistro("otlp"); err != nil || started {
+		t.Fatalf("StartUpdateDistro = (started=%v, err=%v), want a no-op", started, err)
+	}
+}
+
+// A traversal-shaped upstream tag is refused before it can reach paths or
+// URLs — the check errors, nothing downloads (S2).
+func TestUpdateDistroRefusesTraversalTag(t *testing.T) {
+	setup(t, "")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d distro.Def
+	for _, def := range distro.Defs() {
+		if def.Name == "otlp" {
+			d = def
+		}
+	}
+	bin := filepath.Join(a.Dir, "distros", d.Name+"-"+d.Version, d.Binary)
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a.Fetch = func(url string) (io.ReadCloser, int64, error) {
+		if strings.Contains(url, "releases?") {
+			body := `[{"tag_name":"v../../../evil","prerelease":false}]`
+			return io.NopCloser(strings.NewReader(body)), int64(len(body)), nil
+		}
+		t.Fatalf("a refused tag must download nothing, fetched %q", url)
+		return nil, 0, nil
+	}
+	if _, _, _, err := a.UpdateDistro("otlp", nil); err == nil || !strings.Contains(err.Error(), "not a release version") {
+		t.Fatalf("UpdateDistro with traversal tag = %v, want 'not a release version'", err)
+	}
+}

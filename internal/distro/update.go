@@ -54,7 +54,14 @@ func LatestVersion(fetch Fetch) (string, error) {
 		if r.Prerelease || !strings.HasPrefix(r.TagName, "v") {
 			continue
 		}
-		return strings.TrimPrefix(r.TagName, "v"), nil
+		// The tag flows into filesystem paths and download URLs, so a
+		// hostile or garbled upstream must stop here: only a plain
+		// dot-separated version passes (closes traversal-shaped tags).
+		v := strings.TrimPrefix(r.TagName, "v")
+		if _, ok := versionParts(v); !ok {
+			return "", fmt.Errorf("release check: upstream tag %q is not a release version", r.TagName)
+		}
+		return v, nil
 	}
 	return "", errors.New("release check: no collector release in the GitHub API response")
 }

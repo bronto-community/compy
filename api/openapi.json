@@ -1255,7 +1255,7 @@
       },
       "post": {
         "summary": "Pull the latest upstream release of a pinned distro (returns at once when newer; poll .../progress)",
-        "description": "Checks synchronously; started false with current == latest means already newest (nothing to do). Otherwise the tarball downloads in the background \u2014 verified against the .sha256 checksum asset published in the same upstream release \u2014 into its own versioned directory, becomes the version in effect, and, when this distro is the collector in use and the job is running, the service re-applies onto it (a new collector that fails to start rolls the update back with the last-good restore; a stopped collector stays stopped).",
+        "description": "Checks synchronously; started false with no error means already newest — the upstream answer is not strictly newer than the installed version (an equal or older answer is never a downgrade). Otherwise the tarball downloads in the background \u2014 verified against the .sha256 checksum asset published in the same upstream release \u2014 into its own versioned directory, becomes the version in effect, and, when this distro is the collector in use and the job is running, the service re-applies onto it (a new collector that fails to start rolls the update back with the last-good restore; a stopped collector stays stopped).",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
