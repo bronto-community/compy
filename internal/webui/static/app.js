@@ -436,7 +436,14 @@ function captureFocus() {
   const a = document.activeElement;
   if (a && cm && cm.getWrapperElement().contains(a)) return { cm: true };
   if (!a || !a.dataset || !a.dataset.fk) return null;
-  return { fk: a.dataset.fk, start: a.selectionStart, end: a.selectionEnd };
+  // The live value rides along too: fields whose rendered value comes from
+  // server state (a half-typed rename, a value card mid-autosave) would
+  // otherwise be rebuilt with the older stored text when a timer render
+  // lands mid-word — the caret survived, the keystrokes didn't.
+  return {
+    fk: a.dataset.fk, start: a.selectionStart, end: a.selectionEnd,
+    value: a.tagName === "INPUT" || a.tagName === "TEXTAREA" ? a.value : null,
+  };
 }
 function restoreFocus(f) {
   if (!f) return;
@@ -448,6 +455,7 @@ function restoreFocus(f) {
   }
   const e = document.querySelector('[data-fk="' + f.fk.replace(/"/g, '\\"') + '"]');
   if (!e) return;
+  if (f.value != null && e.value !== f.value) e.value = f.value;
   e.focus();
   if (f.start != null && e.setSelectionRange) {
     try { e.setSelectionRange(f.start, f.end); } catch (err) { /* non-text input */ }
