@@ -9,7 +9,9 @@
 // the status item's NSMenu — as NSApp.delegate. So: read the unexported id
 // off the *systray.MenuItem, find the NSMenuItem by tag, set the
 // equivalent. systray's item updates (SetTitle/Enable/…) never touch
-// keyEquivalent, so one application at menu-build time sticks for the life
+// keyEquivalent, so an application sticks until we change it ourselves
+// (the static items are set once at build; the config-row digits re-apply
+// each sync because submenu rows must carry none — see digitEquivalents)
 // of the process — no re-apply on sync needed.
 package tray
 
@@ -90,29 +92,45 @@ type keyEquiv struct {
 	cmd  bool
 }
 
-// keyEquivalents is the shortcut map the OPEN menu carries (no global
-// hotkey — Ctrl+F8 is macOS's own keyboard path into menu extras): digits
-// 1–9 on the first nine inline config slots, s on Stop/Start, r on Restart
-// (disabled items never fire, so r is inert while stopped), o on Open
-// compy, ⌘Q on Quit. Slots are fixed menu positions whose click handlers
-// resolve slotNames[i] at click time, so a resort retargets the digits for
-// free — digit d always fires the d-th visible config row. Plain-key
-// equivalents override the menu's type-to-select — accepted trade. Remove
-// from Menu Bar gets no key on purpose: it is the destructive one.
-func keyEquivalents(slots []*systray.MenuItem, toggle, restart, open, quit *systray.MenuItem) []keyEquiv {
+// keyEquivalents is the static half of the shortcut map (no global hotkey —
+// Ctrl+F8 is macOS's own keyboard path into menu extras): s on Stop/Start,
+// r on Restart (disabled items never fire, so r is inert while stopped),
+// o on Open compy, ⌘Q on Quit. Plain-key equivalents override the menu's
+// type-to-select — accepted trade. Remove from Menu Bar gets no key on
+// purpose: it is the destructive one. The config-row digits are the
+// dynamic half — digitEquivalents, re-applied per sync.
+func keyEquivalents(toggle, restart, open, quit *systray.MenuItem) []keyEquiv {
+	return []keyEquiv{
+		{toggle, "s", false},
+		{restart, "r", false},
+		{open, "o", false},
+		{quit, "q", true},
+	}
+}
+
+// digitEquivalents assigns digits 1–9 to the first nine inline config
+// slots — but only to rows WITHOUT a preset submenu: a submenu parent takes
+// no click (picking a preset there is the activation), so its digit would
+// fire nothing, and AppKit renders the equivalent under the submenu
+// chevron (the overlap the owner reported). Positional numbering is kept —
+// a submenu row's digit is simply absent, so digit d always names the d-th
+// visible row even when some digits are missing. hasSubmenu[i] mirrors the
+// slot's current preset submenu; "" clears a previously set digit when a
+// row grows a submenu. Click handlers resolve slotNames[i] at click time,
+// so a resort retargets for free (TestDigitEquivalents pins both).
+func digitEquivalents(slots []*systray.MenuItem, hasSubmenu []bool) []keyEquiv {
 	var out []keyEquiv
 	for i, slot := range slots {
 		if i >= 9 {
 			break
 		}
-		out = append(out, keyEquiv{slot, strconv.Itoa(i + 1), false})
+		key := strconv.Itoa(i + 1)
+		if i < len(hasSubmenu) && hasSubmenu[i] {
+			key = "" // clears the equivalent on the NSMenuItem
+		}
+		out = append(out, keyEquiv{slot, key, false})
 	}
-	return append(out,
-		keyEquiv{toggle, "s", false},
-		keyEquiv{restart, "r", false},
-		keyEquiv{open, "o", false},
-		keyEquiv{quit, "q", true},
-	)
+	return out
 }
 
 // menuID reads a systray.MenuItem's unexported id — the NSMenuItem tag on

@@ -9,34 +9,46 @@ import (
 	"fyne.io/systray"
 )
 
-// TestKeyEquivalents pins the shortcut map the open menu carries: digits
-// 1–9 on the first nine slots only, plain s/r/o on toggle/restart/open, and
-// ⌘Q (cmd set) on Quit — nothing else.
+// TestKeyEquivalents pins the static half: plain s/r/o on
+// toggle/restart/open and ⌘Q (cmd set) on Quit — nothing else. Digits are
+// the dynamic half (TestDigitEquivalents).
 func TestKeyEquivalents(t *testing.T) {
+	toggle, restart, open, quit := &systray.MenuItem{}, &systray.MenuItem{}, &systray.MenuItem{}, &systray.MenuItem{}
+	eqs := keyEquivalents(toggle, restart, open, quit)
+	want := []keyEquiv{{toggle, "s", false}, {restart, "r", false}, {open, "o", false}, {quit, "q", true}}
+	if len(eqs) != len(want) {
+		t.Fatalf("got %d equivalents, want %d", len(eqs), len(want))
+	}
+	for i, w := range want {
+		if eqs[i] != w {
+			t.Errorf("eqs[%d] = {%q cmd=%v} on wrong item, want %q cmd=%v", i, eqs[i].key, eqs[i].cmd, w.key, w.cmd)
+		}
+	}
+}
+
+// TestDigitEquivalents pins the submenu rule (2026-08-29 owner report: the
+// digit overlapped the submenu chevron — and a submenu parent takes no
+// click anyway): a slot with a preset submenu gets key "" (clearing any
+// previous digit), positional numbering is kept for the rest, and only
+// slots 1–9 ever carry digits.
+func TestDigitEquivalents(t *testing.T) {
 	slots := make([]*systray.MenuItem, maxInline)
 	for i := range slots {
 		slots[i] = &systray.MenuItem{}
 	}
-	toggle, restart, open, quit := &systray.MenuItem{}, &systray.MenuItem{}, &systray.MenuItem{}, &systray.MenuItem{}
-
-	eqs := keyEquivalents(slots, toggle, restart, open, quit)
-	if len(eqs) != 9+4 {
-		t.Fatalf("got %d equivalents, want 13 (nine digits + s/r/o/⌘Q)", len(eqs))
+	hasSub := make([]bool, maxInline)
+	hasSub[1] = true // 2nd row has a preset submenu
+	eqs := digitEquivalents(slots, hasSub)
+	if len(eqs) != 9 {
+		t.Fatalf("got %d digit entries, want 9 (the 10th slot carries none)", len(eqs))
 	}
-	for i := 0; i < 9; i++ {
-		if eqs[i].item != slots[i] || eqs[i].key != strconv.Itoa(i+1) || eqs[i].cmd {
-			t.Errorf("eqs[%d] = {%p %q cmd=%v}, want slot %d with plain key %q", i, eqs[i].item, eqs[i].key, eqs[i].cmd, i, strconv.Itoa(i+1))
+	for i, e := range eqs {
+		wantKey := strconv.Itoa(i + 1)
+		if i == 1 {
+			wantKey = "" // submenu row: digit cleared, numbering stays positional
 		}
-	}
-	for _, e := range eqs {
-		if e.item == slots[9] {
-			t.Error("the 10th slot must carry no digit — only 1–9 exist")
-		}
-	}
-	want := []keyEquiv{{toggle, "s", false}, {restart, "r", false}, {open, "o", false}, {quit, "q", true}}
-	for i, w := range want {
-		if got := eqs[9+i]; got != w {
-			t.Errorf("eqs[%d] = {%q cmd=%v} on wrong item, want %q cmd=%v", 9+i, got.key, got.cmd, w.key, w.cmd)
+		if e.item != slots[i] || e.key != wantKey || e.cmd {
+			t.Errorf("eqs[%d] = {%q cmd=%v}, want key %q on slot %d", i, e.key, e.cmd, wantKey, i)
 		}
 	}
 }
@@ -52,7 +64,7 @@ func TestDigitsRetargetOnResort(t *testing.T) {
 	for i := range slots {
 		slots[i] = &systray.MenuItem{}
 	}
-	eqs := keyEquivalents(slots, &systray.MenuItem{}, &systray.MenuItem{}, &systray.MenuItem{}, &systray.MenuItem{})
+	eqs := digitEquivalents(slots, make([]bool, maxInline))
 
 	// digitTarget mirrors the sync()+click path: what config does digit d
 	// activate for this set of names?

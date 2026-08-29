@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +79,11 @@ type menu struct {
 	// icon is the state the menu-bar icon currently shows, so sync() only
 	// calls into systray when it actually changes (not every 5s tick).
 	icon iconState
+
+	// digitSubs mirrors which slots carried a preset submenu at the last
+	// digit-equivalent application (digits skip submenu rows); sync
+	// re-applies only when this changes.
+	digitSubs []bool
 
 	// itemIcons is the indicator each config row / preset item currently
 	// shows, so setItemIcon only calls into systray on a change. An item
@@ -166,7 +172,7 @@ func onReady(a *app.App) {
 	openApp := systray.AddMenuItem("Open compy", "")
 	remove := systray.AddMenuItem("Remove from Menu Bar", "")
 	quit := systray.AddMenuItem("Quit", "")
-	applyKeyEquivalents(keyEquivalents(m.slots, m.toggle, m.restart, openApp, quit))
+	applyKeyEquivalents(keyEquivalents(m.toggle, m.restart, openApp, quit))
 
 	m.sync()
 	go func() {
@@ -278,6 +284,18 @@ func (m *menu) sync() {
 		slot.SetTitle(name)
 		slot.Show()
 		m.syncRow(slot, m.slotPresets[i], name, byName[name], st)
+	}
+
+	// Digits belong only to rows without a preset submenu (a submenu parent
+	// takes no click, and AppKit draws the equivalent under the chevron).
+	// Re-applied only when submenu-ness changes across the nine slots.
+	hasSub := make([]bool, len(m.slots))
+	for i := range m.slots {
+		hasSub[i] = len(m.slotPresets[i]) > 0
+	}
+	if !slices.Equal(hasSub, m.digitSubs) {
+		m.digitSubs = hasSub
+		applyKeyEquivalents(digitEquivalents(m.slots, hasSub))
 	}
 
 	seen := map[string]bool{}
