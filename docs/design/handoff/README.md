@@ -670,3 +670,28 @@ with the text above.
   window. Under a debug-verbosity flood the refresh recycles unchanged
   rows and skips off-screen layout (content-visibility), so a tick costs
   ~3ms instead of ~20ms.
+- 2026-08-29 (app-behavior round — scroll, editing, keyboard, restart):
+  - Every screen's main scroll pane (configs table, settings) keeps its
+    scroll position across the 3s refresh, the same way focus does:
+    render() captures the pane's offset before the rebuild and puts it
+    back after, keyed per screen — switching screens still starts at the
+    top. The log pane keeps its own smarter tail machinery.
+  - The focused input's live value survives a re-render too: a half-typed
+    rename (config name, preset chip, source URL, a value card mid-
+    autosave) is no longer reset to the stored text when a note/saved-mark
+    timer redraws the screen under the caret.
+  - Escape closes whichever transient panel is open — preset menu,
+    pre-flight, delete/reset confirm, inline preset editor, new-config
+    strip, yaml unlock ask, factory-reset confirm, port assignment — the
+    same outcome as that panel's cancel affordance. An open <dialog>
+    keeps handling its own Escape.
+  - Activation is one collector stop/start, not two: the LaunchAgent
+    bootstrap (RunAtLoad) already starts the collector, so the extra
+    kickstart — a second SIGTERM drain + start per activation — is gone.
+    The post-start wait returns as soon as the collector answers compy's
+    gRPC port OR the job's process is seen listening on any port, so a
+    config that binds its own ports no longer sits out a 5s dead-air
+    probe on every healthy activation/switch. The UI's post-action
+    status/health/log fetches run in parallel. Healthy restart and
+    config-switch complete visibly well under 5s; the honest floor is
+    launchd's graceful drain of the outgoing collector.
