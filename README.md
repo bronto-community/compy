@@ -143,11 +143,16 @@ is archived to `legacy-v1/`. One-way, logged to stderr.
 
 ## Development
 
-Building from source requires Go 1.24+:
+Building from source requires Go 1.25+:
 
 ```
-go build -o compy ./cmd/compy
+CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,production -o compy ./cmd/compy
 ```
+
+The tags are required by Wails (the native-window library): an untagged
+build compiles and works fully except `compy window`, which errors at
+runtime by Wails' design. The CGO_LDFLAGS links a framework Wails
+references but does not link itself. Neither applies to non-darwin builds.
 
 That is enough: on first use compy downloads a pinned, checksum-verified
 collector build (~90MB). Two optional extras (the Homebrew install ships
@@ -168,11 +173,12 @@ both):
 The gates:
 
 ```
-go build ./cmd/compy
+go build -o /dev/null ./cmd/compy
 go vet ./...
 gofmt -l .
 go test ./...
 GOOS=linux CGO_ENABLED=0 go build -o /dev/null ./cmd/compy   # cross-build stays green
+CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,production -o /dev/null ./cmd/compy
 go test -tags=integration ./integration/   # needs OTELCOL_BIN=/path/to/otelcol
 ```
 

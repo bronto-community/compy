@@ -13,7 +13,7 @@ non-goals.
 ## Build / test
 
 ```
-go build ./cmd/compy
+go build -o /dev/null ./cmd/compy
 go vet ./...
 gofmt -l .
 go test ./...
@@ -21,10 +21,27 @@ go test -tags=integration ./integration/         # needs OTELCOL_BIN=/path/to/ot
 GOOS=linux CGO_ENABLED=0 go build -o /dev/null ./cmd/compy   # cross-build gate
 ```
 
-The `-o /dev/null` on the linux gate is load-bearing: `./compy` in the repo
-root is the LIVE binary — the user's LaunchAgents and menu-bar tray execute
-that exact path. Never overwrite it with a non-darwin build; rebuild it only
-as `go build -o compy ./cmd/compy` when deliberately rolling out.
+Shippable darwin binaries need Wails' own build tags — `compy window` in an
+untagged build compiles but errors at runtime (Wails gates wails.Run behind
+`desktop,production` by design; the untagged `go build ./cmd/compy` stays a
+compile gate only). The CGO_LDFLAGS is because Wails' production asset
+handler references UTType without linking its framework:
+
+```
+CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,production -o /dev/null ./cmd/compy
+```
+
+Every `-o /dev/null` above is load-bearing: `./compy` in the repo root is
+the LIVE binary — the user's LaunchAgents and menu-bar tray execute that
+exact path, and a bare `go build ./cmd/compy` from the repo root would
+overwrite it with an untagged build whose `compy window` errors at runtime.
+Never overwrite it with a non-darwin or untagged build; rebuild it only as
+
+```
+CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,production -o compy ./cmd/compy
+```
+
+when deliberately rolling out.
 
 `sh packaging/collector/build.sh` builds `otelcol-compy` (the bundled
 distro, from `packaging/collector/manifest.yaml` via OCB, builder pinned to
@@ -35,9 +52,9 @@ part of the gates above; run it when the manifest changes.
 ## Dependencies
 
 Stdlib only, except `fyne.io/systray` (tray icon; darwin-only build, stubbed
-out on other GOOS in `internal/tray`) and `github.com/webview/webview_go`
-(native window; darwin-only build, stubbed out on other GOOS in
-`internal/window`).
+out on other GOOS in `internal/tray`) and `github.com/wailsapp/wails/v2`
+(native window, used as a library — no wails CLI, wails.json, or node;
+darwin-only build, stubbed out on other GOOS in `internal/window`).
 
 ## Module layout (`internal/*`)
 
