@@ -634,9 +634,10 @@ func TestUpdateDistroRejectedConfigKeepsVersion(t *testing.T) {
 // versions so the user knows what actually runs.
 func TestUpdateDistroStartFailureRollsBack(t *testing.T) {
 	// launchd: up for the initial activation, up for applyDistroUpdate's
-	// am-I-running check, down at the failing activation's check, back up
-	// once the previous setup is restored.
-	setupStaged(t, "state = running", "state = running", "", "state = running")
+	// am-I-running check, down at the failing activation (twice: settle's
+	// one dial-miss consult, then the authority check), back up once the
+	// previous setup is restored.
+	setupStaged(t, "state = running", "state = running", "", "", "state = running")
 	port := listenPort(t)
 
 	a, err := app.New()

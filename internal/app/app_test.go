@@ -36,7 +36,9 @@ func setup(t *testing.T, printOut string) *[][]string {
 
 // setupStaged is setup with a scripted sequence of `launchctl print`
 // outputs: the nth print call answers stages[n], the last stage repeating
-// once the script runs out. Activate consults launchd after every probe —
+// once the script runs out. Activate consults launchd after every settle
+// wait (plus at most once INSIDE settle, on a settle whose first gRPC dial
+// misses — a probe that fails needs a "" stage for that consult too) —
 // launchd, not the probe, is the authority on "up" — so a test whose
 // scenario changes over time (running during the initial activation, down
 // at the failing one, back up after the restore) stages the answers in
@@ -176,9 +178,6 @@ func TestActivateHappyPath(t *testing.T) {
 
 	if !called(*calls, "bootstrap") {
 		t.Errorf("no bootstrap in %v", *calls)
-	}
-	if !called(*calls, "kickstart") {
-		t.Errorf("no kickstart in %v", *calls)
 	}
 
 	plist := readPlist(t)
@@ -601,7 +600,7 @@ func TestRenameConfigUpdatesSettingsAndRecent(t *testing.T) {
 		t.Fatalf("RenameConfig: %v", err)
 	}
 	// Running() itself calls `launchctl print`; what must NOT happen is a
-	// re-apply (bootstrap/kickstart) while the collector is stopped.
+	// re-apply (bootstrap) while the collector is stopped.
 	if called(*calls, "bootstrap") || called(*calls, "kickstart") {
 		t.Errorf("renaming while the collector is stopped re-applied: %v", *calls)
 	}
@@ -1449,7 +1448,7 @@ func TestMigrationLegacyBackends(t *testing.T) {
 	}
 	// The v1 LaunchAgent pointed at the now-archived tree: migration must
 	// have repointed it at the migrated configuration.
-	if !called(*calls, "bootstrap") || !called(*calls, "kickstart") {
+	if !called(*calls, "bootstrap") {
 		t.Errorf("migration did not re-apply the collector: %v", *calls)
 	}
 
@@ -2290,9 +2289,10 @@ func TestRecencyIsCapped(t *testing.T) {
 func TestEditingTheRunningConfigIntoAFailureRestoresIt(t *testing.T) {
 	// Staged launchd prints: #1 the initial activation's up-check
 	// (running), #2 reactivateIf's guard (the collector IS running, so the
-	// edit re-applies), #3 the failing activation's authority check (not
-	// running: the start failed), everything after is the restore coming up.
-	setupStaged(t, "state = running", "state = running", "", "state = running")
+	// edit re-applies), #3+#4 the failing activation (settle's dial-miss
+	// consult, then the authority check — both not running: the start
+	// failed), everything after is the restore coming up.
+	setupStaged(t, "state = running", "state = running", "", "", "state = running")
 	fakeDistro(t, "exit 0") // validates anything; nothing ever listens
 	port := listenPort(t)
 
@@ -2440,8 +2440,9 @@ func TestWriteConfigYAMLNoValidateNeverTouchesTheCollector(t *testing.T) {
 // to a binary that won't start puts the working one back, settings included.
 func TestUseDistroStartupFailureRestoresTheBinary(t *testing.T) {
 	// Running for the initial activation, down when the switched binary
-	// fails to start, back up once the restore has run.
-	setupStaged(t, "state = running", "", "state = running")
+	// fails to start (settle's consult plus the authority check), back up
+	// once the restore has run.
+	setupStaged(t, "state = running", "", "", "state = running")
 	fakeDistro(t, "exit 0")
 	port := listenPort(t)
 
@@ -2492,9 +2493,9 @@ func TestUseDistroStartupFailureRestoresTheBinary(t *testing.T) {
 // world, so it is made only when launchd confirms the restored job is up.
 func TestStillRunningOnlyWhenItActuallyIs(t *testing.T) {
 	// launchd confirms the initial activation, reports "not running" for the
-	// failing activation's check, then "running" once the previous
-	// configuration has been put back.
-	setupStaged(t, "state = running", "", "state = running")
+	// failing activation (settle's consult plus the authority check), then
+	// "running" once the previous configuration has been put back.
+	setupStaged(t, "state = running", "", "", "state = running")
 	fakeDistro(t, "exit 0")
 	port := listenPort(t)
 

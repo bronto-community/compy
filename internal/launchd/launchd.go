@@ -1,5 +1,5 @@
 // Package launchd manages the compy collector's macOS LaunchAgent: rendering
-// its plist, and installing/uninstalling/kickstarting/inspecting it via
+// its plist, and installing/uninstalling/inspecting it via
 // launchctl.
 package launchd
 
@@ -243,12 +243,6 @@ func StaleBinary() bool {
 	}
 	_, err = os.Stat(bin)
 	return errors.Is(err, fs.ErrNotExist)
-}
-
-// Kickstart restarts the running (or not) job in place.
-func Kickstart() error {
-	_, err := Exec("kickstart", "-k", guiTarget()+"/"+Label)
-	return err
 }
 
 // Running reports whether the job is currently running, per

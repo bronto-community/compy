@@ -23,8 +23,8 @@ import (
 	"github.com/bronto-community/compy/internal/version"
 )
 
-// probeTimeout is how long Activate waits for the collector to accept
-// connections after kickstart.
+// probeTimeout is how long Activate waits for the collector to come up
+// after the LaunchAgent (re)install starts it.
 const probeTimeout = 5 * time.Second
 
 // DefaultDistro is the collector compy falls back to when settings name
@@ -190,9 +190,12 @@ func activationEnv(values map[string]string, s state.Settings) map[string]string
 }
 
 // launch (re)installs the collector LaunchAgent for configuration name with
-// preset's variables in its environment, and kickstarts it. It is the part
-// of Activate that actually changes what runs, and the part restorePrevious
-// replays.
+// preset's variables in its environment. Install's bootout+bootstrap already
+// stops the old process and starts the new one (the plist is RunAtLoad) — a
+// kickstart on top killed the freshly bootstrapped collector and started a
+// second one, which on a real exporter meant a second full shutdown drain
+// per activation. launch is the part of Activate that actually changes what
+// runs, and the part restorePrevious replays.
 func (a *App) launch(name, preset string) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
@@ -207,10 +210,7 @@ func (a *App) launch(name, preset string) error {
 		return err
 	}
 	env := activationEnv(info.Meta.Presets[preset], s)
-	if err := launchd.Install(bin, []string{"--config", a.ConfigPath(name)}, a.LogPath(), env); err != nil {
-		return err
-	}
-	return launchd.Kickstart()
+	return launchd.Install(bin, []string{"--config", a.ConfigPath(name)}, a.LogPath(), env)
 }
 
 // restorePrevious puts back the last setup that actually started — the
@@ -292,14 +292,14 @@ func (a *App) Activate(name, preset string) error {
 	if err := a.launch(name, preset); err != nil {
 		return err
 	}
-	// The probe is only the settle/wait: it retries until something answers
-	// on compy's gRPC port or the timeout passes. launchd is the authority
+	// The probe is only the settle/wait: it retries until there is evidence
+	// the collector is up or the timeout passes. launchd is the authority
 	// on "up" in BOTH directions — a foreign process squatting the port
 	// answers the dial for a collector that crashed on it, and a
 	// configuration owns its receivers and may bind nowhere near compy's
 	// ports — so the job counts as started only when launchd confirms it
 	// (a launchctl error counts as not-up either way).
-	probeErr := collector.Probe(s.GRPCPort, probeTimeout)
+	probeErr := settle(s.GRPCPort, probeTimeout)
 	if running, rerr := launchd.Running(); rerr != nil || !running {
 		if probeErr == nil {
 			probeErr = errors.New("something else answers the probe port, but launchd reports the job is not running")
@@ -333,6 +333,44 @@ func (a *App) Activate(name, preset string) error {
 		return err
 	}
 	return a.remember(name)
+}
+
+// settle waits for a freshly (re)started collector to come up, returning as
+// soon as there is evidence of "up": compy's gRPC port answering (shipped
+// configs bind it), or the job's process listening on at least one
+// OS-detected port — a configuration that binds its own ports would
+// otherwise wait out the full timeout on every healthy activation, for a
+// dial that can never succeed. Timing out is not the failure verdict:
+// Activate's launchd check right after stays the authority either way.
+//
+// launchd is consulted for the pid at most ONCE (on the first dial miss),
+// so the launchctl call count per activation stays deterministic — the test
+// harness stages `launchctl print` answers by call order.
+// ponytail: if that one consult lands before launchd has the job registered,
+// or a config has no TCP listeners at all, this degrades to the old
+// full-timeout wait; re-consult on a coarse interval if that ever hurts.
+func settle(grpcPort int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	pid := -1 // -1: launchd not consulted yet; 0: consulted, no usable pid
+	var lastErr error
+	for {
+		if lastErr = collector.Probe(grpcPort, 0); lastErr == nil {
+			return nil
+		}
+		if pid < 0 {
+			pid = 0
+			if running, p, err := launchd.Info(); err == nil && running {
+				pid = p
+			}
+		}
+		if pid > 0 && len(collector.ListeningPorts(pid)) > 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return lastErr
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // remember moves name to the front of the recency list. It runs only after
@@ -598,7 +636,7 @@ func (a *App) Reset(name string) error {
 // follows the rename in settings (Recent included); if it is also running,
 // the LaunchAgent is re-applied so its plist tracks the new config path. A
 // stopped collector is left stopped — its plist is already gone, and
-// re-applying would kickstart it.
+// re-applying would start it.
 func (a *App) RenameConfig(from, to string) error {
 	if err := cfgstore.Rename(a.Dir, from, to); err != nil {
 		return err

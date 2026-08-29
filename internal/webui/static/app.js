@@ -1298,7 +1298,7 @@ async function stopFromRow(name) {
   render();
   try { await api("/api/service/stop", { method: "POST" }); } catch (e) { showError(e); }
   S.stoppingId = null;
-  await loadCore(); await loadCollector();
+  await Promise.all([loadCore(), loadCollector()]); // independent GETs, in parallel
   render();
 }
 
@@ -1314,8 +1314,7 @@ async function activate(name, preset) {
     await apiJSON(cfgURL(name) + "/activate", "POST", { preset: preset || "" });
     S.busyId = null;
     S.presetSel[name] = preset;
-    await loadCore();
-    await loadCollector();
+    await Promise.all([loadCore(), loadCollector()]); // independent GETs, in parallel
     // The success path stays honest about reachability: activated, yes —
     // but a config that ignores compy's advertised ports strands every app
     // that trusts them, and that is worth a sentence right now.
@@ -2140,13 +2139,13 @@ async function restartCollector() {
     await api("/api/service/start", { method: "POST" });
   } catch (e) { showError(e); }
   S.restarting = false;
-  await loadCore(); await loadCollector();
+  await Promise.all([loadCore(), loadCollector()]); // independent GETs, in parallel
   render();
 }
 async function stopCollector() {
   clearError();
   try { await api("/api/service/stop", { method: "POST" }); } catch (e) { showError(e); }
-  await loadCore(); await loadCollector();
+  await Promise.all([loadCore(), loadCollector()]); // independent GETs, in parallel
   render();
 }
 

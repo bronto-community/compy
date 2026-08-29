@@ -107,7 +107,7 @@ func TestRunStatusTextAndJSON(t *testing.T) {
 }
 
 // TestRunUseActivates drives `compy use` through the stubs: the shipped
-// debug config activates, launchctl sees the bootstrap+kickstart, and the
+// debug config activates, launchctl sees the bootstrap, and the
 // activation is recorded in settings.
 func TestRunUseActivates(t *testing.T) {
 	calls := cliSetup(t, "state = running")
