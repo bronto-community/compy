@@ -1,6 +1,6 @@
 # GoReleaser config: tagged releases (v*) via .github/workflows/release.yml,
 # which runs on a macOS runner because the darwin builds need cgo (systray,
-# webview). Local dry run:
+# Wails window). Local dry run:
 #
 #   go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean
 #
@@ -32,6 +32,12 @@ builds:
     binary: compy
     env:
       - CGO_ENABLED=1
+      # Wails references UTType without linking its framework.
+      - CGO_LDFLAGS=-framework UniformTypeIdentifiers
+    # Wails gates wails.Run behind its own build tags; without them
+    # `compy window` errors at runtime.
+    flags:
+      - -tags=desktop,production
     goos: [darwin]
     goarch: [arm64, amd64]
     # Stamps the release version (compy version, /api/status compy_version);
