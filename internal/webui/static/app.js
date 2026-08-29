@@ -454,6 +454,26 @@ function restoreFocus(f) {
   }
 }
 
+/* Screen scroll survives a rebuild the same way focus does: every screen's
+   main scroll container (SCREEN_SCROLLER — one shared wrapper per screen;
+   screens without one, like the editor, scroll nothing at this level) has
+   its offset captured before the DOM is torn down and put back after.
+   Keyed to the screen the DOM actually shows (domScreen, not S.screen,
+   which enterRoute has already flipped), so switching screens still starts
+   at the top. The log pane keeps its own smarter tail machinery below;
+   CodeMirror keeps its scroll in its own surviving instance. */
+const SCREEN_SCROLLER = "#screen .table-scroll, #screen .settings";
+let domScreen = null; // which screen the DOM currently shows
+function captureScreenScroll() {
+  const e = document.querySelector(SCREEN_SCROLLER);
+  return e && e.scrollTop ? { screen: domScreen, top: e.scrollTop } : null;
+}
+function restoreScreenScroll(ss) {
+  if (!ss || ss.screen !== S.screen) return;
+  const e = document.querySelector(SCREEN_SCROLLER);
+  if (e) e.scrollTop = ss.top;
+}
+
 /* The render rule: a state change that affects LAYOUT — rows appearing,
    panels opening, text that moves its neighbours — goes through render();
    a change that affects exactly one control (a save button's label, a
@@ -462,6 +482,7 @@ function restoreFocus(f) {
 function render() {
   const f = captureFocus();
   const ls = captureLogScroll();
+  const ss = captureScreenScroll();
   renderSidebar();
   const root = screenRoot();
   clear(root);
@@ -469,8 +490,10 @@ function render() {
   else if (S.screen === "editor") root.appendChild(screenEditor());
   else if (S.screen === "collector") root.appendChild(screenCollector());
   else root.appendChild(screenSettings());
+  domScreen = S.screen;
   restoreFocus(f);
   restoreLogScroll(ls);
+  restoreScreenScroll(ss);
 }
 
 /* Tail-mode scroll for the log pane, captured/restored around every rebuild:
