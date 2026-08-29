@@ -175,7 +175,8 @@ func run(args []string) error {
 
 // cmdTray runs the tray inline (no args), or installs/uninstalls a login
 // LaunchAgent for it. The tray agent runs at load but is NOT kept alive, so
-// quitting from the menu sticks until next login or reinstall.
+// quitting from the menu sticks until next login or reinstall; the menu's
+// "Remove from Menu Bar" is this uninstall, run from the tray itself.
 func cmdTray(args []string) error {
 	if len(args) == 0 {
 		return withApp(tray.Run)

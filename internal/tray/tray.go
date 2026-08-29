@@ -3,10 +3,12 @@
 // Package tray implements compy's macOS menu-bar item: status line, the
 // CONFIGURATION list (alphabetical, "More…" overflow continuing it, a
 // preset submenu where picking a preset is the activation), "Restart
-// collector", and "Open compy" for everything else. Menu bar v4 —
-// docs/design/handoff/README.md § "5. Menu bar" and its 2026-08-26
-// amendments (alphabetical ordering supersedes C5.2 recency), ACCEPTANCE.md
-// C5.
+// collector", and "Open compy" for everything else, plus "Remove from Menu
+// Bar" (the tray uninstall, run from the menu). The open menu carries key
+// equivalents (keys_darwin.go); there is deliberately no global hotkey.
+// Menu bar v4 — docs/design/handoff/README.md § "5. Menu bar" and its
+// 2026-08-26 amendments (alphabetical ordering supersedes C5.2 recency),
+// ACCEPTANCE.md C5.
 package tray
 
 import (
@@ -21,6 +23,7 @@ import (
 
 	"github.com/bronto-community/compy/internal/app"
 	"github.com/bronto-community/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/launchd"
 )
 
 // refreshInterval is how often the status line and menu indicator icons are
@@ -108,6 +111,10 @@ func onReady(a *app.App) {
 	// black-on-transparent, tinted by AppKit — carries the state by shape
 	// (icons/README.md). Start at stopped until the first sync says better.
 	systray.SetTemplateIcon(iconStopped.data(), iconStopped.data())
+	// The status-item button tooltip is the one tooltip macOS actually
+	// shows (on hovering the icon). Menu ITEM tooltips are invisible in a
+	// status menu, so every item below passes "" — anything that mattered
+	// in one has been moved into visible text (2026-08-29 HIG audit).
 	systray.SetTooltip("compy — local OpenTelemetry Collector manager")
 
 	m := &menu{
@@ -118,18 +125,18 @@ func onReady(a *app.App) {
 		itemIcons:   map[*systray.MenuItem]itemState{},
 	}
 
-	m.status = systray.AddMenuItem("...", "service status")
+	m.status = systray.AddMenuItem("...", "")
 	m.status.Disable()
-	m.statusLine2 = systray.AddMenuItem("...", "service status")
+	m.statusLine2 = systray.AddMenuItem("...", "")
 	m.statusLine2.Disable()
-	m.updates = systray.AddMenuItem("", "a newer collector release is available. update it in Open compy → settings")
+	m.updates = systray.AddMenuItem("", "")
 	m.updates.Disable()
 	m.updates.Hide()
-	m.compyUpdates = systray.AddMenuItem("", "a newer compy release is available: brew upgrade compy")
+	m.compyUpdates = systray.AddMenuItem("", "")
 	m.compyUpdates.Disable()
 	m.compyUpdates.Hide()
 	systray.AddSeparator()
-	header := systray.AddMenuItem("CONFIGURATION", "your configurations")
+	header := systray.AddMenuItem("CONFIGURATION", "")
 	header.Disable()
 	// Fixed slots keep configurations at this menu position even for configs
 	// that appear while the tray runs (systray can only append new items).
@@ -139,20 +146,27 @@ func onReady(a *app.App) {
 		// Plain items, not checkboxes: the three-state indicator icons
 		// (active / going down / going up) carry the state the native
 		// checkmark used to — one indicator system, not two fighting.
-		slot := systray.AddMenuItem("", "activate this configuration")
+		slot := systray.AddMenuItem("", "")
 		slot.Hide()
 		m.slots = append(m.slots, slot)
 		m.slotPresets[i] = map[string]*systray.MenuItem{}
 		go m.handleSlotClicks(i, slot)
 	}
-	m.more = systray.AddMenuItem("More…", "the rest of your configurations")
+	m.more = systray.AddMenuItem("More…", "")
 	m.more.Hide()
 	systray.AddSeparator()
-	m.toggle = systray.AddMenuItem(toggleTitle(false), "stop or start the collector")
-	m.restart = systray.AddMenuItem("Restart collector", "restart the collector")
+	m.toggle = systray.AddMenuItem(toggleTitle(false), "")
+	m.restart = systray.AddMenuItem("Restart collector", "")
 	systray.AddSeparator()
-	openApp := systray.AddMenuItem("Open compy", "open the compy window")
-	quit := systray.AddMenuItem("Quit", "quit the compy menu bar item")
+	// Tail order (HIG): the primary action first after the separator, the
+	// two get-rid-of-it actions grouped at the end with the app-terminating
+	// Quit last — Apple's own convention for menu extras. Remove from Menu
+	// Bar is the honest removal (boots the login item, gone for good); Quit
+	// by contrast only ends this run and the icon returns at login.
+	openApp := systray.AddMenuItem("Open compy", "")
+	remove := systray.AddMenuItem("Remove from Menu Bar", "")
+	quit := systray.AddMenuItem("Quit", "")
+	applyKeyEquivalents(keyEquivalents(m.slots, m.toggle, m.restart, openApp, quit))
 
 	m.sync()
 	go func() {
@@ -187,6 +201,18 @@ func onReady(a *app.App) {
 	go m.handleToggle()
 	go m.handleRestart()
 	go handleOpenApp(openApp)
+	go func() {
+		<-remove.ClickedCh
+		// Same machinery as `compy tray uninstall`. When the tray runs
+		// under its LaunchAgent the bootout inside UninstallAgent SIGTERMs
+		// this very process (which removes the icon — the desired end
+		// state); the plist is already gone by then (UninstallAgent removes
+		// it first), and the Quit below only matters for a foreground run.
+		if err := launchd.UninstallAgent(launchd.TrayLabel); err != nil {
+			fmt.Fprintln(os.Stderr, "compy tray: remove from menu bar:", err)
+		}
+		systray.Quit()
+	}()
 	go func() {
 		<-quit.ClickedCh
 		systray.Quit()
@@ -259,7 +285,7 @@ func (m *menu) sync() {
 		seen[name] = true
 		item, ok := m.moreItems[name]
 		if !ok {
-			item = m.more.AddSubMenuItem(name, "activate "+name)
+			item = m.more.AddSubMenuItem(name, "")
 			m.moreItems[name] = item
 			m.morePresets[name] = map[string]*systray.MenuItem{}
 			go m.handleConfigClicks(name, item)
@@ -310,11 +336,10 @@ func (m *menu) syncRow(item *systray.MenuItem, presetItems map[string]*systray.M
 		seen[preset] = true
 		pi, ok := presetItems[preset]
 		if !ok {
-			pi = item.AddSubMenuItem(preset, "activate "+name+" · "+preset)
+			pi = item.AddSubMenuItem(preset, "")
 			presetItems[preset] = pi
 			go m.handlePresetClicks(pi)
 		}
-		pi.SetTooltip("activate " + name + " · " + preset)
 		m.setPresetOwner(pi, name, preset)
 		m.setItemIcon(pi, presetState(name, preset, st))
 	}

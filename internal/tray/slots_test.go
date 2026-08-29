@@ -621,15 +621,16 @@ func TestWindowExe(t *testing.T) {
 }
 
 // TestUpdateLines pins the availability notices under the status block:
-// collector and compy updates are distinguished, compy's carries the way to
-// get it, both at once shows both, and nothing known shows nothing.
+// collector and compy updates are distinguished, each carries the way to
+// get it VISIBLY (menu-item tooltips never show on macOS — 2026-08-29 HIG
+// audit), both at once shows both, and nothing known shows nothing.
 func TestUpdateLines(t *testing.T) {
 	cases := []struct {
 		name, collector, compy, want1, want2 string
 	}{
-		{"collector only", "0.161.0", "", "Collector 0.161.0 available", ""},
+		{"collector only", "0.161.0", "", "Collector 0.161.0 available — Open compy to update", ""},
 		{"compy only", "", "0.2.0", "", "compy 0.2.0 available — brew upgrade compy"},
-		{"both", "0.161.0", "0.2.0", "Collector 0.161.0 available", "compy 0.2.0 available — brew upgrade compy"},
+		{"both", "0.161.0", "0.2.0", "Collector 0.161.0 available — Open compy to update", "compy 0.2.0 available — brew upgrade compy"},
 		{"none", "", "", "", ""},
 	}
 	for _, c := range cases {

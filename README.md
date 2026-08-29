@@ -104,7 +104,13 @@ newer upstream release of an installed one.
 **UI surfaces.** `compy ui` serves a localhost-only web UI, `compy window`
 opens the same UI in a native window, and `compy tray` puts a status icon
 in the menu bar (`compy tray install` registers it as a login item).
-Everything they expose also exists in the CLI.
+Everything they expose also exists in the CLI. The menu bar is fully
+keyboard-drivable: Ctrl+F8 (macOS's "Move focus to status menus" shortcut)
+reaches the icon without a mouse, and while the menu is open, `1`–`9`
+activate the listed configurations, `s` stops/starts the collector, `r`
+restarts it, `o` opens the compy window, and ⌘Q quits. The menu's "Remove
+from Menu Bar" takes the icon out for good (it removes the login item);
+"Quit" only ends the current run, and the icon returns at next login.
 
 **Factory reset.** `compy factory-reset --yes` uninstalls the
 LaunchAgent and wipes compy's state directory (`~/Library/Application

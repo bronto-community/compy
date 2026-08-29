@@ -100,12 +100,13 @@ func portsSegment(ports []int) string {
 }
 
 // updateLines renders the disabled availability lines under the status
-// block: one for a newer collector release, one for a newer compy release
-// (with the way to get it — the tray hosts no actions). "" hides a line;
-// both known shows both.
+// block: one for a newer collector release, one for a newer compy release,
+// each with the way to get it — visibly, since menu-item tooltips (where
+// the pointer used to live) never show on macOS, and the tray itself hosts
+// no update actions. "" hides a line; both known shows both.
 func updateLines(collectorLatest, compyLatest string) (collectorLine, compyLine string) {
 	if collectorLatest != "" {
-		collectorLine = "Collector " + collectorLatest + " available"
+		collectorLine = "Collector " + collectorLatest + " available — Open compy to update"
 	}
 	if compyLatest != "" {
 		compyLine = "compy " + compyLatest + " available — brew upgrade compy"
