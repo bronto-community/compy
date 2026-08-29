@@ -9,10 +9,9 @@
 // the status item's NSMenu — as NSApp.delegate. So: read the unexported id
 // off the *systray.MenuItem, find the NSMenuItem by tag, set the
 // equivalent. systray's item updates (SetTitle/Enable/…) never touch
-// keyEquivalent, so an application sticks until we change it ourselves
-// (the static items are set once at build; the config-row digits re-apply
-// each sync because submenu rows must carry none — see digitEquivalents)
-// of the process — no re-apply on sync needed.
+// keyEquivalent, so an application sticks for the life of the process —
+// everything (static items and config-row digits alike) is set once at
+// build, no re-apply on sync needed.
 package tray
 
 /*
@@ -97,8 +96,8 @@ type keyEquiv struct {
 // r on Restart (disabled items never fire, so r is inert while stopped),
 // o on Open compy, ⌘Q on Quit. Plain-key equivalents override the menu's
 // type-to-select — accepted trade. Remove from Menu Bar gets no key on
-// purpose: it is the destructive one. The config-row digits are the
-// dynamic half — digitEquivalents, re-applied per sync.
+// purpose: it is the destructive one. The config-row digits are the other
+// half — digitEquivalents, equally static.
 func keyEquivalents(toggle, restart, open, quit *systray.MenuItem) []keyEquiv {
 	return []keyEquiv{
 		{toggle, "s", false},
@@ -109,26 +108,32 @@ func keyEquivalents(toggle, restart, open, quit *systray.MenuItem) []keyEquiv {
 }
 
 // digitEquivalents assigns digits 1–9 to the first nine inline config
-// slots — but only to rows WITHOUT a preset submenu: a submenu parent takes
-// no click (picking a preset there is the activation), so its digit would
-// fire nothing, and AppKit renders the equivalent under the submenu
-// chevron (the overlap the owner reported). Positional numbering is kept —
-// a submenu row's digit is simply absent, so digit d always names the d-th
-// visible row even when some digits are missing. hasSubmenu[i] mirrors the
-// slot's current preset submenu; "" clears a previously set digit when a
-// row grows a submenu. Click handlers resolve slotNames[i] at click time,
-// so a resort retargets for free (TestDigitEquivalents pins both).
-func digitEquivalents(slots []*systray.MenuItem, hasSubmenu []bool) []keyEquiv {
+// slots, submenu rows included: digit d always means "activate the d-th
+// row's config with its current preset". On a preset-submenu parent the
+// digit fires the parent's action during tracking (measured 2026-08-29 on
+// macOS 26.5.2 with a throwaway status-item app) — systray delivers that as
+// a slot click, and handleSlotClicks resolves the preset at click time, so
+// the digit does on a multi-preset row exactly what a mouse click does on a
+// single-preset one. It does NOT open the submenu (AppKit fires the action
+// and closes the menu; no public API opens a submenu from a key), and
+// AppKit draws no glyph on submenu rows (the chevron takes the slot — no
+// overlap, the digit is just invisible there; positional numbering keeps it
+// guessable). Presets inside submenus deliberately carry NO digits: a
+// closed submenu's equivalents fire from the parent level in depth-first
+// menu order — a preset "3" inside row 2 would steal digit 3 from the
+// visible row 3 — and once a submenu is open, keyboard navigation swallows
+// plain keys entirely, so preset digits would misfire when closed and be
+// dead when open (same empirics). Applied once at build: slots sit at
+// fixed menu positions and hidden slots keep their NSMenuItem, so digits
+// never need re-applying; a resort retargets for free because handlers
+// resolve slotNames[i] at click time (TestDigitsRetargetOnResort).
+func digitEquivalents(slots []*systray.MenuItem) []keyEquiv {
 	var out []keyEquiv
 	for i, slot := range slots {
 		if i >= 9 {
 			break
 		}
-		key := strconv.Itoa(i + 1)
-		if i < len(hasSubmenu) && hasSubmenu[i] {
-			key = "" // clears the equivalent on the NSMenuItem
-		}
-		out = append(out, keyEquiv{slot, key, false})
+		out = append(out, keyEquiv{slot, strconv.Itoa(i + 1), false})
 	}
 	return out
 }

@@ -26,29 +26,26 @@ func TestKeyEquivalents(t *testing.T) {
 	}
 }
 
-// TestDigitEquivalents pins the submenu rule (2026-08-29 owner report: the
-// digit overlapped the submenu chevron — and a submenu parent takes no
-// click anyway): a slot with a preset submenu gets key "" (clearing any
-// previous digit), positional numbering is kept for the rest, and only
-// slots 1–9 ever carry digits.
+// TestDigitEquivalents pins the 2026-08-29 measured design: every one of
+// the first nine slots carries its positional digit, preset-submenu rows
+// INCLUDED — the digit fires the parent's action during menu tracking
+// (empirics, macOS 26.5.2), which handleSlotClicks turns into "activate
+// this config with its current preset". Only slots 1–9 carry digits, and
+// presets inside submenus never do (their equivalents would fire from the
+// parent level in depth-first order, stealing later rows' digits — see
+// digitEquivalents' doc comment).
 func TestDigitEquivalents(t *testing.T) {
 	slots := make([]*systray.MenuItem, maxInline)
 	for i := range slots {
 		slots[i] = &systray.MenuItem{}
 	}
-	hasSub := make([]bool, maxInline)
-	hasSub[1] = true // 2nd row has a preset submenu
-	eqs := digitEquivalents(slots, hasSub)
+	eqs := digitEquivalents(slots)
 	if len(eqs) != 9 {
 		t.Fatalf("got %d digit entries, want 9 (the 10th slot carries none)", len(eqs))
 	}
 	for i, e := range eqs {
-		wantKey := strconv.Itoa(i + 1)
-		if i == 1 {
-			wantKey = "" // submenu row: digit cleared, numbering stays positional
-		}
-		if e.item != slots[i] || e.key != wantKey || e.cmd {
-			t.Errorf("eqs[%d] = {%q cmd=%v}, want key %q on slot %d", i, e.key, e.cmd, wantKey, i)
+		if e.item != slots[i] || e.key != strconv.Itoa(i+1) || e.cmd {
+			t.Errorf("eqs[%d] = {%q cmd=%v}, want key %q on slot %d", i, e.key, e.cmd, strconv.Itoa(i+1), i)
 		}
 	}
 }
@@ -64,7 +61,7 @@ func TestDigitsRetargetOnResort(t *testing.T) {
 	for i := range slots {
 		slots[i] = &systray.MenuItem{}
 	}
-	eqs := digitEquivalents(slots, make([]bool, maxInline))
+	eqs := digitEquivalents(slots)
 
 	// digitTarget mirrors the sync()+click path: what config does digit d
 	// activate for this set of names?

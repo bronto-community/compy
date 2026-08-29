@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -79,11 +78,6 @@ type menu struct {
 	// icon is the state the menu-bar icon currently shows, so sync() only
 	// calls into systray when it actually changes (not every 5s tick).
 	icon iconState
-
-	// digitSubs mirrors which slots carried a preset submenu at the last
-	// digit-equivalent application (digits skip submenu rows); sync
-	// re-applies only when this changes.
-	digitSubs []bool
 
 	// itemIcons is the indicator each config row / preset item currently
 	// shows, so setItemIcon only calls into systray on a change. An item
@@ -172,7 +166,7 @@ func onReady(a *app.App) {
 	openApp := systray.AddMenuItem("Open compy", "")
 	remove := systray.AddMenuItem("Remove from Menu Bar", "")
 	quit := systray.AddMenuItem("Quit", "")
-	applyKeyEquivalents(keyEquivalents(m.toggle, m.restart, openApp, quit))
+	applyKeyEquivalents(append(keyEquivalents(m.toggle, m.restart, openApp, quit), digitEquivalents(m.slots)...))
 
 	m.sync()
 	go func() {
@@ -284,18 +278,6 @@ func (m *menu) sync() {
 		slot.SetTitle(name)
 		slot.Show()
 		m.syncRow(slot, m.slotPresets[i], name, byName[name], st)
-	}
-
-	// Digits belong only to rows without a preset submenu (a submenu parent
-	// takes no click, and AppKit draws the equivalent under the chevron).
-	// Re-applied only when submenu-ness changes across the nine slots.
-	hasSub := make([]bool, len(m.slots))
-	for i := range m.slots {
-		hasSub[i] = len(m.slotPresets[i]) > 0
-	}
-	if !slices.Equal(hasSub, m.digitSubs) {
-		m.digitSubs = hasSub
-		applyKeyEquivalents(digitEquivalents(m.slots, hasSub))
 	}
 
 	seen := map[string]bool{}
@@ -528,7 +510,12 @@ func (m *menu) presetFor(name string) string {
 }
 
 // handleSlotClicks resolves the slot's current config at click time — the
-// assignment may have changed since the menu was drawn.
+// assignment may have changed since the menu was drawn. Clicks arrive here
+// from the mouse on single-preset rows, and from the digit key equivalents
+// on ALL rows: on a preset-submenu parent the mouse never delivers a click
+// (picking a preset there is the activation) but the digit does (AppKit
+// fires the parent's action during tracking), landing on the same
+// "activate with current preset" path.
 func (m *menu) handleSlotClicks(i int, slot *systray.MenuItem) {
 	for range slot.ClickedCh {
 		m.mu.Lock()
