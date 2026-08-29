@@ -2656,8 +2656,21 @@ document.addEventListener("click", (e) => {
 // always, so the browser's save dialog never opens; outside the editor the
 // shortcut otherwise does nothing. No other shortcuts.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && S.presetsOpenId) { S.presetsOpenId = null; render(); return; }
-  if (e.key === "Escape" && S.preflight) { S.preflight = null; render(); return; }
+  // Escape closes the transient panel that is open — the platform
+  // expectation, and the same outcome as each panel's cancel button (the
+  // inline editor's draft is as gone as its cancel makes it). One panel per
+  // press, in roughly topmost order; an open <dialog> handles its own
+  // Escape, so it must not also close a panel underneath.
+  if (e.key === "Escape" && !document.querySelector("dialog[open]")) {
+    if (S.presetsOpenId) { S.presetsOpenId = null; render(); return; }
+    if (S.preflight) { S.preflight = null; render(); return; }
+    if (S.confirm) { S.confirm = null; render(); return; }
+    if (S.inline) { S.inline = null; S.inlineDraft = null; render(); return; }
+    if (S.newOpen) { S.newOpen = false; render(); return; }
+    if (S.unlockAsk) { S.unlockAsk = false; render(); return; }
+    if (S.resetArm) { S.resetArm = false; S.resetTyped = ""; render(); return; }
+    if (S.adoptAsk) { S.adoptAsk = false; render(); return; }
+  }
   if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
     e.preventDefault();
     if (!editorDirty()) return;
