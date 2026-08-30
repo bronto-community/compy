@@ -257,3 +257,46 @@ strip button and form for free).
   template's own `description` (which names the research doc's path) —
   a fixed UI-side sentence would hardcode one template's docs into every
   template's form.
+
+---
+
+## Amendment 3 — THE CORRECTED MODEL (owner-confirmed, supersedes the wizard framing above)
+
+Templating is a property of the config source, available to users as
+authors — tier 3 of the ladder, not a creation wizard and not a special
+object. Anyone can WRITE a templated config, exactly as anyone can write
+`${env:VAR}` and get cards. No detachment exists: editing is editing the
+template source; the form is a second view of the same file.
+
+- **Tier detection is textual**: a config whose source opens with the
+  schema front matter (fields/sections, JSON-subset YAML) + `---` +
+  template body is tier 3.
+- **Storage**: the SOURCE lives at `configs/<name>/config.tmpl`; the
+  rendered output is written to `configs/<name>/config.yaml` on every
+  successful save — so the collector's `--config` path, the plist, and
+  everything downstream stay untouched, and what runs is a real file.
+  The pristine hash covers the SOURCE (it is the config); sync/remote
+  transfer the source — publishing templated configs needs zero new
+  machinery.
+- **Save pipeline**: parse schema → apply stored knob values (defaults
+  for new fields) → render → validate rendered (validate-or-restore,
+  same honesty as YAML saves) → store source + rendered + knobs.
+  Form and source feed the SAME save; both dirty → source applies
+  first, then knobs.
+- **Editor**: both views, both editable, always visible for tier 3 —
+  form (from the source's own schema + meta knobs) above, source below.
+  Validation failures show the rendered excerpt around the error
+  (rendered→source line mapping deferred, recorded friction).
+- **Cards/presets**: derived from the RENDERED yaml (that is what
+  runs); the secret rule stands (type: secret → `${env:}` + comment).
+- **The catalog entry is a starter**: creating from "custom endpoints"
+  copies its SOURCE into the new config — immediately user-editable
+  tier 3, nothing special about it afterward.
+- **Boring-template rule** downgrades from law to authoring guidance
+  for user templates; the provided helpers (procs, exps,
+  metrics_groups, upper, slug) remain the vocabulary.
+- Recorded frictions (accepted): two expansion syntaxes in one file;
+  rendered-line error reporting; hand-written schema at tier 3; the
+  dual-dirty save rule.
+- Existing template-born configs from the wizard era hold rendered
+  plain YAML — they simply ARE tier 1/2 configs; no migration.
