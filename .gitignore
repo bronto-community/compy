@@ -6,3 +6,6 @@ dist/
 /otelcol-compy
 /otelcol-compy.version
 packaging/collector/_build/
+
+# owner ruling 2026-08-30: research notes stay local
+docs/research/

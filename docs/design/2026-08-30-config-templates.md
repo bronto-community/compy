@@ -1,8 +1,8 @@
 # Config templates — design note
 
 Owner-ruled design, settled 2026-08-30 in conversation. This note is the
-build brief. Vendor facts referenced here come from
-docs/research/2026-08-30-otlp-vendor-landscape.md.
+build brief. Vendor facts referenced here come from the OTLP vendor
+landscape research (kept local, not committed — owner ruling 2026-08-30).
 
 ## The three-tier ladder
 
