@@ -438,6 +438,63 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .newcfg .cancel { padding-bottom: 26px; }
 .newcfg .create { margin-bottom: 22px; }
 .nomatch { padding: 18px 8px; font-size: 12px; color: var(--dim2); }
+.newcfg .fieldset.tpls { flex: 0 0 auto; }
+.newcfg .tpl-row { display: flex; gap: 8px; }
+.newcfg .tpl-row .btn.quiet:hover { color: var(--accent); border-color: var(--accentLine); }
+
+/* ── template form (schema-driven; creation + change-options) ─────────
+   The newcfg panel's look, grown a body: field cards reuse the value-card
+   idiom (.val) plus a muted helper line; sections use the collapsed
+   disclosure feel of yaml-collapsed; backend rows are bordered sub-cards. */
+.tform {
+  margin: 12px 0 16px; padding: 16px; border: 1px solid var(--border3);
+  border-radius: 6px; background: var(--panel);
+  display: flex; flex-direction: column; gap: 14px;
+}
+/* under a config row (change options), the inline-under-the-row idiom */
+.cfg-row-wrap .tform { margin: 0 0 12px; border-color: var(--border2); background: var(--raise); }
+.tform .tf-head { display: flex; align-items: center; gap: 14px; }
+.tform .tf-desc { font-size: 12px; color: var(--muted); line-height: 1.55; margin-top: -6px; }
+.tform .fieldset.tf-name { display: flex; flex-direction: column; gap: 6px; width: 300px; }
+.tform .fieldset.tf-name .lbl {
+  font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+}
+.tform .fieldset.tf-name .foot { font-size: 11px; color: var(--dim2); }
+.tform .fieldset.tf-name .foot.bad { color: var(--err); }
+.tf-grid { grid-template-columns: repeat(2, 1fr); }
+.tf-field { background: var(--window); }
+.tf-field .k .name { text-transform: lowercase; }
+.tf-field .d { font-size: 11px; color: var(--dim); line-height: 1.5; }
+.tf-field.secret { border-style: dashed; }
+.tf-field.secret .v input[disabled] { color: var(--dim2); background: transparent; border-style: dashed; }
+.tf-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.tf-check {
+  display: flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--text2); cursor: pointer;
+}
+.tf-check input { accent-color: var(--accent); margin: 0; }
+.tf-switch { display: flex; background: none; border: 0; padding: 2px 0; cursor: pointer; }
+.tf-switch:focus-visible { outline: 1px solid var(--border3); outline-offset: 2px; }
+button.tf-sechead {
+  display: flex; align-items: center; gap: 10px; width: fit-content;
+  background: none; border: 0; padding: 0; cursor: pointer;
+}
+button.tf-sechead[disabled] { cursor: default; opacity: 1; }
+.tf-sechead .caret { display: flex; color: var(--dim2); }
+.tf-sechead .caret.closed svg { transform: rotate(-90deg); }
+.tf-sechead .why { font-size: 11.5px; color: var(--dim); text-transform: none; letter-spacing: 0; }
+.tf-sechead:not([disabled]):hover .colhead { color: var(--muted); }
+.tf-rows { display: flex; flex-direction: column; gap: 10px; }
+.tf-brow {
+  border: 1px solid var(--border2); border-radius: 5px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.tf-browhead { display: flex; align-items: center; gap: 10px; }
+.tf-browhead .x { font-size: 11px; color: var(--dim); }
+.tf-browhead .x:hover { color: var(--err); }
+.tf-more, .tf-add { width: fit-content; font-size: 11.5px; }
+.tf-add { color: var(--muted); }
+.tf-add:hover { color: var(--accent); }
 
 /* ── editor ───────────────────────────────────────────────────────── */
 .ed-head {

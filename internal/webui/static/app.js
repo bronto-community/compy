@@ -131,6 +131,8 @@ const S = {
   note: null, noteTimer: null,
   flash: null,             // key of the control showing its brief "saved" mark
   newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
+  templates: null,         // catalog schemas (GET /api/templates), fetched once
+  tform: null,             // the schema-driven template form (openTemplateForm)
   confirm: null,           // { text, verb, id, kind } — the destructive inline confirm, under row `id`
   presetSel: {},           // { configName: presetName }
   presetsOpenId: null,
@@ -348,6 +350,11 @@ async function loadCollector() {
   S.log = (log && log.log) || "";
 }
 async function loadDistros() { S.distros = (await api("/api/distros")) || []; }
+// The catalog is compiled into the backend, so once is enough.
+async function loadTemplates() {
+  if (!S.templates) S.templates = (await api("/api/templates")) || [];
+  return S.templates;
+}
 async function loadSettings() { S.settings = await api("/api/settings"); }
 async function loadYAML(name) {
   const d = await api(cfgURL(name));
@@ -406,14 +413,15 @@ async function enterRoute() {
 let navHash = location.hash;
 window.addEventListener("hashchange", async () => {
   if (location.hash === navHash) return;
-  if (editorDirty() || inlineDirty()) {
+  if (editorDirty() || inlineDirty() || S.tform) {
     const target = location.hash;
     location.hash = navHash;
     const q = editorDirty() ? "leave this configuration? unsaved changes are lost."
-      : "leave this screen? the unsaved preset draft is lost.";
+      : S.tform ? "leave this screen? what's in the template form is lost."
+        : "leave this screen? the unsaved preset draft is lost.";
     if (!(await ask(q, null))) return;
     cm && (cmDirty = false);
-    S.inline = null; S.inlineDraft = null;
+    S.inline = null; S.inlineDraft = null; S.tform = null;
     location.hash = target;
     return;
   }
@@ -421,7 +429,7 @@ window.addEventListener("hashchange", async () => {
   enterRoute();
 });
 window.addEventListener("beforeunload", (e) => {
-  if (!editorDirty() && !inlineDirty()) return;
+  if (!editorDirty() && !inlineDirty() && !S.tform) return;
   e.preventDefault();
   e.returnValue = "leave this configuration? unsaved changes are lost.";
 });
@@ -793,6 +801,9 @@ function screenConfigs() {
   wrap.appendChild(strips);
 
   const scroll = el("div", { class: "table-scroll" });
+  // The creation form scrolls with the table (it can be tall); the
+  // change-options form instead sits under its config's row, below.
+  if (S.tform && !S.tform.forName) scroll.appendChild(templateForm());
   scroll.appendChild(el("div", { class: "cfg-grid cfg-head colhead" }, [
     el("span"), span("", "name"), span("", "preset"), el("span"),
   ]));
@@ -814,7 +825,7 @@ function screenConfigs() {
    supersedes the shown-by-default rule from the copy round; the old
    compy.helpDismissed localStorage keys are swept at boot). */
 const HELP_COPY = {
-  configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml, fetch it from a url, or paste an otelbin.io share link.",
+  configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml, fetch it from a url, paste an otelbin.io share link, or fill in a template with your own endpoints.",
   collector: "these numbers are the collector's own, scraped from its telemetry endpoint, and listening shows only ports the process actually has open. the log below is the collector's output, grouped by level and filterable. restart and stop live here; the configurations screen picks what runs.",
   settings: "appearance, and how apps find compy: the advertised endpoint, its protocol, and the system-wide OTEL_* toggle. global variables are values every configuration's yaml can reference; the collector table downloads, updates, or replaces the binary every config runs on. the danger area at the bottom deletes everything compy manages.",
   editor: "a configuration is one whole collector config.yaml plus its presets: named sets of values for the ${VAR} references in the yaml. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. cmd+s saves, and the save button shows amber while anything is unsaved.",
@@ -913,9 +924,10 @@ function configRow(info) {
   const many = list.length > 1;
   const host = hostOf(info);
 
-  const typeIcon = { builtin: "package", user: "user", url: "link" }[origin];
+  const typeIcon = { builtin: "package", user: "user", url: "link", tmpl: "template" }[origin];
   const typeTitle = origin === "url" ? "fetched from " + host
-    : origin === "builtin" ? "built in to compy" : "yours";
+    : origin === "builtin" ? "built in to compy"
+      : origin === "tmpl" ? "from a template" : "yours";
 
   // The whole row opens the config editor (same action as the name) so the
   // dead space between columns is clickable; interactive children are
@@ -1021,7 +1033,7 @@ function configRow(info) {
       class: "ico" + (sync.on ? " accent" : ""), title: sync.title,
       attrs: sync.on ? null : { disabled: "" },
       on: { click: sync.run },
-    }, [icon(origin === "builtin" ? "undo" : "refresh", 13)]),
+    }, [icon(origin === "builtin" ? "undo" : origin === "tmpl" ? "sliders" : "refresh", 13)]),
     el("button", {
       class: "ico del", title: isActiveCfg ? "can't delete the running config" : "delete " + name,
       attrs: isActiveCfg ? { disabled: "" } : null,
@@ -1038,10 +1050,20 @@ function configRow(info) {
   if (S.confirm && S.confirm.id === name) wrap.appendChild(confirmRow());
   if (S.preflight && S.preflight.name === name) wrap.appendChild(preflightPanel(info));
   if (S.inline && S.inline.name === name) wrap.appendChild(inlinePresetEditor(info));
+  if (S.tform && S.tform.forName === name) wrap.appendChild(templateForm());
   return wrap;
 }
 
 function syncAction(info, origin, host) {
+  // Template-born: the sync slot's third occupant. Always live — changing
+  // options is the point even when nothing is modified; a hand-edited
+  // config gets the discard confirm at submit time (the 400 arms it).
+  if (origin === "tmpl") {
+    return {
+      on: true, title: "change options and re-render",
+      run: () => openChangeOptions(info),
+    };
+  }
   if (origin === "builtin") {
     if (!info.modified) return { on: false, title: "this is the shipped version, nothing to reset", run: () => {} };
     return {
@@ -1402,6 +1424,9 @@ const BLANK_CONFIG = [
 
 function openNew() {
   S.newOpen = true; S.newName = ""; S.newUrl = ""; S.newErr = null; S.fetching = false;
+  // The template options render from the catalog schemas; fetch once,
+  // quietly — the strip works without them until they arrive.
+  loadTemplates().then(render, () => {});
   render();
 }
 function newConfigStrip() {
@@ -1432,6 +1457,17 @@ function newConfigStrip() {
         text: S.fetching ? "fetching…" : S.newErr || "empty means a blank config · otelbin.io links work",
       }),
     ]),
+    // The third way in: a guided form per catalog template — label and
+    // tooltip come from the template's own schema, so a second template
+    // appears here for free.
+    S.templates && S.templates.length ? el("div", { class: "fieldset tpls" }, [
+      span("lbl", "or from a template"),
+      el("div", { class: "tpl-row" }, S.templates.map((t) => el("button", {
+        class: "btn quiet", text: t.name, title: t.description,
+        on: { click: () => openTemplateForm(t, null) },
+      }))),
+      el("span", { class: "foot", text: "a form for your endpoints" }),
+    ]) : null,
     el("button", { class: "act cancel", text: "cancel", on: { click: () => { S.newOpen = false; render(); } } }),
     el("button", {
       class: "btn accent create", text: S.fetching ? "fetching…" : "create",
@@ -1478,6 +1514,264 @@ async function copyText(text, confirmation) {
   } catch (e) { showError(new Error("could not reach the clipboard")); }
 }
 
+/* ── the template form (config templates) ─────────────────────────────
+   One form, built generically from a catalog schema (GET /api/templates):
+   declaration order is form order, sections group, `collapsed` sections and
+   per-row `advanced` fields sit behind disclosures. The same form serves
+   creation (POST from-template) and change-options (POST re-render, seeded
+   from meta.knobs) — forName says which. Secrets are shown but never
+   collected here: they have no value at render time (the design's one
+   special rule), so their cards are placeholders naming where the value
+   actually goes — a preset, after create. */
+function openTemplateForm(tpl, forName) {
+  const from = forName ? ((byName(forName) || {}).meta || {}).knobs : null;
+  S.tform = {
+    tpl, forName,
+    name: forName ? "" : S.newName || "",
+    knobs: seedKnobs(tpl, from), // draft: stored knobs win, defaults fill
+    secOpen: {},                 // collapsed sections opened by hand
+    rowOpen: {},                 // per-backend-row "more options"
+    errs: {},                    // field-adjacent problems, keyed like the server's
+    busy: false,
+    discardAsk: false,           // a "locally modified" 400 armed the discard confirm
+  };
+  S.newOpen = false;
+  render();
+}
+async function openChangeOptions(info) {
+  clearError();
+  try { await loadTemplates(); } catch (e) { showError(e); return; }
+  const tpl = (S.templates || []).find((t) => t.name === (info.meta && info.meta.template));
+  // A rendered config is a plain config; a retired template strands
+  // nothing — there is just no form to reopen.
+  if (!tpl) { showError(new Error("the " + ((info.meta && info.meta.template) || "") + " template is no longer in the catalog, so its options can't be changed. the config still works as it is.")); return; }
+  openTemplateForm(tpl, info.name);
+}
+
+// One field card — label, field-adjacent error, control, muted helper line.
+// path is the server's error key ("backends[0].endpoint"); row is the draft
+// object the control writes into.
+function tfField(f, fl, row, path) {
+  const err = f.errs[path];
+  const clearErr = () => { if (f.errs[path]) { delete f.errs[path]; render(); } };
+  let control;
+  if (fl.type === "secret") {
+    // No value here, honestly: named and described, but visibly not an
+    // input — the key is collected in the preset after create.
+    control = el("input", {
+      class: "field", attrs: { disabled: "", placeholder: f.forName ? "lives in the preset — unchanged here" : "collected in the preset after create" },
+    });
+  } else if (fl.type === "choice") {
+    control = el("select", {
+      class: "field", attrs: { "data-fk": "tf:" + path, "aria-label": fl.label || fl.name },
+      on: { change: (e) => { row[fl.name] = e.target.value; clearErr(); } },
+    }, (fl.options || []).map((o) => el("option", { text: o, attrs: { value: o } })));
+    control.value = row[fl.name];
+  } else if (fl.type === "multi") {
+    control = el("div", { class: "tf-checks" }, (fl.options || []).map((o) => {
+      const box = el("input", {
+        attrs: { type: "checkbox", "data-fk": "tf:" + path + ":" + o },
+        props: { checked: (row[fl.name] || []).indexOf(o) > -1 },
+        on: {
+          change: (e) => {
+            const cur = (row[fl.name] || []).filter((x) => x !== o);
+            if (e.target.checked) cur.push(o);
+            // schema order, not click order
+            row[fl.name] = (fl.options || []).filter((x) => cur.indexOf(x) > -1);
+            clearErr();
+          },
+        },
+      });
+      return el("label", { class: "tf-check" }, [box, span("", o)]);
+    }));
+  } else if (fl.type === "toggle") {
+    control = el("button", {
+      class: "tf-switch",
+      attrs: { type: "button", role: "switch", "aria-checked": row[fl.name] ? "true" : "false", "aria-label": fl.label || fl.name, "data-fk": "tf:" + path },
+      on: { click: () => { row[fl.name] = !row[fl.name]; render(); } },
+    }, [el("span", { class: "switch" + (row[fl.name] ? " on" : "") }, [el("i")])]);
+  } else { // slug | url | string
+    control = el("input", {
+      class: "field",
+      attrs: { spellcheck: "false", "data-fk": "tf:" + path, "aria-label": fl.label || fl.name, placeholder: fl.optional ? "optional" : null },
+      props: { value: row[fl.name] || "" },
+      on: { input: (e) => { row[fl.name] = e.target.value; clearErr(); } },
+    });
+  }
+  return el("div", { class: "val tf-field" + (fl.type === "secret" ? " secret" : "") }, [
+    el("div", { class: "k" }, [
+      el("span", { class: "name", text: fl.label || fl.name }),
+      el("span", { class: "grow" }),
+      err ? span("field-err sans", err) : null,
+    ]),
+    el("div", { class: "v" }, [control]),
+    fl.description ? el("div", { class: "d sans", text: fl.description }) : null,
+  ]);
+}
+function tfGrid(f, fields, row, prefix) {
+  return el("div", { class: "vals tf-grid" },
+    fields.map((fl) => tfField(f, fl, row, prefix + fl.name)));
+}
+
+// The repeat group: one card per backend, primary fields up front and the
+// advanced ones behind a per-row disclosure; +/✕ respect the schema bounds.
+function tfBackends(f) {
+  const rep = f.tpl.backends;
+  const rows = f.knobs.backends;
+  const primary = (rep.fields || []).filter((x) => !x.advanced);
+  const adv = (rep.fields || []).filter((x) => x.advanced);
+  const wrap = el("div", { class: "tf-rows" });
+  rows.forEach((row, i) => {
+    const open = !!f.rowOpen[i];
+    const canDel = rows.length > rep.min;
+    wrap.appendChild(el("div", { class: "tf-brow" }, [
+      el("div", { class: "tf-browhead" }, [
+        span("colhead", "backend " + (i + 1) + (row.name ? " · " + row.name : "")),
+        el("span", { class: "grow" }),
+        el("button", {
+          class: "act x", text: "✕",
+          title: canDel ? "remove this backend" : "a config needs at least " + rep.min + (rep.min === 1 ? " backend" : " backends"),
+          attrs: canDel ? null : { disabled: "" },
+          on: { click: () => { rows.splice(i, 1); f.errs = {}; f.rowOpen = {}; render(); } },
+        }),
+      ]),
+      tfGrid(f, primary, row, "backends[" + i + "]."),
+      adv.length ? el("button", {
+        class: "act tf-more", text: open ? "fewer options ▾" : "more options ▸",
+        on: { click: () => { f.rowOpen[i] = !open; render(); } },
+      }) : null,
+      open ? tfGrid(f, adv, row, "backends[" + i + "].") : null,
+    ]));
+  });
+  const canAdd = rows.length < rep.max;
+  wrap.appendChild(el("button", {
+    class: "act tf-add", text: "+ add backend",
+    title: canAdd ? "add another backend" : "at most " + rep.max + " backends",
+    attrs: canAdd ? null : { disabled: "" },
+    on: { click: () => { rows.push(seedRow(rep.fields, null)); render(); } },
+  }));
+  return wrap;
+}
+
+function templateForm() {
+  const f = S.tform;
+  const tpl = f.tpl;
+  const wrap = el("div", { class: "tform" });
+
+  /* head: what this is, and (creating) the config's name */
+  const s = slug(f.name);
+  const taken = !!(s && byName(s));
+  const nameErr = f.errs.__name || (taken ? s + " already exists" : null);
+  wrap.appendChild(el("div", { class: "tf-head" }, [
+    span("colhead", f.forName ? "change options · " + f.forName : "new configuration · " + tpl.name),
+    el("span", { class: "grow" }),
+    el("button", { class: "act", text: "cancel", on: { click: () => { S.tform = null; render(); } } }),
+    el("button", {
+      class: "btn accent", text: f.busy ? (f.forName ? "re-rendering…" : "creating…") : (f.forName ? "re-render" : "create"),
+      attrs: f.busy ? { disabled: "" } : null,
+      on: { click: () => submitTemplateForm(false) },
+    }),
+  ]));
+  // The template's own description doubles as the helper line — for the
+  // shipped template it names the vendor tables in the docs.
+  if (tpl.description) wrap.appendChild(el("div", { class: "tf-desc sans", text: tpl.description }));
+  if (!f.forName) {
+    wrap.appendChild(el("div", { class: "fieldset tf-name" }, [
+      span("lbl", "name"),
+      el("input", {
+        class: "field",
+        attrs: { placeholder: "my collector", spellcheck: "false", "data-fk": "tf:__name", "aria-label": "name" },
+        props: { value: f.name },
+        on: { input: (e) => { f.name = e.target.value; delete f.errs.__name; render(); } },
+      }),
+      el("span", { class: "foot" + (nameErr ? " bad" : ""), text: nameErr || (!f.name ? "lowercase, digits, dashes" : "saved as " + s) }),
+    ]));
+  }
+
+  /* body: fields without a section first, then sections in declaration
+     order — the backends repeat group renders under its namesake section. */
+  const loose = (tpl.fields || []).filter((fl) => !fl.section);
+  if (loose.length) wrap.appendChild(tfGrid(f, loose, f.knobs, ""));
+  for (const sec of tpl.sections || []) {
+    const secFields = (tpl.fields || []).filter((fl) => fl.section === sec.id);
+    const isBackends = !!tpl.backends && sec.id === "backends";
+    if (!isBackends && !secFields.length) continue;
+    const open = !sec.collapsed || !!f.secOpen[sec.id];
+    // A backends-level error ("backends: need 1 to 8 entries") belongs to
+    // the group, not a field.
+    const groupErr = isBackends ? f.errs.backends : null;
+    wrap.appendChild(el("button", {
+      class: "tf-sechead" + (sec.collapsed ? " toggles" : ""),
+      attrs: sec.collapsed ? { type: "button", "aria-expanded": open ? "true" : "false" } : { type: "button", disabled: "" },
+      on: sec.collapsed ? { click: () => { f.secOpen[sec.id] = !f.secOpen[sec.id]; render(); } } : null,
+    }, [
+      sec.collapsed ? el("span", { class: "caret" + (open ? "" : " closed") }, [icon("chevron", 12)]) : null,
+      span("colhead", sec.label || sec.id),
+      groupErr ? span("field-err sans", groupErr) : null,
+      sec.collapsed && !open ? el("span", { class: "why sans", text: "the defaults are right for most setups" }) : null,
+    ]));
+    if (!open) continue;
+    if (isBackends) wrap.appendChild(tfBackends(f));
+    if (secFields.length) wrap.appendChild(tfGrid(f, secFields, f.knobs, ""));
+  }
+
+  /* the discard confirm — resync's idiom, armed by the modified 400 */
+  if (f.discardAsk) {
+    wrap.appendChild(confirmBar(
+      "re-rendering " + f.forName + " throws away your edits.",
+      "discard & re-render", "danger",
+      () => submitTemplateForm(true),
+      () => { f.discardAsk = false; render(); },
+      { cancel: "keep them" }));
+  }
+  return wrap;
+}
+
+/* Submit: light client checks first (field-adjacent), then the POST. A 400
+   naming a field lands beside it; "locally modified" arms the discard
+   confirm whose verb re-submits forced; anything else goes to the errbar. */
+async function submitTemplateForm(force) {
+  const f = S.tform;
+  if (!f || f.busy) return;
+  const errs = knobProblems(f.tpl, f.knobs);
+  if (!f.forName) {
+    const name = slug(f.name);
+    if (!name) errs.__name = "a configuration needs a name";
+    else if (byName(name)) errs.__name = name + " already exists";
+  }
+  if (Object.keys(errs).length) { f.errs = errs; render(); return; }
+  f.errs = {}; f.busy = true; f.discardAsk = false;
+  clearError();
+  render();
+  try {
+    if (f.forName) {
+      await apiJSON(cfgURL(f.forName) + (force ? "/re-render-force" : "/re-render"), "POST", { knobs: f.knobs });
+      const name = f.forName;
+      S.tform = null;
+      await loadCore();
+      note(name + " re-rendered with the new options" + (force ? " — your edits were discarded" : ""), 4200);
+    } else {
+      const name = slug(f.name);
+      await apiJSON("/api/configs/from-template", "POST", { name, template: f.tpl.name, knobs: f.knobs });
+      S.tform = null; S.newName = "";
+      await loadCore();
+      go("#/configs/" + enc(name)); // the editor: rendered yaml + the secret cards
+    }
+    return;
+  } catch (e) {
+    f.busy = false;
+    if (f.forName && e.status === 400 && /locally modified/.test(e.message || "")) {
+      f.discardAsk = true;
+      render();
+      return;
+    }
+    const fe = e.status === 400 ? parseFieldErr(e.message || "") : null;
+    if (fe) { f.errs[fe.path] = fe.msg; render(); return; }
+    showError(e);
+  }
+  render();
+}
+
 /* ── screen 2: configuration editor ───────────────────────────────── */
 /* The CodeMirror instance survives re-renders: rebuilding it on every
    render reset scroll and cursor whenever a background refresh or a note
@@ -1518,10 +1812,11 @@ function screenEditor() {
   const resetLabel = origin === "builtin" ? "reset to shipped" : info.modified ? "discard edits & re-sync" : "re-sync";
   wrap.appendChild(el("div", { class: "ed-head" }, [
     running ? iconWrap("ed-run", "dot", 13, false, "running now") : null,
-    iconWrap("ed-type", { builtin: "package", user: "user", url: "link" }[origin], 14, false,
+    iconWrap("ed-type", { builtin: "package", user: "user", url: "link", tmpl: "template" }[origin], 14, false,
       origin === "url" ? "fetched from " + host
         : origin === "builtin" ? "built in to compy. updates with it until you edit."
-          : "yours"),
+          : origin === "tmpl" ? "from a template. change its options from the configurations screen."
+            : "yours"),
     el("input", {
       class: "ed-name",
       attrs: { spellcheck: "false", "data-fk": "ed-name", "aria-label": "configuration name" },
@@ -1641,7 +1936,9 @@ function screenEditor() {
       span("nm", "config.yaml"),
       el("span", {
         class: "why sans",
-        text: origin === "url" ? "kept in sync with " + host : "ships with compy. most people never open it.",
+        text: origin === "url" ? "kept in sync with " + host
+          : origin === "tmpl" ? "rendered from your options. most people change options instead of the yaml."
+            : "ships with compy. most people never open it.",
       }),
       el("span", { class: "grow" }),
       el("button", { class: "btn quiet", text: "show yaml", on: { click: () => { S.yamlOpen = true; render(); } } }),
@@ -1662,7 +1959,9 @@ function screenEditor() {
     pane.appendChild(confirmBar(
       origin === "url"
         ? "editing disconnects this from " + host + ". it stops re-syncing."
-        : "your version stays through compy updates.",
+        : origin === "tmpl"
+          ? "editing makes this yours by hand. changing options later asks before overwriting your edits."
+          : "your version stays through compy updates.",
       "make it mine", "accent",
       () => { S.unlockAsk = false; S.unlocked = true; render(); },
       () => { S.unlockAsk = false; render(); },
@@ -2366,7 +2665,7 @@ async function doFactoryReset() {
       yaml: "", yamlOf: null, find: "",
       busyId: null, err: null, errName: null, errKept: null,
       newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
-      confirm: null,
+      tform: null, confirm: null,
       presetSel: {}, presetsOpenId: null, inline: null, inlineName: "", inlineDraft: null,
       dl: {}, up: {}, addName: "", addPath: "", settings: null, portsSaved: false,
       resetArm: false, resetTyped: "",
@@ -2616,7 +2915,7 @@ function refreshBlocked() {
   const inField = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT")
     && a.dataset.fk !== "logq";
   return inField || S.busyId || S.stoppingId || S.saving || S.restarting || S.presetsOpenId || S.inline
-    || S.confirm || S.preflight || S.newOpen || S.unlockAsk || S.resetArm || S.resetBusy
+    || S.confirm || S.preflight || S.newOpen || S.tform || S.unlockAsk || S.resetArm || S.resetBusy
     || document.querySelector("dialog[open]")
     || (S.screen === "editor" && cmDirty);
 }
@@ -2665,6 +2964,7 @@ document.addEventListener("keydown", (e) => {
     if (S.preflight) { S.preflight = null; render(); return; }
     if (S.confirm) { S.confirm = null; render(); return; }
     if (S.inline) { S.inline = null; S.inlineDraft = null; render(); return; }
+    if (S.tform) { S.tform = null; render(); return; }
     if (S.newOpen) { S.newOpen = false; render(); return; }
     if (S.unlockAsk) { S.unlockAsk = false; render(); return; }
     if (S.resetArm) { S.resetArm = false; S.resetTyped = ""; render(); return; }
