@@ -439,3 +439,60 @@ consumes. Shapes and judged calls:
   (secret cards for tier-3 configs are the interim gap); demotion to
   plain yaml keeps the typed bag in place (tier-2 env export skips
   non-string values).
+
+---
+
+## Amendment 4 — editor UI round (as shipped, 2026-08-30)
+
+The web UI half of Amendment 4 is live; the interim knobs-speaking form
+and the tier-3 value-card band are gone.
+
+- **The form edits the SELECTED preset's bag**: the preset chips (the
+  existing band idiom) are the switcher above it; the form's header names
+  whose values it shows ("values · staging"); switching chips re-seeds
+  the form from the new preset's bag — row counts and all, per-preset
+  structure is real. Switching with unsaved form edits arms the inline
+  confirmBar ("switch to X? unsaved edits to Y are lost" / keep editing /
+  discard & switch — Escape cancels). **Secrets are real masked inputs
+  in the form** (`type=password`, the value cards' reveal/hide idiom);
+  the dashed placeholder cards died with the tier-3 card band. Tier-2
+  editors are untouched — cards, autosave, chips, all of it.
+- **Save**: form dirty → amber → `PUT presets/{selected}` with the whole
+  bag. Both views dirty → TWO requests, source first (the server's
+  order), and the result panel reflects the pair honestly: both landing
+  says "saved the source and the X values"; the source landing and the
+  values being refused keeps the source (it IS stored), re-derives the
+  form from the new schema, puts the unsaved draft back, and the panel
+  says "the source half of this save landed — only the values were
+  refused"; the source being refused says the values were never sent.
+  A 400 naming a form field still lands field-adjacent (with a note
+  when the source half landed); anything else gets the rendered-excerpt
+  panel and the save-anyway escape, which now re-runs the SAME
+  sequenced save with `?validate=false` for whatever is still unsaved.
+- **Pre-flight and diagnosis speak people**: `prettyMissing` (helpers)
+  turns field paths into prose — "backend honeycomb's api key" from the
+  bag's own row name and the schema's label; an unnamed row counts from
+  1; a tier-2 UPPER_SNAKE var name passes verbatim (one function serves
+  the pre-flight, the editor's warn line, and the drop diagnosis, which
+  has no schema at hand and humanizes the field name instead). The
+  configs-screen pre-flight on a tier-3 config fetches the source once
+  on play (mirroring the Go rule via `missingRequiredT3`, kept in
+  lockstep); an unparseable source defers to the server. The JS
+  `missingRequired` mirror also gained Go's non-string guard (demoted
+  bags).
+- **The pencil judgment**: the inline card editor speaks env strings, so
+  every tier-3 path into it (row chip pencil, menu pencil, row plus,
+  pre-flight "add values", the dropping strip) routes to the editor
+  with that preset selected instead — the simplest option won. The row
+  plus still works with zero typing: it creates `preset-N` as a copy of
+  the selected bag first, then lands on it. New/duplicated presets
+  write with `?validate=false` — a verbatim copy of a stored bag has
+  nothing new to prove (and a bag saved via the escape hatch stays
+  copyable); the editor's chip-add seeds tier-3 from the selected bag
+  (an empty bag would fail the repeat-group minimum).
+- Help strip updated: "a preset holds all of a config's values".
+- Drive-proven in the sandbox (throwaway COMPY_HOME, shimmed launchctl,
+  real otelcol-compy): activating preset B rendered B's two-backend
+  pipeline into config.yaml and the plist environment carried exactly
+  the two secrets plus COMPY ports; a rejected plain-yaml demotion
+  restored the templated pair via the source-only body.
