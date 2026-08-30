@@ -33,12 +33,19 @@ type Meta struct {
 	PristineSHA256 string                       `json:"pristine_sha256,omitempty"`
 	Presets        map[string]map[string]string `json:"presets"`
 	ActivePreset   string                       `json:"active_preset"`
+	// Template + Knobs mark a template-born configuration: the catalog
+	// template it was rendered from and the normalized knob values (secrets
+	// excluded — they never had values at render time). They exist so
+	// "change options" can re-render; the YAML itself is plain collector
+	// YAML, indistinguishable from a pasted one (the tier invariant).
+	Template string         `json:"template,omitempty"`
+	Knobs    map[string]any `json:"knobs,omitempty"`
 }
 
 // Info describes a configuration for listing/inspection.
 type Info struct {
 	Name       string     `json:"name"`
-	Provenance string     `json:"provenance"` // "shipped" | "remote" | "local"
+	Provenance string     `json:"provenance"` // "shipped" | "remote" | "local" | "template"
 	Modified   bool       `json:"modified"`   // hash != pristine (always false for "local")
 	Meta       Meta       `json:"meta"`
 	Vars       []vars.Var `json:"vars"`
@@ -118,6 +125,9 @@ func hashOf(content string) string {
 }
 
 func provenanceFor(m Meta) string {
+	if m.Template != "" {
+		return "template"
+	}
 	if m.PristineSHA256 == "" {
 		return "local"
 	}
@@ -365,6 +375,51 @@ func Create(root, name, yaml string) error {
 		return err
 	}
 	return writeMeta(root, name, withDefaultPreset(Meta{}))
+}
+
+// CreateFromTemplate makes a new template-born configuration: rendered
+// plain YAML plus the template name and its normalized knob values in
+// meta.json. The pristine hash serves re-render exactly as it serves sync:
+// matching means unmodified (re-render replaces cleanly), differing means
+// hand-edited (re-render refuses unless forced). Apart from meta the config
+// is indistinguishable from a pasted one.
+func CreateFromTemplate(root, name, yaml, template string, knobs map[string]any) error {
+	if err := createDir(root, name); err != nil {
+		return err
+	}
+	if err := writeYAMLFile(root, name, yaml); err != nil {
+		return err
+	}
+	return writeMeta(root, name, withDefaultPreset(Meta{
+		PristineSHA256: hashOf(yaml),
+		Template:       template,
+		Knobs:          knobs,
+	}))
+}
+
+// SetRendered replaces a template-born configuration's YAML with a fresh
+// render, updating the pristine hash and the recorded knobs; presets and
+// the rest of meta are untouched. The modified-or-not decision is the
+// caller's (app mirrors Sync/Resync there); this is the write both paths
+// share, refusing only a config that isn't template-born at all.
+func SetRendered(root, name, yaml string, knobs map[string]any) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	info, _, err := buildInfo(root, name)
+	if err != nil {
+		return err
+	}
+	if info.Meta.Template == "" {
+		return userErrf("config %q was not created from a template", name)
+	}
+	if err := writeYAMLFile(root, name, yaml); err != nil {
+		return err
+	}
+	m := info.Meta
+	m.PristineSHA256 = hashOf(yaml)
+	m.Knobs = knobs
+	return writeMeta(root, name, m)
 }
 
 // CreateFromURL fetches yaml from url and creates a new remote configuration,

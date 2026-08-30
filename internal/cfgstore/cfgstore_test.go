@@ -1082,3 +1082,101 @@ func TestEmptyVarKeyRefused(t *testing.T) {
 		t.Fatalf("refused writes still created the preset: %+v", info.Meta.Presets)
 	}
 }
+
+// TestTemplateMetaRoundTrip: CreateFromTemplate persists template + knobs
+// through a real meta.json write/read; provenance is "template", edit
+// detection rides the same pristine hash as sync's, and SetRendered updates
+// hash + knobs while keeping presets.
+func TestTemplateMetaRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	knobs := map[string]any{
+		"debug_tee": true,
+		"backends":  []any{map[string]any{"name": "hc", "signals": []any{"traces"}}},
+	}
+	if err := CreateFromTemplate(root, "tpl", "yaml: 1\n", "custom-endpoints", knobs); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err := Get(root, "tpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if yaml != "yaml: 1\n" {
+		t.Errorf("yaml = %q", yaml)
+	}
+	if info.Provenance != "template" || info.Modified {
+		t.Errorf("provenance %q modified %v, want template/false", info.Provenance, info.Modified)
+	}
+	if info.Meta.Template != "custom-endpoints" {
+		t.Errorf("template = %q", info.Meta.Template)
+	}
+	row := info.Meta.Knobs["backends"].([]any)[0].(map[string]any)
+	if row["name"] != "hc" {
+		t.Errorf("knobs did not round-trip: %v", info.Meta.Knobs)
+	}
+
+	// Hand edits flip Modified via the shared hash mechanism.
+	if err := WriteYAML(root, "tpl", "yaml: 2\n"); err != nil {
+		t.Fatal(err)
+	}
+	if info, _, _ := Get(root, "tpl"); !info.Modified {
+		t.Error("edited template-born config not reported modified")
+	}
+
+	// SetRendered: new yaml + hash + knobs; presets kept.
+	if err := SetVar(root, "tpl", "prod", "K", "v"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRendered(root, "tpl", "yaml: 3\n", map[string]any{"debug_tee": false}); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err = Get(root, "tpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if yaml != "yaml: 3\n" || info.Modified {
+		t.Errorf("SetRendered: yaml %q modified %v", yaml, info.Modified)
+	}
+	if info.Meta.Knobs["debug_tee"] != false {
+		t.Errorf("knobs not replaced: %v", info.Meta.Knobs)
+	}
+	if info.Meta.Presets["prod"]["K"] != "v" {
+		t.Errorf("presets lost: %v", info.Meta.Presets)
+	}
+
+	// SetRendered refuses a config that isn't template-born.
+	if err := Create(root, "plain", "a: 1\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRendered(root, "plain", "b: 2\n", nil); err == nil || !state.IsBadRequest(err) {
+		t.Errorf("SetRendered on plain config = %v, want BadRequest", err)
+	}
+}
+
+// TestTemplateProvenanceInteractions: the existing lifecycle keeps its
+// promises around the new provenance — Copy demotes to local (a copy is
+// yours), Rename keeps the template identity (re-render doesn't depend on
+// the config name), Reset and Sync refuse.
+func TestTemplateProvenanceInteractions(t *testing.T) {
+	root := t.TempDir()
+	if err := CreateFromTemplate(root, "tpl", "yaml: 1\n", "custom-endpoints", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Copy(root, "tpl", "copy"); err != nil {
+		t.Fatal(err)
+	}
+	if info, _, _ := Get(root, "copy"); info.Provenance != "local" || info.Meta.Template != "" {
+		t.Errorf("copy provenance %q template %q, want local/none", info.Provenance, info.Meta.Template)
+	}
+	if err := Rename(root, "tpl", "moved"); err != nil {
+		t.Fatal(err)
+	}
+	if info, _, _ := Get(root, "moved"); info.Provenance != "template" || info.Meta.Template != "custom-endpoints" {
+		t.Errorf("rename lost template identity: %+v", info.Meta)
+	}
+	if err := Reset(root, "moved"); err == nil || !state.IsBadRequest(err) {
+		t.Errorf("Reset of template-born = %v, want BadRequest", err)
+	}
+	if err := Sync(root, "moved", nil); err == nil || !state.IsBadRequest(err) {
+		t.Errorf("Sync of template-born = %v, want BadRequest (no remote URL)", err)
+	}
+}
