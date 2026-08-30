@@ -695,3 +695,21 @@ with the text above.
     status/health/log fetches run in parallel. Healthy restart and
     config-switch complete visibly well under 5s; the honest floor is
     launchd's graceful drain of the outgoing collector.
+- 2026-08-30 (owner ruling: the menu-bar list is FLAT — no preset
+  submenus; supersedes § "5. Menu bar"'s submenu model and the "picking a
+  preset is the activation" submenu mechanic): the CONFIGURATION list is
+  flat rows of (config, preset) targets — a single-preset config is one
+  row titled by its name (clicking it activates that exact preset), a
+  config with N>1 presets is N rows titled "name · preset", configs
+  alphabetical and presets alphabetical within, More… continuing the same
+  flat list past ten. Clicking any row activates that exact pair; the
+  three-state indicators now sit at (config, preset) precision (the
+  active dot on the exact running row; a swap marks the two rows
+  involved; stopped still marks nothing). Digits 1–9 ride the first nine
+  rows and now render visibly on every one — plain items, no submenu
+  parents. The ruling also buries the AppKit submenu key-equivalent
+  pathologies that motivated it (digits invisible on submenu parents,
+  depth-first digit theft by closed submenus' items, plain keys swallowed
+  once a submenu opens — measured 2026-08-29, archived in commit
+  19dd219's message): a flat menu has none of them. Status block, toggle,
+  restart, Open compy, Remove, Quit unchanged.
