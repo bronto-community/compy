@@ -2130,7 +2130,7 @@ function screenEditor() {
     cm = CodeMirror(host2, {
       value: dirty && keep != null ? keep : text,
       mode: "yaml", // v1: yaml highlighting for source too \u2014 schema is the JSON subset, the body is yaml-shaped
-      lineNumbers: true, readOnly: !editable, lineWrapping: false,
+      lineNumbers: true, readOnly: !editable, lineWrapping: true,
       // Default viewportMargin: only the visible lines (plus a small
       // margin) exist in the DOM. The tier-3 pane used to be height:auto +
       // viewportMargin Infinity — a full render of a 2000-line source, the
