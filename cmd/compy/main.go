@@ -834,7 +834,7 @@ func cmdFactoryReset(args []string) error {
 	}
 	return withApp(func(a *app.App) error {
 		if !*yes {
-			return fmt.Errorf("factory-reset deletes everything in %s: all configurations, presets, downloaded collectors, logs, and settings. the shipped configs come back fresh.\nrun `compy factory-reset --yes` to confirm", a.Dir)
+			return fmt.Errorf("factory-reset deletes everything in %s: all configurations, presets, downloaded collectors, logs, and settings. the shipped configs are recreated.\nrun `compy factory-reset --yes` to confirm", a.Dir)
 		}
 		if err := a.FactoryReset(); err != nil {
 			return err

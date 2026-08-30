@@ -1,6 +1,6 @@
 ---
 name: custom-endpoints
-description: Send OTLP to one or more backends over HTTP, wrapped in the recommended local pipeline.
+description: Send OTLP to one or more backends over HTTP.
 sections:
   - id: backends
     label: Backends
@@ -18,7 +18,7 @@ backends:
     - name: endpoint
       type: url
       label: Endpoint
-      description: Base OTLP/HTTP URL, e.g. https://api.honeycomb.io — the collector appends /v1/traces etc.
+      description: Base OTLP/HTTP URL, e.g. https://api.honeycomb.io. The collector appends /v1/traces etc.
     - name: auth_header
       type: string
       label: Auth header
@@ -27,14 +27,14 @@ backends:
     - name: api_key
       type: secret
       label: API key
-      description: "Never baked into the config: referenced as ${env:<NAME>_API_KEY} and supplied per preset"
+      description: Stored in the preset, referenced as ${env:<NAME>_API_KEY}
     - name: auth_scheme
       type: choice
       label: Auth scheme prefix
       options: [none, Bearer, Basic, Api-Token, ApiKey]
       default: none
       advanced: true
-      description: Prefix before the key inside the auth header (the observed vendor zoo); none for a bare key
+      description: Prefix before the key inside the auth header; none for a bare key
     - name: extra_header
       type: string
       label: Extra header
@@ -67,13 +67,13 @@ fields:
     label: Memory limiter
     default: true
     section: pipeline
-    description: Keep the collector from growing unbounded under a burst
+    description: Cap the collector's memory use
   - name: batch
     type: toggle
     label: Batching
     default: true
     section: pipeline
-    description: Batch before export, sized under the 1MB payload cap every vendor accepts
+    description: Batch before export, sized under the 1MB payload cap
   - name: resource_detection
     type: toggle
     label: Host and env detection
@@ -85,7 +85,7 @@ fields:
     label: Offline queue
     default: false
     section: pipeline
-    description: Queue telemetry on disk and retry forever, so closing the lid on a train loses nothing
+    description: Store telemetry on disk and retry until the backend accepts it
   - name: debug_tee
     type: toggle
     label: Local debug tee

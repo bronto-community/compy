@@ -256,7 +256,7 @@ function droppingText(vars) {
   const info = byName(S.status && S.status.config);
   const bag = info ? ((info.meta && info.meta.presets) || {})[(S.status && S.status.preset) || ""] || {} : {};
   const names = prettyMissing(bag, vars, null);
-  return "dropping data — " + nameList(names) + (names.length === 1 ? " has" : " have") + " no value";
+  return "dropping data: " + nameList(names) + (names.length === 1 ? " has" : " have") + " no value";
 }
 /* The pre-flight's "add values" action, reached from runtime evidence: the
    inline preset editor on the active config's running preset (a real one —
@@ -860,10 +860,10 @@ function screenConfigs() {
    supersedes the shown-by-default rule from the copy round; the old
    compy.helpDismissed localStorage keys are swept at boot). */
 const HELP_COPY = {
-  configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml, fetch it from a url, paste an otelbin.io share link, or copy a template — its options stay editable as a form in the editor.",
+  configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml, fetch it from a url, paste an otelbin.io share link, or copy a template and edit its options as a form in the editor.",
   collector: "these numbers are the collector's own, scraped from its telemetry endpoint, and listening shows only ports the process actually has open. the log below is the collector's output, grouped by level and filterable. restart and stop live here; the configurations screen picks what runs.",
   settings: "appearance, and how apps find compy: the advertised endpoint, its protocol, and the system-wide OTEL_* toggle. global variables are values every configuration's yaml can reference; the collector table downloads, updates, or replaces the binary every config runs on. the danger area at the bottom deletes everything compy manages.",
-  editor: "a configuration is one whole collector config.yaml plus its presets — a preset holds all of a config's values, and activating a config runs it with the selected preset's. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. a config whose text opens with a schema block is templated: the form edits the selected preset's values, the source below describes them, and one save carries both. cmd+s saves, and the save button shows amber while anything is unsaved.",
+  editor: "a configuration is one whole collector config.yaml plus its presets. a preset holds all of a config's values; activating a config runs it with the selected preset's. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. a config whose text opens with a schema block is templated: the form edits the selected preset's values, the source below describes them, and one save carries both. cmd+s saves, and the save button shows amber while anything is unsaved.",
 };
 function helpButton(page) {
   return el("button", {
@@ -1101,7 +1101,7 @@ function syncAction(info, origin, host) {
       },
     };
   }
-  if (origin !== "url") return { on: false, title: "yours from the start, nothing to return to", run: () => {} };
+  if (origin !== "url") return { on: false, title: "created locally, nothing to sync", run: () => {} };
   if (!info.modified) return { on: false, title: "in sync with " + host, run: () => {} };
   return {
     on: true, title: "discard my edits and re-sync from " + host,
@@ -1327,7 +1327,7 @@ function valueCards(info, values, onEdit, scope) {
   return grid;
 }
 function valsEmpty() {
-  return el("div", { class: "vals-empty sans", text: "nothing to configure — this config has no values to fill in" });
+  return el("div", { class: "vals-empty sans", text: "this config has no values to fill in" });
 }
 /* ── configurations: actions ──────────────────────────────────────── */
 /* Every activation on this screen goes through the pre-flight: a config
@@ -1548,7 +1548,7 @@ function newConfigStrip() {
         attrs: !s || taken || S.fetching ? { disabled: "" } : null,
         on: { click: () => createFromCatalog(t) },
       }))),
-      el("span", { class: "foot", text: "copies the template into your config — edit its options and source in the editor" }),
+      el("span", { class: "foot", text: "copies the template into your config; edit it in the editor" }),
     ]) : null,
     el("button", { class: "act cancel", text: "cancel", on: { click: () => { S.newOpen = false; render(); } } }),
     el("button", {
@@ -1584,7 +1584,7 @@ async function createNew() {
     // sentence around it is the design's.
     S.fetching = false;
     const code = (e.message || "").match(/HTTP (\d{3})/);
-    S.newErr = code ? code[1] + " · nothing at that URL. compy kept nothing." : e.message;
+    S.newErr = code ? code[1] + " · nothing at that URL" : e.message;
     render();
   }
 }
@@ -1801,7 +1801,7 @@ function editorFormView(info) {
   if (f.parseErr) {
     wrap.appendChild(el("div", {
       class: "eform-broken sans",
-      text: "the schema doesn't parse — fix the front matter in the source below.",
+      text: "the schema doesn't parse. fix the front matter in the source below.",
     }));
     return wrap;
   }
@@ -1830,7 +1830,6 @@ function editorFormView(info) {
       sec.collapsed ? el("span", { class: "caret" + (open ? "" : " closed") }, [icon("chevron", 12)]) : null,
       span("colhead", sec.label || sec.id),
       groupErr ? span("field-err sans", groupErr) : null,
-      sec.collapsed && !open ? el("span", { class: "why sans", text: "the defaults are right for most setups" }) : null,
     ]));
     if (!open) continue;
     if (isBackends) wrap.appendChild(tfBackends(f));
@@ -1847,7 +1846,7 @@ function editorFormView(info) {
   if (free.length) {
     wrap.appendChild(el("button", { class: "tf-sechead", attrs: { type: "button", disabled: "" } }, [
       span("colhead", "variables"),
-      el("span", { class: "why sans", text: "hand-written ${env:} references in this config's source — set per preset" }),
+      el("span", { class: "why sans", text: "from ${env:} references in the source" }),
     ]));
     wrap.appendChild(valueCards({ name: info.name, vars: free }, f.knobs,
       (k, v) => { f.knobs[k] = v; if (f.onChange) f.onChange(); }, "tf"));
@@ -2089,7 +2088,7 @@ function screenEditor() {
       // Activation stays guarded by its own pre-flight either way.
       S.valMissing.length ? el("div", { class: "bar2" }, [
         span("sans", nameList(S.valMissing) + (S.valMissing.length === 1 ? " has no value" : " have no values")
-          + " yet — the collector cannot validate without " + (S.valMissing.length === 1 ? "it" : "them") + "."),
+          + " yet. the collector cannot validate without " + (S.valMissing.length === 1 ? "it" : "them") + "."),
         el("span", { class: "grow" }),
         el("button", { class: "act", text: "save without validating", on: { click: () => saveAnyway(info) } }),
       ]) : null,
@@ -2097,7 +2096,7 @@ function screenEditor() {
       // only in this window right now; the ?validate=false escape keeps it
       // so the fixing can continue from what's here.
       S.valAnyway ? el("div", { class: "bar2" }, [
-        span("sans", "the draft stays here until it validates — or keep it without the collector's blessing."),
+        span("sans", "the draft stays in this window until it validates."),
         el("span", { class: "grow" }),
         el("button", { class: "act", text: "save without validating", on: { click: () => saveT3(info, false) } }),
       ]) : null,
@@ -2118,11 +2117,7 @@ function screenEditor() {
   if (!yamlShown) {
     wrap.appendChild(el("div", { class: "yaml-collapsed" }, [
       span("nm", "config.yaml"),
-      el("span", {
-        class: "why sans",
-        text: origin === "url" ? "kept in sync with " + host
-          : "ships with compy. most people never open it.",
-      }),
+      origin === "url" ? el("span", { class: "why sans", text: "kept in sync with " + host }) : null,
       el("span", { class: "grow" }),
       el("button", { class: "btn quiet", text: "show yaml", on: { click: () => { S.yamlOpen = true; render(); } } }),
     ]));
@@ -2143,7 +2138,6 @@ function screenEditor() {
   const pane = el("div", { class: "yaml-pane" });
   pane.appendChild(el("div", { class: "yaml-bar" }, [
     span("colhead", t3 ? "config source" : "config.yaml"),
-    t3 ? el("span", { class: "why sans", text: "schema, then the template body \u2014 the form above is this same file" }) : null,
     el("span", { class: "grow" }),
     locked ? el("span", { class: "ro" }, [
       span("word", "read-only"),
@@ -2330,7 +2324,7 @@ async function createPreset(info, n, values) {
   try {
     await apiJSON(cfgURL(info.name) + "/presets/" + enc(n) + "?validate=false", "PUT", { values });
     await loadCore();
-    if (stay) { note(n + " added — the tabs switch to it", 3600); return; }
+    if (stay) { note(n + " added", 3600); return; }
     S.preset = n; S.presetSel[info.name] = n;
     buildEditorForm(byName(info.name) || info);
     render();
@@ -2517,7 +2511,7 @@ async function saveT3(info, validate) {
       } else {
         S.valErr = e.message || String(e);
         S.valHead = "the rendered config was rejected. the " + preset + " values were not stored.";
-        S.valNote = sourceSaved ? "the source half of this save landed — only the values were refused." : "";
+        S.valNote = sourceSaved ? "the source was saved; only the values were refused." : "";
         // The server proved the render and stored nothing (of this half),
         // so the stored render (S.yaml) is the closest thing to the
         // rejected one — line numbers can drift by exactly the failed
@@ -2537,7 +2531,7 @@ async function saveT3(info, validate) {
       S.valHead = parseFail
         ? "the template source doesn't parse. nothing was saved."
         : "the rendered config was rejected. nothing was saved.";
-      S.valNote = formDirty ? "the " + preset + " value changes were not sent — they ride the next save, once the source is fixed." : "";
+      S.valNote = formDirty ? "the " + preset + " value changes were not sent. save again once the source is fixed." : "";
       S.valExcerpt = parseFail ? "" : excerptAround(S.yaml, errLineOf(S.valErr), 3);
       S.valAnyway = !parseFail;
     }
@@ -2673,7 +2667,7 @@ function droppingStrip() {
   return el("div", { class: "strip-wrap" }, [el("div", { class: "errbar" }, [
     el("div", { class: "failbar" }, [
       el("span", { class: "dot6", attrs: { style: "background: var(--err)" } }),
-      span("msg", droppingText(dvars) + ", so the exporter has nowhere to send. validation can't catch this."),
+      span("msg", droppingText(dvars) + ", so the exporter has nowhere to send."),
       el("span", { class: "grow" }),
       el("button", { class: "act", text: "add values", on: { click: openDroppingEditor } }),
     ]),
@@ -2764,7 +2758,7 @@ function attrPairs(m, attrs) {
   for (const k of keys) hid.appendChild(kvPair(k, noise[k]));
   m.appendChild(el("button", {
     class: "kv more", text: "…",
-    title: "the collector's own attributes (" + keys.join(", ") + ") — the same on nearly every line. click to show.",
+    title: "the collector's own attributes (" + keys.join(", ") + "). click to show.",
     attrs: { "aria-expanded": "false", "aria-label": "toggle collector attributes" },
     on: {
       click: (e) => {
@@ -2882,7 +2876,7 @@ function envGuide() {
   return el("div", { class: "envguide" }, [
     el("div", { class: "n sans", text: "or wire a shell instead:" }),
     entry("current shell, right now", 'eval "$(compy env)"'),
-    entry("every new shell — append to ~/.zshrc (or your shell's rc)", "echo 'eval \"$(compy env)\"' >> ~/.zshrc"),
+    entry("every new shell: append to ~/.zshrc (or your shell's rc)", "echo 'eval \"$(compy env)\"' >> ~/.zshrc"),
     entry("one command only", "compy run -- <cmd>"),
     el("div", { class: "n sans", text: "an app's own environment always wins over the system-wide toggle." }),
   ]);
@@ -2933,7 +2927,7 @@ function screenSettings() {
     el("div", { class: "srow" }, [
       el("span", { class: "lbl" }, [
         span("t", "protocol"),
-        el("span", { class: "n sans", text: "what the advertised endpoint speaks. http/protobuf unless your sdk needs otherwise" }),
+        el("span", { class: "n sans", text: "what the advertised endpoint speaks" }),
       ]),
       el("span", { class: "grow" }), savedMark("protocol"), pseg,
     ]),
@@ -2967,7 +2961,7 @@ function screenSettings() {
 
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
     span("title", "global variables"),
-    el("div", { class: "subtitle sans", text: "available in every configuration's yaml, which is why they're not part of presets." }),
+    el("div", { class: "subtitle sans", text: "available in every configuration's yaml." }),
   ]));
   wrap.appendChild(globalVars());
 
@@ -3018,7 +3012,7 @@ function factoryResetCard() {
   card.appendChild(el("div", { class: "srow" }, [
     el("span", { class: "lbl" }, [
       span("t", "reset compy to factory settings"),
-      el("span", { class: "n sans", text: "deletes all configurations, presets, downloaded collectors, logs, and settings. the shipped configs come back fresh." }),
+      el("span", { class: "n sans", text: "deletes all configurations, presets, downloaded collectors, logs, and settings. the shipped configs are recreated." }),
     ]),
     el("span", { class: "grow" }),
     S.resetArm ? null : el("button", {
