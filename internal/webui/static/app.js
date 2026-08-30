@@ -123,6 +123,7 @@ const S = {
   status: null, configs: [], health: null, log: "", distros: [],
   yaml: "", yamlOf: null,
   source: null,            // tier-3 template source (GET config "source"), null for plain configs
+  freeVars: null,          // tier-3 free vars (GET config "free_vars"): { preset: [Var] }, Amendment 6
 
   // configurations screen
   find: "",
@@ -379,6 +380,7 @@ async function loadYAML(name) {
   S.yaml = d.yaml || "";
   S.source = d.source != null ? d.source : null; // tier 3 carries its source
   S.tpl = d.template || null; // …and its server-parsed schema (either front-matter form)
+  S.freeVars = d.free_vars || null; // …and its per-preset free vars (Amendment 6)
   S.yamlOf = name;
 }
 
@@ -1313,6 +1315,10 @@ function valueCards(info, values, onEdit, scope) {
           on: { click: () => { S.reveal[v.name] = !S.reveal[v.name]; render(); } },
         }) : null,
       ]),
+      // The tier-3 form's free-var cards ("tf") show the yaml's trailing-
+      // comment description under the input, like the schema fields beside
+      // them; tier-2 cards keep it in the name's tooltip.
+      scope === "tf" && v.description ? el("div", { class: "d sans", text: v.description }) : null,
     ]));
   }
   // No vars at all (shipped debug, say): the tab strip still shows whose
@@ -1350,8 +1356,9 @@ async function preflightActivate(name, preset) {
       const d = await api(cfgURL(name));
       const tpl = d.template || null; // server-parsed; either front-matter form
       if (tpl) {
-        const bag = ((info.meta && info.meta.presets) || {})[preset || (info.meta && info.meta.active_preset)] || {};
-        missing = prettyMissing(bag, missingRequiredT3(tpl, bag), tpl);
+        const pn = preset || (info.meta && info.meta.active_preset);
+        const bag = ((info.meta && info.meta.presets) || {})[pn] || {};
+        missing = prettyMissing(bag, missingRequiredT3(tpl, bag, (d.free_vars || {})[pn]), tpl);
       }
     } catch (e) { /* the server-side pre-flight still applies */ }
   } else if (info) {
@@ -1829,9 +1836,25 @@ function editorFormView(info) {
     if (isBackends) wrap.appendChild(tfBackends(f));
     if (secFields.length) wrap.appendChild(tfGrid(f, secFields, f.knobs, ""));
   }
+  /* Free vars (Amendment 6): hand-written ${env:} refs in this preset's
+     render, beyond the schema — tier 2 living inside tier 3, so the tier-2
+     value cards render them. Their values are ordinary members of the same
+     knob draft (seedKnobs carries them), so an edit rides the same
+     dirty/save flow and the whole-bag PUT as every schema field. The list
+     is the server's per-preset discovery — a ref behind an {{if}} that
+     didn't render for this preset isn't here. */
+  const free = (S.freeVars || {})[S.preset] || [];
+  if (free.length) {
+    wrap.appendChild(el("button", { class: "tf-sechead", attrs: { type: "button", disabled: "" } }, [
+      span("colhead", "variables"),
+      el("span", { class: "why sans", text: "hand-written ${env:} references in this config's source — set per preset" }),
+    ]));
+    wrap.appendChild(valueCards({ name: info.name, vars: free }, f.knobs,
+      (k, v) => { f.knobs[k] = v; if (f.onChange) f.onChange(); }, "tf"));
+  }
   // A schema with no fields and no backends group: same quiet empty state
   // as a tier-2 config without vars.
-  if (!(tpl.fields || []).length && !tpl.backends) wrap.appendChild(valsEmpty());
+  if (!(tpl.fields || []).length && !tpl.backends && !free.length) wrap.appendChild(valsEmpty());
   return wrap;
 }
 
@@ -1951,7 +1974,7 @@ function presetTabs(info, t3) {
   const bag = ((info.meta.presets || {})[S.preset]) || {};
   const t3tpl = t3 && S.eform && !S.eform.parseErr ? S.eform.tpl : null;
   const missing = t3
-    ? (t3tpl ? prettyMissing(bag, missingRequiredT3(t3tpl, bag), t3tpl) : [])
+    ? (t3tpl ? prettyMissing(bag, missingRequiredT3(t3tpl, bag, (S.freeVars || {})[S.preset]), t3tpl) : [])
     : missingRequired(info, S.preset);
   if (S.preset && missing.length) {
     out.push(el("div", { class: "warn sans", text: S.preset + " has no " + nameList(missing) + ". activating with it will fail." }));

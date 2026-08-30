@@ -73,6 +73,9 @@ type Info struct {
 // resolves to the config's active preset, exactly as Activate does — and
 // every config has one (EnsurePresets). Callers decide what to do with the
 // answer: the window asks before activating, the CLI warns and proceeds.
+// KEEP IN LOCKSTEP with missingRequired / missingRequiredT3 in
+// webui/static/helpers.js — the web client's pre-flight mirror (its
+// free-var list is the config detail's free_vars[preset]).
 func MissingRequired(root string, info Info, preset string) []string {
 	if preset == "" {
 		preset = info.Meta.ActivePreset

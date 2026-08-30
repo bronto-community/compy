@@ -286,6 +286,41 @@ test("missingRequiredT3 mirrors catalog.MissingRequired", () => {
   assert.deepEqual(H.missingRequiredT3(t2, { batch: false }), ["endpoint"]);
 });
 
+/* Mirrors the free-var arm of internal/cfgstore's MissingRequired
+   (Amendment 6): a hand-written ${env:} ref with no :-default and no bag
+   value is missing, by var name, appended after the schema's field paths.
+   KEEP IN LOCKSTEP — nil or blank string missing, a non-string counts as
+   set, has_default never counts. */
+test("missingRequiredT3 free vars follow the tier-2 rule", () => {
+  const fv = [
+    { name: "ASDF", has_default: false },
+    { name: "OTLP_TOKEN", has_default: false },
+    { name: "REGION", has_default: true, default: "eu" },
+  ];
+  const t2 = { fields: [{ name: "endpoint", type: "url" }] };
+  assert.deepEqual(H.missingRequiredT3(t2, { endpoint: "https://x", OTLP_TOKEN: "t" }, fv), ["ASDF"]);
+  assert.deepEqual(H.missingRequiredT3(t2, { endpoint: "https://x", ASDF: "  ", OTLP_TOKEN: 7 }, fv),
+    ["ASDF"], "blank is missing; a non-string counts as set — the Go rule verbatim");
+  assert.deepEqual(H.missingRequiredT3(t2, {}, fv),
+    ["endpoint", "ASDF", "OTLP_TOKEN"], "schema paths first, var names after — the Go order");
+  assert.deepEqual(H.missingRequiredT3(t2, { endpoint: "https://x" }), [], "no free vars — unchanged");
+});
+
+test("seedKnobs carries free-var strings through the draft", () => {
+  const bag = {
+    debug_tee: true, ASDF: "127.0.0.1", junk: { nested: true },
+    backends: [{ name: "hc", endpoint: "https://x.example", api_key: "k" }],
+  };
+  const knobs = H.seedKnobs(TPL, bag, true);
+  assert.equal(knobs.ASDF, "127.0.0.1", "an unknown top-level string is a free-var value — it rides");
+  assert.equal("junk" in knobs, false, "non-strings never ride (the server would 400 them)");
+  // withSecrets=false never resurrects a schema secret as a free var.
+  const t2 = { fields: [{ name: "api_key", type: "secret" }] };
+  const k2 = H.seedKnobs(t2, { api_key: "s3cret", ASDF: "v" }, false);
+  assert.equal("api_key" in k2, false);
+  assert.equal(k2.ASDF, "v");
+});
+
 test("prettyMissing reads paths out loud, and leaves env names alone", () => {
   const bag = { backends: [{ name: "honeycomb" }, { name: "" }] };
   assert.deepEqual(H.prettyMissing(bag, ["backends[0].api_key"], TPL),

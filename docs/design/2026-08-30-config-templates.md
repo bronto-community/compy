@@ -594,8 +594,12 @@ Amendment 4 model (presets own ALL of a config's values). Fixed:
 - **Pre-flight**: `cfgstore.MissingRequired` adds the tier-2 rule over
   the preset's render — a free var with no `:-default` and no bag value
   is missing (by var name, next to the schema's field paths). The web
-  client's `missingRequiredT3` mirror does NOT yet know free vars —
-  UI-round work.
+  client's `missingRequiredT3` mirror carries the same rule (its list is
+  the config detail's `free_vars[preset]`), and the tier-3 editor form
+  renders the selected preset's free vars as tier-2 value cards under a
+  "variables" section — values are ordinary members of the form's bag
+  draft, riding the same dirty/save flow and whole-bag PUT as the schema
+  fields.
 - **Surfaces**: `GET /api/configs/{name}` gains `free_vars`
   ({preset → [Var]}, the openapi `ConfigDetail` schema documents it);
   values ride the existing preset routes (`PUT presets/{p}` bags,

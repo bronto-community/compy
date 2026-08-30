@@ -110,14 +110,29 @@ function seedKnobs(tpl, from, withSecrets) {
     const rows = from && Array.isArray(from.backends) && from.backends.length ? from.backends : [null];
     knobs.backends = rows.map((r) => seedRow(tpl.backends.fields, r, withSecrets));
   }
+  // Free vars (Amendment 6): hand-written ${env:} values ride the bag as
+  // unknown top-level STRINGS — carry them into the draft so a whole-bag
+  // save never drops them (the server's NormalizeBag passes them through
+  // the same way; non-strings would 400 there, so they never travel).
+  for (const k in from || {}) {
+    if (typeof from[k] !== "string" || k in knobs) continue;
+    if (k === "backends" || (tpl.fields || []).some((f) => f.name === k)) continue;
+    knobs[k] = from[k];
+  }
   return knobs;
 }
 /* The tier-3 activation pre-flight rule: schema-required fields (secrets and
    non-secrets alike, non-optional with no default) that the preset's bag
-   leaves absent or blank, as form-keyed paths ("backends[0].api_key").
-   KEEP IN LOCKSTEP with internal/catalog's Template.MissingRequired — the
-   test mirrors catalog_test.go's TestMissingRequiredBag. */
-function missingRequiredT3(tpl, bag) {
+   leaves absent or blank, as form-keyed paths ("backends[0].api_key") —
+   plus, appended after them, the preset's FREE vars (Amendment 6:
+   hand-written ${env:} refs in its render, the config detail's
+   free_vars[preset]) under the tier-2 rule: no :-default and no bag value,
+   by var name.
+   KEEP IN LOCKSTEP with internal/cfgstore's MissingRequired (tier-3 arm) —
+   the schema half mirrors catalog_test.go's TestMissingRequiredBag; the
+   free-var half mirrors the Go arm's own loop (nil or blank string is
+   missing, a non-string counts as set). */
+function missingRequiredT3(tpl, bag, freeVars) {
   bag = bag || {};
   const missing = [];
   const check = (prefix, fields, values) => {
@@ -130,6 +145,11 @@ function missingRequiredT3(tpl, bag) {
   check("", tpl.fields, bag);
   if (tpl.backends && Array.isArray(bag.backends)) {
     bag.backends.forEach((row, i) => check("backends[" + i + "].", tpl.backends.fields, row));
+  }
+  for (const v of freeVars || []) {
+    if (v.has_default) continue;
+    const val = bag[v.name];
+    if (val == null || (typeof val === "string" && !val.trim())) missing.push(v.name);
   }
   return missing;
 }
