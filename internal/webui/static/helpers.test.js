@@ -230,6 +230,47 @@ test("seedKnobs fills defaults and keeps stored knobs", () => {
   assert.deepEqual(seeded.backends[0].signals, ["traces", "metrics", "logs"], "field the schema grew");
 });
 
+test("seedKnobs withSecrets seeds a preset BAG — secrets are members", () => {
+  // The editor's form edits the selected preset's bag: secrets are ordinary
+  // members (Amendment 4), defaulting to "" when the bag has no value yet.
+  const fresh = H.seedKnobs(TPL, null, true);
+  assert.equal(fresh.backends[0].api_key, "");
+  const seeded = H.seedKnobs(TPL, {
+    backends: [{ name: "hc", endpoint: "https://api.honeycomb.io", api_key: "hc_live_1" }],
+  }, true);
+  assert.equal(seeded.backends[0].api_key, "hc_live_1", "stored secret values ride along");
+  assert.equal(seeded.batch, true, "defaults still fill the rest");
+});
+
+/* Mirrors internal/catalog's Template.MissingRequired — catalog_test.go's
+   TestMissingRequiredBag shape: required fields (secrets and non-secrets
+   alike) absent or blank in the bag, as form-keyed paths. KEEP IN LOCKSTEP. */
+test("missingRequiredT3 mirrors catalog.MissingRequired", () => {
+  assert.deepEqual(H.missingRequiredT3(TPL, {
+    backends: [
+      { name: "hc", endpoint: "https://x.example", api_key: "k" },
+      { name: "dd", endpoint: "  ", api_key: "" },
+    ],
+  }), ["backends[1].endpoint", "backends[1].api_key"]);
+  assert.deepEqual(H.missingRequiredT3(TPL, {
+    backends: [{ name: "hc", endpoint: "https://x.example", api_key: "k" }],
+  }), [], "complete bag reports nothing");
+  // Fields with defaults (or optional) never count; a non-string value is set.
+  const t2 = { fields: [{ name: "endpoint", type: "url", label: "E" }, { name: "batch", type: "toggle", default: true }] };
+  assert.deepEqual(H.missingRequiredT3(t2, { batch: false }), ["endpoint"]);
+});
+
+test("prettyMissing reads paths out loud, and leaves env names alone", () => {
+  const bag = { backends: [{ name: "honeycomb" }, { name: "" }] };
+  assert.deepEqual(H.prettyMissing(bag, ["backends[0].api_key"], TPL),
+    ["backend honeycomb's api key"], "row name + schema label");
+  assert.deepEqual(H.prettyMissing(bag, ["backends[1].api_key"], null),
+    ["backend 2's api key"], "unnamed row counts from 1; no schema humanizes the field name");
+  assert.deepEqual(H.prettyMissing({}, ["memory_limiter"], null), ["memory limiter"]);
+  // Tier-2 var names are already the name the yaml uses — verbatim.
+  assert.deepEqual(H.prettyMissing({}, ["BRONTO_KEY", "OTLP_ENDPOINT"], null), ["BRONTO_KEY", "OTLP_ENDPOINT"]);
+});
+
 test("knobProblems keys errors the way the server does", () => {
   const knobs = H.seedKnobs(TPL, null);
   knobs.backends[0].name = "Bad Name";

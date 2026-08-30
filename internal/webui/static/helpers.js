@@ -35,7 +35,13 @@ function missingRequired(info, preset) {
   if (!preset) preset = (info.meta && info.meta.active_preset) || "";
   const values = ((info.meta && info.meta.presets) || {})[preset] || {};
   return (info.vars || [])
-    .filter((v) => !v.has_default && !/^COMPY_/.test(v.name) && !(values[v.name] || "").trim())
+    .filter((v) => {
+      if (v.has_default || /^COMPY_/.test(v.name)) return false;
+      const val = values[v.name];
+      // Non-string values (a demoted tier-3 bag's leftovers) count as set:
+      // no claim is better than a wrong one — the Go rule verbatim.
+      return val == null || (typeof val === "string" && !val.trim());
+    })
     .map((v) => v.name);
 }
 /* The settings screen's quiet build line: the running compy version, plus —
@@ -85,24 +91,69 @@ function fieldDefault(f) {
   if (f.type === "choice") return (f.options || [])[0] || "";
   return "";
 }
-// One row (or the config level) of the draft: stored knobs win, schema
-// defaults fill the rest — so a re-render form seeded from older meta still
-// carries every field the schema has grown since.
-function seedRow(fields, from) {
+// One row (or the config level) of the draft: stored values win, schema
+// defaults fill the rest — so a form seeded from an older bag still carries
+// every field the schema has grown since. withSecrets includes secret
+// fields (default "") — the editor's form edits a PRESET'S BAG, and secrets
+// are ordinary bag members there (Amendment 4); the creation draft leaves
+// them out (they have no value yet).
+function seedRow(fields, from, withSecrets) {
   const row = {};
   for (const f of fields || []) {
-    if (f.type === "secret") continue;
+    if (f.type === "secret" && !withSecrets) continue;
     row[f.name] = from && from[f.name] != null ? from[f.name] : fieldDefault(f);
   }
   return row;
 }
-function seedKnobs(tpl, from) {
-  const knobs = seedRow(tpl.fields, from);
+function seedKnobs(tpl, from, withSecrets) {
+  const knobs = seedRow(tpl.fields, from, withSecrets);
   if (tpl.backends) {
     const rows = from && Array.isArray(from.backends) && from.backends.length ? from.backends : [null];
-    knobs.backends = rows.map((r) => seedRow(tpl.backends.fields, r));
+    knobs.backends = rows.map((r) => seedRow(tpl.backends.fields, r, withSecrets));
   }
   return knobs;
+}
+/* The tier-3 activation pre-flight rule: schema-required fields (secrets and
+   non-secrets alike, non-optional with no default) that the preset's bag
+   leaves absent or blank, as form-keyed paths ("backends[0].api_key").
+   KEEP IN LOCKSTEP with internal/catalog's Template.MissingRequired — the
+   test mirrors catalog_test.go's TestMissingRequiredBag. */
+function missingRequiredT3(tpl, bag) {
+  bag = bag || {};
+  const missing = [];
+  const check = (prefix, fields, values) => {
+    for (const f of fields || []) {
+      if (f.optional || f.default != null) continue;
+      const v = (values || {})[f.name];
+      if (v == null || (typeof v === "string" && !v.trim())) missing.push(prefix + f.name);
+    }
+  };
+  check("", tpl.fields, bag);
+  if (tpl.backends && Array.isArray(bag.backends)) {
+    bag.backends.forEach((row, i) => check("backends[" + i + "].", tpl.backends.fields, row));
+  }
+  return missing;
+}
+/* Missing-value names, made readable for people. A tier-2 var name
+   (UPPER_SNAKE) passes verbatim — it IS the name the yaml uses. A tier-3
+   field path becomes prose: "backends[0].api_key" reads "backend
+   honeycomb's api key" when the bag's row carries a name (row 1 otherwise),
+   with the schema's label when one is at hand; the humanized field name is
+   the honest fallback, never a guess. */
+function prettyMissing(bag, paths, tpl) {
+  const label = (fields, name) => {
+    const f = (fields || []).find((x) => x.name === name);
+    return ((f && f.label) || name.replace(/_/g, " ")).toLowerCase();
+  };
+  return (paths || []).map((p) => {
+    if (/^[A-Z0-9_]+$/.test(p)) return p; // a tier-2 env var name stays itself
+    const m = /^backends\[(\d+)\]\.([a-z0-9_]+)$/.exec(p);
+    if (!m) return label(tpl && tpl.fields, p);
+    const i = parseInt(m[1], 10);
+    const row = (bag && Array.isArray(bag.backends) && bag.backends[i]) || {};
+    const who = typeof row.name === "string" && row.name ? row.name : "" + (i + 1);
+    return "backend " + who + "'s " + label(tpl && tpl.backends && tpl.backends.fields, m[2]);
+  });
 }
 /* Light client-side checks only — the server re-validates everything. */
 function fieldProblem(f, v) {
@@ -400,7 +451,8 @@ if (typeof module !== "undefined") {
   module.exports = {
     slug, originOf, hostOf, missingRequired, nameList, freePresetName,
     compyVersionLine,
-    fieldDefault, seedRow, seedKnobs, fieldProblem, knobProblems, parseFieldErr,
+    fieldDefault, seedRow, seedKnobs, missingRequiredT3, prettyMissing,
+    fieldProblem, knobProblems, parseFieldErr,
     knownKnobPath, isSourceText, parseSourceSchema, placeholderKnobs,
     errLineOf, excerptAround,
     portsCompact, yamlLineOf, fmtCount, parseZapLine, parseAttrs,

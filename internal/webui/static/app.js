@@ -146,8 +146,10 @@ const S = {
   // editor
   unlocked: false, unlockAsk: false, yamlOpen: false,
   preset: null, reveal: {},
+  chipAsk: null,           // preset chip pressed while the tier-3 form is dirty — confirm first
   saving: false, valErr: null, valOk: null,
   valHead: "",             // the failure panel's headline — each save path says who rejected what
+  valNote: "",             // the dual-dirty save's honesty line — what the OTHER half's fate was
   valMissing: [],          // unset required vars explaining valErr — offers save-without-validating
   valExcerpt: "",          // ±3 rendered-yaml lines around the line valErr names ("" when it names none)
   valAnyway: false,        // tier-3 rejection: offer the ?validate=false escape
@@ -243,7 +245,14 @@ function droppingVars() {
   return (S.health && S.health.dropping && S.health.dropping.vars) || [];
 }
 function droppingText(vars) {
-  return "dropping data — " + nameList(vars) + (vars.length === 1 ? " has" : " have") + " no value";
+  // Tier-3 diagnoses arrive as field paths ("backends[0].api_key") — read
+  // them out with the running preset's own row names; tier-2 env var names
+  // pass through prettyMissing verbatim. No schema at hand here, so the
+  // humanized field name stands in for its label.
+  const info = byName(S.status && S.status.config);
+  const bag = info ? ((info.meta && info.meta.presets) || {})[(S.status && S.status.preset) || ""] || {} : {};
+  const names = prettyMissing(bag, vars, null);
+  return "dropping data — " + nameList(names) + (names.length === 1 ? " has" : " have") + " no value";
 }
 /* The pre-flight's "add values" action, reached from runtime evidence: the
    inline preset editor on the active config's running preset (a real one —
@@ -254,7 +263,9 @@ function openDroppingEditor() {
   if (!info) return;
   const preset = (S.status && S.status.preset) || selectedPreset(info);
   openInline(name, preset, false);
-  if (S.screen !== "configs") go("#/configs");
+  // A tier-3 config's openInline routed to ITS editor already; the inline
+  // card editor lives on the configs screen.
+  if (!(info.has_template) && S.screen !== "configs") go("#/configs");
 }
 /* ── transient notes (the design's ~3s one-liners) ────────────────── */
 // The visible strips are rebuilt on every render, so a screen reader never
@@ -396,8 +407,8 @@ async function enterRoute() {
       S.unlocked = origin === "user" || t3;
       S.yamlOpen = origin === "user" || t3;
       S.unlockAsk = false;
-      S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = "";
-      S.renameNote = null; S.presetErr = null;
+      resetValPanel();
+      S.renameNote = null; S.presetErr = null; S.chipAsk = null;
       S.preset = selectedPreset(info);
       buildEditorForm(info);
       destroyEditor();
@@ -837,7 +848,7 @@ const HELP_COPY = {
   configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml, fetch it from a url, paste an otelbin.io share link, or copy a template — its options stay editable as a form in the editor.",
   collector: "these numbers are the collector's own, scraped from its telemetry endpoint, and listening shows only ports the process actually has open. the log below is the collector's output, grouped by level and filterable. restart and stop live here; the configurations screen picks what runs.",
   settings: "appearance, and how apps find compy: the advertised endpoint, its protocol, and the system-wide OTEL_* toggle. global variables are values every configuration's yaml can reference; the collector table downloads, updates, or replaces the binary every config runs on. the danger area at the bottom deletes everything compy manages.",
-  editor: "a configuration is one whole collector config.yaml plus its presets: named sets of values for the ${VAR} references in the yaml. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. a config whose text opens with a schema block is templated: the form and the source are two views of the same file, and one save carries both. cmd+s saves, and the save button shows amber while anything is unsaved.",
+  editor: "a configuration is one whole collector config.yaml plus its presets — a preset holds all of a config's values, and activating a config runs it with the selected preset's. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. a config whose text opens with a schema block is templated: the form edits the selected preset's values, the source below describes them, and one save carries both. cmd+s saves, and the save button shows amber while anything is unsaved.",
 };
 function helpButton(page) {
   return el("button", {
@@ -1116,6 +1127,13 @@ function presetMenu(info, list) {
 
 /* ── inline preset editor (the pencil, under its row) ─────────────── */
 function openInline(name, preset, isNew) {
+  // A tier-3 preset is a typed bag the editor's FORM edits — the inline
+  // card editor speaks env strings and would misrender it. The pencil (and
+  // the plus, and every "add values" path) routes to the editor with that
+  // preset selected instead; a new preset is created first, seeded from
+  // the selected one, so plus still works with zero typing.
+  const t3info = byName(name);
+  if (t3info && t3info.has_template) { openT3Preset(t3info, preset, isNew); return; }
   // A new preset opens with a generated available name already in the
   // field, so plus → save works with zero typing; gen is what the name
   // field opened with, which is what dirtiness is measured against.
@@ -1130,6 +1148,23 @@ function openInline(name, preset, isNew) {
   S.inlineDraft = Object.assign({}, base);
   S.presetsOpenId = null;
   render();
+}
+/* The tier-3 half of openInline: create-if-new (a verbatim copy of the
+   selected preset's bag — nothing new to prove, so ?validate=false), then
+   land in the editor with the preset selected; its form is the values
+   surface. */
+async function openT3Preset(info, preset, isNew) {
+  S.presetsOpenId = null;
+  if (isNew) {
+    const n = freePresetName(presetsOf(info));
+    const values = (info.meta.presets || {})[selectedPreset(info)] || {};
+    try {
+      await apiJSON(cfgURL(info.name) + "/presets/" + enc(n) + "?validate=false", "PUT", { values });
+    } catch (e) { showError(e); return; }
+    preset = n;
+  }
+  S.presetSel[info.name] = preset;
+  go("#/configs/" + enc(info.name)); // enterRoute selects the preset and builds the form
 }
 /* Dirty = the draft differs from what the store holds: a value changed, or
    the name field left its opening state. Drives the save button's accent
@@ -1283,10 +1318,27 @@ function inflightTitle() {
   return S.busyId ? "activating " + S.busyId + "…, wait for it to finish"
     : "stopping " + S.stoppingId + "…, wait for it to finish";
 }
-function preflightActivate(name, preset) {
+async function preflightActivate(name, preset) {
   if (inflight()) return; // every entry button is disabled; belt for stragglers
   const info = byName(name);
-  const missing = info ? missingRequired(info, preset) : [];
+  let missing = [];
+  if (info && info.has_template) {
+    // Tier 3 answers from the config's own schema (the Go rule,
+    // cfgstore.MissingRequired root-aware): fetch the source, mirror the
+    // check, and name what's missing readably from the bag's own row
+    // names. An unfetchable or unparseable source can't say — activate,
+    // and the server stays the authority.
+    try {
+      const d = await api(cfgURL(name));
+      const tpl = parseSourceSchema(d.source || "");
+      if (tpl) {
+        const bag = ((info.meta && info.meta.presets) || {})[preset || (info.meta && info.meta.active_preset)] || {};
+        missing = prettyMissing(bag, missingRequiredT3(tpl, bag), tpl);
+      }
+    } catch (e) { /* the server-side pre-flight still applies */ }
+  } else if (info) {
+    missing = missingRequired(info, preset);
+  }
   if (!missing.length) { activate(name, preset); return; }
   S.preflight = { name, preset, missing };
   S.presetsOpenId = null;
@@ -1544,13 +1596,15 @@ async function createFromCatalog(tpl) {
   }
 }
 
-/* The editor's form view, rebuilt from the CONFIG'S OWN source whenever the
-   stored source changes (route entry, every successful save): schema from
-   the front matter (parsed client-side — loosely, the server is the
-   authority), values from meta.knobs seeded through the schema's defaults.
-   parseErr means the form quietly steps aside ("the schema doesn't parse")
-   and the source pane is the recovery path — saving is never blocked on
-   the client parse. Open disclosures survive the rebuild. */
+/* The editor's form view, rebuilt whenever the stored source OR the
+   selected preset changes (route entry, every successful save, a chip
+   switch): schema from the CONFIG'S OWN front matter (parsed client-side —
+   loosely, the server is the authority), values from the SELECTED preset's
+   bag seeded through the schema's defaults — the form IS that preset's
+   values surface, secrets included (Amendment 4). parseErr means the form
+   quietly steps aside ("the schema doesn't parse") and the source pane is
+   the recovery path — saving is never blocked on the client parse. Open
+   disclosures survive the rebuild. */
 function buildEditorForm(info) {
   const prev = S.eform && !S.eform.parseErr ? S.eform : null;
   S.eform = null;
@@ -1559,7 +1613,8 @@ function buildEditorForm(info) {
   if (!tpl) { S.eform = { parseErr: true }; return; }
   let knobs;
   try {
-    knobs = seedKnobs(tpl, (info && info.meta && info.meta.knobs) || null);
+    const bag = ((info && info.meta && info.meta.presets) || {})[S.preset] || null;
+    knobs = seedKnobs(tpl, bag, true);
     if (tpl.backends && !Array.isArray(knobs.backends)) throw new Error("bad backends");
   } catch (e) { S.eform = { parseErr: true }; return; }
   S.eform = {
@@ -1589,12 +1644,27 @@ function tfField(f, fl, row, path) {
     if (f.onChange) f.onChange();
     if (f.errs[path]) { delete f.errs[path]; render(); }
   };
-  let control;
+  let control, revealBtn = null;
   if (fl.type === "secret") {
-    // No value here, honestly: named and described, but visibly not an
-    // input — the key lives in the preset (the value cards above).
+    // A real input: the form edits the preset's bag, and a secret is an
+    // ordinary bag member typed by the schema. Masked, with the value
+    // cards' reveal idiom.
+    const revealed = !!S.reveal[path];
     control = el("input", {
-      class: "field", attrs: { disabled: "", placeholder: "lives in the preset" },
+      class: "field",
+      attrs: {
+        type: revealed ? "text" : "password",
+        spellcheck: "false", autocomplete: "off",
+        "data-fk": "tf:" + path, "aria-label": fl.label || fl.name,
+        placeholder: fl.optional ? "optional" : null,
+      },
+      props: { value: row[fl.name] || "" },
+      on: { input: (e) => { row[fl.name] = e.target.value; touched(); } },
+    });
+    revealBtn = el("button", {
+      class: "reveal", text: revealed ? "hide" : "reveal",
+      attrs: { type: "button" },
+      on: { click: () => { S.reveal[path] = !S.reveal[path]; render(); } },
     });
   } else if (fl.type === "choice") {
     control = el("select", {
@@ -1633,13 +1703,13 @@ function tfField(f, fl, row, path) {
       on: { input: (e) => { row[fl.name] = e.target.value; touched(); } },
     });
   }
-  return el("div", { class: "val tf-field" + (fl.type === "secret" ? " secret" : "") }, [
+  return el("div", { class: "val tf-field" }, [
     el("div", { class: "k" }, [
       el("span", { class: "name", text: fl.label || fl.name }),
       el("span", { class: "grow" }),
       err ? span("field-err sans", err) : null,
     ]),
-    el("div", { class: "v" }, [control]),
+    el("div", { class: "v" }, [control, revealBtn]),
     fl.description ? el("div", { class: "d sans", text: fl.description }) : null,
   ]);
 }
@@ -1705,7 +1775,8 @@ function editorFormView() {
   }
   const tpl = f.tpl;
   const wrap = el("div", { class: "tform eform" });
-  wrap.appendChild(el("div", { class: "tf-head" }, [span("colhead", "options")]));
+  // The form is the SELECTED preset's values surface — say whose.
+  wrap.appendChild(el("div", { class: "tf-head" }, [span("colhead", "values · " + (S.preset || ""))]));
   // The template's own description doubles as the helper line — for the
   // shipped template it names the vendor tables in the docs.
   if (tpl.description) wrap.appendChild(el("div", { class: "tf-desc sans", text: tpl.description }));
@@ -1749,6 +1820,12 @@ function editorFormView() {
    editor is not touched at all. */
 let cm = null, cmDirty = false, cmFor = null, cmRO = false, cmBase = null, cmT3 = false;
 function destroyEditor() { cm = null; cmDirty = false; cmFor = null; cmBase = null; cmT3 = false; }
+// One reset for the save-result panel's whole state — every save path and
+// the dismiss button clear the same seven fields.
+function resetValPanel() {
+  S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = "";
+  S.valAnyway = false; S.valHead = ""; S.valNote = "";
+}
 // Dirty = either view of the one file: the pane (yaml or source) or the
 // tier-3 form's knob draft. One save serves both.
 function editorDirty() { return S.screen === "editor" && ((!!cm && cmDirty) || eformDirty()); }
@@ -1854,7 +1931,7 @@ function screenEditor() {
         attrs: { spellcheck: "false", size: Math.max(p.length, 4), "data-fk": "chip:" + p, "aria-label": "rename this preset" },
         props: { value: p },
         on: { change: (e) => renamePreset(info, p, e.target.value) },
-      }) : el("button", { class: "pick", text: p, on: { click: () => { flushValue(); S.preset = p; S.presetSel[info.name] = p; render(); } } }),
+      }) : el("button", { class: "pick", text: p, on: { click: () => pickPreset(info, p, t3) } }),
       el("button", { class: "mini", title: "duplicate this preset", on: { click: () => dupPreset(info, p) } }, [icon("copy", 12)]),
       el("button", {
         class: "mini del", title: delTitle,
@@ -1867,16 +1944,35 @@ function screenEditor() {
   band.appendChild(chips);
   // Field-adjacent: a chip-rename collision answers right under the chips.
   if (S.presetErr) band.appendChild(el("div", { class: "field-err sans", text: S.presetErr }));
+  // A chip pressed while the tier-3 form holds unsaved edits: the switch
+  // would swap the form's values out from under them — confirm inline.
+  if (S.chipAsk) {
+    band.appendChild(confirmBar(
+      "switch to " + S.chipAsk + "? unsaved edits to " + S.preset + " are lost.",
+      "discard & switch", "accent",
+      () => switchPreset(info, S.chipAsk),
+      () => { S.chipAsk = null; render(); },
+      { cls: "unlock-ask", cancel: "keep editing" }));
+  }
 
-  const values = ((info.meta.presets || {})[S.preset]) || {};
-  band.appendChild(valueCards(info, values, (k, v) => queueValue(info, k, v), "ed"));
+  /* Tier 3: the FORM (below) is the one values surface — it edits the
+     selected preset's bag, secrets included, so the card band would be a
+     second copy of the same truth. Tier 2 keeps its cards. */
+  if (!t3) {
+    const values = ((info.meta.presets || {})[S.preset]) || {};
+    band.appendChild(valueCards(info, values, (k, v) => queueValue(info, k, v), "ed"));
+  }
 
   /* Row three appears only when something is wrong, and it is a real "is
-     any required value missing" check — the key's own name, not a
-     name-specific special case. */
-  const missing = missingRequired(info, S.preset);
+     any required value missing" check — tier 3 answers from the config's
+     own schema (field paths, made readable), tier 2 from the yaml's vars. */
+  const bag = ((info.meta.presets || {})[S.preset]) || {};
+  const t3tpl = t3 && S.eform && !S.eform.parseErr ? S.eform.tpl : null;
+  const missing = t3
+    ? (t3tpl ? prettyMissing(bag, missingRequiredT3(t3tpl, bag), t3tpl) : [])
+    : missingRequired(info, S.preset);
   if (S.preset && missing.length) {
-    band.appendChild(el("div", { class: "warn sans", text: S.preset + " has no " + missing.join(", ") + ". activating with it will fail." }));
+    band.appendChild(el("div", { class: "warn sans", text: S.preset + " has no " + nameList(missing) + ". activating with it will fail." }));
   }
   wrap.appendChild(band);
 
@@ -1891,8 +1987,11 @@ function screenEditor() {
         span("headline", S.valHead || "the collector rejected this config. nothing was saved."),
         el("span", { class: "grow" }),
         el("button", { class: "act", text: "copy", on: { click: () => copyText(S.valErr, "diagnostic copied") } }),
-        el("button", { class: "act", text: "dismiss", on: { click: () => { S.valErr = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = ""; render(); } } }),
+        el("button", { class: "act", text: "dismiss", on: { click: () => { resetValPanel(); render(); } } }),
       ]),
+      // The dual-dirty save is two requests (source, then preset values) —
+      // when one half landed or never got sent, this line says so honestly.
+      S.valNote ? el("div", { class: "bar2" }, [span("sans", S.valNote)]) : null,
       // The failure is explained by variables that simply have no values
       // yet — "write the yaml first, fill values second" is a legitimate
       // order of work, so offer the save without the collector's blessing.
@@ -1909,7 +2008,7 @@ function screenEditor() {
       S.valAnyway ? el("div", { class: "bar2" }, [
         span("sans", "the draft stays here until it validates — or keep it without the collector's blessing."),
         el("span", { class: "grow" }),
-        el("button", { class: "act", text: "save without validating", on: { click: () => saveSourceAnyway(info) } }),
+        el("button", { class: "act", text: "save without validating", on: { click: () => saveT3(info, false) } }),
       ]) : null,
       el("pre", { text: S.valErr }),
       // The collector validated the RENDERED yaml; when its diagnostic
@@ -2088,23 +2187,50 @@ async function headerResync(info, origin) {
   } catch (e) { showError(e); }
 }
 
+/* Switching the editor's preset chips: on a tier-3 config the chips are the
+   FORM'S switcher — the form's values swap to the newly selected preset's
+   bag — so a dirty form gets the inline confirm first (pickPreset arms it,
+   the band's confirmBar runs switchPreset). Tier 2 keeps its instant switch
+   (the value cards autosave; there is nothing unsaved to lose). */
+function pickPreset(info, p, t3) {
+  if (t3 && eformDirty()) { S.chipAsk = p; render(); return; }
+  switchPreset(info, p);
+}
+function switchPreset(info, p) {
+  flushValue(); // a tier-2 card edit pending against the old preset
+  S.chipAsk = null;
+  S.preset = p; S.presetSel[info.name] = p;
+  buildEditorForm(info); // tier 3: the form re-seeds from p's bag (no-op for tier 2)
+  render();
+}
+
+/* A new or duplicated preset copies an existing bag verbatim, so there is
+   nothing new to prove: ?validate=false skips re-asking the collector about
+   values it already blessed (and lets a bag that was itself saved with the
+   escape hatch still be copied). Tier-2 presets never validated either way. */
 async function addPreset(info) {
   const n = freePresetName(presetsOf(info)); // same scheme as the configs-row plus
-  try {
-    await apiJSON(cfgURL(info.name) + "/presets/" + enc(n), "PUT", { values: {} });
-    await loadCore();
-    S.preset = n; S.presetSel[info.name] = n;
-    render();
-  } catch (e) { showError(e); }
+  // Tier 3 seeds from the selected preset's bag — an empty bag would lose
+  // the schema's structure (and its required rows); tier 2 starts blank.
+  const values = S.source != null ? (info.meta.presets || {})[S.preset] || {} : {};
+  await createPreset(info, n, values);
 }
 async function dupPreset(info, p) {
   const list = presetsOf(info);
   let n = p + "-copy", i = 2;
   while (list.indexOf(n) > -1) { n = p + "-copy-" + i; i++; }
+  await createPreset(info, n, (info.meta.presets || {})[p] || {});
+}
+async function createPreset(info, n, values) {
+  // A dirty tier-3 form belongs to the CURRENT preset: creating another
+  // must not swap the draft out from under it — the selection stays put.
+  const stay = eformDirty();
   try {
-    await apiJSON(cfgURL(info.name) + "/presets/" + enc(n), "PUT", { values: (info.meta.presets || {})[p] || {} });
+    await apiJSON(cfgURL(info.name) + "/presets/" + enc(n) + "?validate=false", "PUT", { values });
     await loadCore();
+    if (stay) { note(n + " added — the chips switch to it", 3600); return; }
     S.preset = n; S.presetSel[info.name] = n;
+    buildEditorForm(byName(info.name) || info);
     render();
   } catch (e) { showError(e); }
 }
@@ -2115,7 +2241,12 @@ async function delPreset(info, p) {
     await api(cfgURL(info.name) + "/presets/" + enc(p), { method: "DELETE" });
     await loadCore();
     const left = presetsOf(byName(info.name) || info);
-    if (S.preset === p) S.preset = left[Math.max(i - 1, 0)] || null;
+    if (S.preset === p) {
+      // The selected preset died with any draft it had; re-seed from a
+      // survivor. Deleting an unselected one leaves the form untouched.
+      S.preset = left[Math.max(i - 1, 0)] || null;
+      buildEditorForm(byName(info.name) || info);
+    }
     render();
   } catch (e) { showError(e); }
 }
@@ -2140,15 +2271,15 @@ async function renamePreset(info, from, raw) {
    exactly the backend's own rule (catalog.IsSource). Plain yaml goes
    through the yaml flow (over a templated config that DEMOTES it: the
    source is dropped, the form disappears); template source and/or a dirty
-   form go through PUT …/source as one request, source applied first, then
-   knobs — the server's order. */
+   form go through the tier-3 flow — the source PUT first, then the
+   selected preset's bag, the server's own order. */
 async function saveConfig(info) {
   if (S.saving) return;
   const paneDirty = !!(cm && cmDirty);
   const formDirty = eformDirty();
   if (!paneDirty && !formDirty) return; // both views clean: nothing to save
   if (paneDirty && !isSourceText(cm.getValue())) { saveYAML(info); return; }
-  saveSource(info, paneDirty, formDirty);
+  saveT3(info, true);
 }
 
 /* The yaml flow: the collector's verdict, then the result panel.
@@ -2162,7 +2293,8 @@ async function saveYAML(info) {
   const next = cm.getValue();
   const prev = S.yaml;
   const prevSource = S.source; // non-null: this save demotes a templated config
-  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = "";
+  S.saving = true;
+  resetValPanel();
   clearError();
   render();
   const t0 = Date.now();
@@ -2194,10 +2326,10 @@ async function saveYAML(info) {
       if (prevSource != null) {
         // The PUT already dropped the source; putting plain prev yaml back
         // would leave the config demoted by a REJECTED save. Restore the
-        // pair instead — validate=false skips re-validating known-good
-        // text and never touches the running collector.
-        await apiJSON(cfgURL(info.name) + "/source?validate=false", "PUT",
-          { source: prevSource, knobs: (info.meta && info.meta.knobs) || null });
+        // source instead (preset bags were never touched) — validate=false
+        // skips re-validating known-good text and never touches the
+        // running collector.
+        await apiJSON(cfgURL(info.name) + "/source?validate=false", "PUT", { source: prevSource });
       } else {
         await api(cfgURL(info.name) + "/yaml", { method: "PUT", headers: { "Content-Type": "text/plain" }, body: prev });
       }
@@ -2207,94 +2339,106 @@ async function saveYAML(info) {
   render();
 }
 
-/* The tier-3 flow: parse → knobs → render → validate happens server-side in
-   the one PUT, with nothing-was-saved semantics on rejection — no client
-   restore dance. Light client checks (the form's own key space) run first;
-   a 400 naming a form field lands beside it; everything else is the
-   failure panel, with the rendered excerpt when the diagnostic names a
-   line and the ?validate=false escape. */
-async function saveSource(info, withSource, withKnobs) {
-  if (withKnobs) {
+/* The tier-3 flow: the source PUT carries the pane (source only — values
+   live in presets now), the preset PUT carries the whole bag the form
+   edits; both dirty means two requests, source first — the server's own
+   order — and the result panel owes the PAIR honesty, because the write is
+   not atomic: the source can land and the values still be refused. Each
+   PUT validates server-side with nothing-was-saved semantics for its own
+   half. Light client checks (the form's own key space) run first; a 400
+   naming a form field lands beside it; everything else is the failure
+   panel, with the rendered excerpt when the diagnostic names a line and
+   the ?validate=false escape (which re-runs THIS save for whatever is
+   still unsaved — only the collector's verdict is skipped; the schema
+   still has to parse and the bag to fit). */
+async function saveT3(info, validate) {
+  if (S.saving) return;
+  const paneDirty = !!(cm && cmDirty && isSourceText(cm.getValue()));
+  const formDirty = eformDirty();
+  if (!paneDirty && !formDirty) return;
+  if (formDirty && validate) {
     const errs = knobProblems(S.eform.tpl, S.eform.knobs);
     if (Object.keys(errs).length) { S.eform.errs = errs; render(); return; }
   }
-  const body = {};
-  if (withSource) body.source = cm.getValue();
-  if (withKnobs) body.knobs = S.eform.knobs;
-  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = "";
+  S.saving = true;
+  resetValPanel();
   clearError();
   render();
   const t0 = Date.now();
   const wasRunning = isRunningCfg(info.name);
+  const preset = S.preset;
+  const draft = formDirty ? S.eform.knobs : null;
+  const q = validate ? "" : "?validate=false";
+  const what = paneDirty && formDirty ? "the source and the " + preset + " values"
+    : paneDirty ? "the source" : "the " + preset + " values";
+  let sourceSaved = false, stale = false;
   try {
-    await apiJSON(cfgURL(info.name) + "/source", "PUT", body);
-    cmDirty = false;
+    if (paneDirty) {
+      await apiJSON(cfgURL(info.name) + "/source" + q, "PUT", { source: cm.getValue() });
+      cmDirty = false;
+      sourceSaved = true;
+    }
+    if (formDirty) {
+      const r = await apiJSON(cfgURL(info.name) + "/presets/" + enc(preset) + q, "PUT", { values: draft });
+      stale = !!(r && r.running_stale);
+    }
     await loadCore();
     await loadYAML(info.name);
-    // Re-derive the form from the (possibly new) schema; knob values the
-    // server pruned or defaulted come back through the reload.
+    // Re-derive the form from the (possibly new) schema and the stored bag;
+    // values the server pruned or defaulted come back through the reload.
     buildEditorForm(byName(info.name) || info);
     const secs = ((Date.now() - t0) / 1000).toFixed(1);
-    S.valOk = wasRunning
-      ? "saved and re-applied to the running collector in " + secs + "s"
-      : "saved in " + secs + "s. " + info.name + " is not running, so nothing restarted.";
-  } catch (e) {
-    const fe = e.status === 400 ? parseFieldErr(e.message || "") : null;
-    if (fe && S.eform && S.eform.tpl && knownKnobPath(S.eform.tpl, fe.path)) {
-      S.eform.errs[fe.path] = fe.msg; // field-adjacent, same key space as the client checks
+    if (validate) {
+      S.valOk = wasRunning
+        ? "saved " + what + " and re-applied to the running collector in " + secs + "s"
+        : "saved " + what + " in " + secs + "s. " + info.name + " is not running, so nothing restarted.";
     } else {
+      S.valOk = "saved " + what + " without validating. fix it here, then activate to check it."
+        + (stale ? " the running collector keeps the previous version until then." : "");
+    }
+  } catch (e) {
+    // Which half failed? The source goes first, so once it landed (or was
+    // never dirty) the failure is the preset write's.
+    if (sourceSaved || !paneDirty) {
+      if (sourceSaved) {
+        // The new source IS stored: reload it, re-derive the form from its
+        // schema, then put the unsaved draft back so the values survive
+        // the fixing.
+        try { await loadCore(); await loadYAML(info.name); } catch (e2) { /* keep what we have */ }
+        buildEditorForm(byName(info.name) || info);
+        if (S.eform && !S.eform.parseErr) S.eform.knobs = seedKnobs(S.eform.tpl, draft, true);
+      }
+      const fe = e.status === 400 ? parseFieldErr(e.message || "") : null;
+      if (fe && S.eform && S.eform.tpl && knownKnobPath(S.eform.tpl, fe.path)) {
+        S.eform.errs[fe.path] = fe.msg; // field-adjacent, same key space as the client checks
+        if (sourceSaved) note("the source was saved — fix the marked value, then save again", 5200);
+      } else {
+        S.valErr = e.message || String(e);
+        S.valHead = "the rendered config was rejected. the " + preset + " values were not stored.";
+        S.valNote = sourceSaved ? "the source half of this save landed — only the values were refused." : "";
+        // The server proved the render and stored nothing (of this half),
+        // so the stored render (S.yaml) is the closest thing to the
+        // rejected one — line numbers can drift by exactly the failed
+        // edit; rendered→source mapping is deferred (design note).
+        S.valExcerpt = excerptAround(S.yaml, errLineOf(S.valErr), 3);
+        S.valAnyway = true;
+      }
+    } else {
+      // The source itself was refused: nothing was saved, and the values
+      // were never sent. Honest headline: a source that doesn't PARSE was
+      // refused by the template engine, not the collector — and
+      // validate=false can't keep it either (the server never stores what
+      // it can't render), so the escape hatch is only offered when the
+      // source parses.
       S.valErr = e.message || String(e);
-      // Honest headline: a source that doesn't PARSE was refused by the
-      // template engine, not the collector — and validate=false can't keep
-      // it either (the server never stores what it can't render), so the
-      // escape hatch is only offered when the source parses.
       const parseFail = /^template (schema|body):/.test(S.valErr);
       S.valHead = parseFail
         ? "the template source doesn't parse. nothing was saved."
         : "the rendered config was rejected. nothing was saved.";
-      // The server validated the RENDER and put everything back, so the
-      // stored render (S.yaml) is the closest thing to the rejected one —
-      // its line numbers can drift by exactly the edit that failed;
-      // rendered→source mapping is deferred (design note).
+      S.valNote = formDirty ? "the " + preset + " value changes were not sent — they ride the next save, once the source is fixed." : "";
       S.valExcerpt = parseFail ? "" : excerptAround(S.yaml, errLineOf(S.valErr), 3);
       S.valAnyway = !parseFail;
     }
-  }
-  S.saving = false;
-  render();
-}
-
-/* The tier-3 escape hatch: the same {source?, knobs?} body with
-   ?validate=false — the schema still has to parse and the knobs to fit
-   (the server never stores a source it can't render), only the collector's
-   verdict is skipped, and the running collector is never touched. */
-async function saveSourceAnyway(info) {
-  if (S.saving) return;
-  const paneDirty = !!(cm && cmDirty);
-  const formDirty = eformDirty();
-  const body = {};
-  if (paneDirty && isSourceText(cm.getValue())) body.source = cm.getValue();
-  if (formDirty) body.knobs = S.eform.knobs;
-  if (!body.source && !("knobs" in body)) return; // nothing left to keep
-  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = "";
-  clearError();
-  render();
-  try {
-    const r = await apiJSON(cfgURL(info.name) + "/source?validate=false", "PUT", body);
-    cmDirty = false;
-    await loadCore();
-    await loadYAML(info.name);
-    buildEditorForm(byName(info.name) || info);
-    S.valOk = "saved without validating. fix it here, then activate to check it."
-      + (r && r.running_stale ? " the running collector keeps the previous version until then." : "");
-  } catch (e) {
-    S.valErr = e.message || String(e);
-    const parseFail = /^template (schema|body):/.test(S.valErr);
-    S.valHead = parseFail
-      ? "the template source doesn't parse. nothing was saved."
-      : "the rendered config was rejected. nothing was saved.";
-    S.valExcerpt = parseFail ? "" : excerptAround(S.yaml, errLineOf(S.valErr), 3);
-    S.valAnyway = !parseFail;
   }
   S.saving = false;
   render();
@@ -2308,7 +2452,8 @@ async function saveSourceAnyway(info) {
 async function saveAnyway(info) {
   if (S.saving || !cm) return;
   const next = cm.getValue();
-  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = "";
+  S.saving = true;
+  resetValPanel();
   clearError();
   render();
   try {
@@ -3052,7 +3197,7 @@ function refreshBlocked() {
   const inField = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT")
     && a.dataset.fk !== "logq";
   return inField || S.busyId || S.stoppingId || S.saving || S.restarting || S.presetsOpenId || S.inline
-    || S.confirm || S.preflight || S.newOpen || S.unlockAsk || S.resetArm || S.resetBusy
+    || S.confirm || S.preflight || S.newOpen || S.unlockAsk || S.chipAsk || S.resetArm || S.resetBusy
     || document.querySelector("dialog[open]")
     || (S.screen === "editor" && (cmDirty || eformDirty()));
 }
@@ -3102,6 +3247,7 @@ document.addEventListener("keydown", (e) => {
     if (S.confirm) { S.confirm = null; render(); return; }
     if (S.inline) { S.inline = null; S.inlineDraft = null; render(); return; }
     if (S.newOpen) { S.newOpen = false; render(); return; }
+    if (S.chipAsk) { S.chipAsk = null; render(); return; }
     if (S.unlockAsk) { S.unlockAsk = false; render(); return; }
     if (S.resetArm) { S.resetArm = false; S.resetTyped = ""; render(); return; }
     if (S.adoptAsk) { S.adoptAsk = false; render(); return; }

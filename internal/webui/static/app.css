@@ -465,8 +465,6 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .tf-field { background: var(--window); }
 .tf-field .k .name { text-transform: lowercase; }
 .tf-field .d { font-size: 11px; color: var(--dim); line-height: 1.5; }
-.tf-field.secret { border-style: dashed; }
-.tf-field.secret .v input[disabled] { color: var(--dim2); background: transparent; border-style: dashed; }
 .tf-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .tf-check {
   display: flex; align-items: center; gap: 6px; font-size: 12px;
