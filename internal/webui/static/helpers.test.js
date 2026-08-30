@@ -264,6 +264,76 @@ test("parseFieldErr", () => {
   assert.equal(H.parseFieldErr(""), null);
 });
 
+test("knownKnobPath admits only paths the form can show", () => {
+  assert.equal(H.knownKnobPath(TPL, "backends"), true, "group-level error");
+  assert.equal(H.knownKnobPath(TPL, "backends[0].endpoint"), true);
+  assert.equal(H.knownKnobPath(TPL, "batch"), true);
+  // A collector diagnostic that merely LOOKS field-shaped stays a panel error.
+  assert.equal(H.knownKnobPath(TPL, "exporters"), false);
+  assert.equal(H.knownKnobPath(TPL, "backends[0].nope"), false);
+  assert.equal(H.knownKnobPath(TPL, ""), false);
+  assert.equal(H.knownKnobPath(null, "batch"), false);
+  const noRepeat = { fields: [{ name: "batch", type: "toggle" }] };
+  assert.equal(H.knownKnobPath(noRepeat, "backends"), false, "no repeat group, no group error");
+});
+
+/* Tier-3 sources: detection mirrors catalog.IsSource, the client schema
+   parse is deliberately loose (the server is the authority), and creation
+   placeholders are type-derived only. */
+const SRC = JSON.stringify(TPL) + "\n---\nreceivers: {}\n";
+
+test("isSourceText mirrors catalog.IsSource", () => {
+  assert.equal(H.isSourceText(SRC), true);
+  assert.equal(H.isSourceText("  \n\t{\"name\":\"x\"}\n---\nbody"), true, "leading blanks ignored");
+  assert.equal(H.isSourceText("receivers:\n  otlp:\n"), false, "plain yaml");
+  assert.equal(H.isSourceText("# comment\n{}\n---\n"), false, "yaml never starts with '{' — a comment doesn't count");
+  assert.equal(H.isSourceText('{"name":"x"} no separator'), false);
+  assert.equal(H.isSourceText(""), false);
+});
+
+test("parseSourceSchema parses the front matter, loosely", () => {
+  const t = H.parseSourceSchema(SRC);
+  assert.equal(t.name, "custom-endpoints");
+  assert.equal(t.backends.min, 1);
+  // Broken front matter (mid-edit) is null — the form steps aside.
+  assert.equal(H.parseSourceSchema('{"name": broken\n---\nbody'), null);
+  assert.equal(H.parseSourceSchema("plain: yaml"), null);
+  assert.equal(H.parseSourceSchema('[1,2]\n---\nbody'), null, "front matter must be an object");
+  assert.equal(H.parseSourceSchema('{"fields": "nope"}\n---\nbody'), null, "fields must be objects in an array");
+  assert.equal(H.parseSourceSchema('{"backends": [1]}\n---\nbody'), null, "backends must be an object");
+});
+
+test("placeholderKnobs makes a creatable draft with no field names of its own", () => {
+  const knobs = H.placeholderKnobs(TPL);
+  // Required slug/url fields get neutral type-derived placeholders…
+  assert.equal(knobs.backends[0].name, "backend");
+  assert.equal(knobs.backends[0].endpoint, "https://api.example.com");
+  // …defaults and optionals stay what seedKnobs made them.
+  assert.equal(knobs.backends[0].auth_scheme, "none");
+  assert.equal(knobs.backends[0].auth_header, "");
+  assert.equal(knobs.batch, true);
+  // A required multi without a default picks everything rather than nothing.
+  const t2 = { fields: [{ name: "sig", type: "multi", options: ["a", "b"] }] };
+  assert.deepEqual(H.placeholderKnobs(t2).sig, ["a", "b"]);
+  // The draft passes the same light checks the form runs before a save.
+  assert.deepEqual(H.knobProblems(TPL, knobs), {});
+});
+
+/* The failure panel's rendered excerpt: ±3 lines around the line the
+   collector's diagnostic names, the named line marked. */
+test("errLineOf and excerptAround", () => {
+  assert.equal(H.errLineOf("yaml: line 12: could not find expected ':'"), 12);
+  assert.equal(H.errLineOf('collector "x" rejected the config'), 0);
+  const yaml = ["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8"].join("\n");
+  assert.equal(H.excerptAround(yaml, 5, 3), [
+    "2   l2", "3   l3", "4   l4", "5 > l5", "6   l6", "7   l7", "8   l8",
+  ].join("\n"));
+  assert.equal(H.excerptAround(yaml, 1, 3), ["1 > l1", "2   l2", "3   l3", "4   l4"].join("\n"), "clamped at the top");
+  assert.equal(H.excerptAround(yaml, 99, 3), "", "a line the yaml doesn't have");
+  assert.equal(H.excerptAround(yaml, 0, 3), "", "no line named");
+  assert.equal(H.excerptAround("", 1, 3), "1 > ", "degenerate but stable");
+});
+
 /* The log pane's tail-mode scroll rule and its incremental-render diff. */
 test("atLogBottom", () => {
   const cases = [

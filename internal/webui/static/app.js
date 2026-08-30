@@ -122,6 +122,7 @@ const S = {
   // server snapshot
   status: null, configs: [], health: null, log: "", distros: [],
   yaml: "", yamlOf: null,
+  source: null,            // tier-3 template source (GET config "source"), null for plain configs
 
   // configurations screen
   find: "",
@@ -132,7 +133,6 @@ const S = {
   flash: null,             // key of the control showing its brief "saved" mark
   newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
   templates: null,         // catalog schemas (GET /api/templates), fetched once
-  tform: null,             // the schema-driven template form (openTemplateForm)
   confirm: null,           // { text, verb, id, kind } — the destructive inline confirm, under row `id`
   presetSel: {},           // { configName: presetName }
   presetsOpenId: null,
@@ -148,6 +148,9 @@ const S = {
   preset: null, reveal: {},
   saving: false, valErr: null, valOk: null,
   valMissing: [],          // unset required vars explaining valErr — offers save-without-validating
+  valExcerpt: "",          // ±3 rendered-yaml lines around the line valErr names ("" when it names none)
+  valAnyway: false,        // tier-3 rejection: offer the ?validate=false escape
+  eform: null,             // the tier-3 editor's form view (buildEditorForm)
   renameNote: null,        // field-adjacent error beside the header's name field
   presetErr: null,         // field-adjacent error under the preset chips
 
@@ -359,6 +362,7 @@ async function loadSettings() { S.settings = await api("/api/settings"); }
 async function loadYAML(name) {
   const d = await api(cfgURL(name));
   S.yaml = d.yaml || "";
+  S.source = d.source != null ? d.source : null; // tier 3 carries its source
   S.yamlOf = name;
 }
 
@@ -384,14 +388,21 @@ async function enterRoute() {
       if (!info) { go("#/configs"); return; }
       await loadYAML(r.name);
       const origin = originOf(info);
-      S.unlocked = origin === "user";
-      S.yamlOpen = origin === "user";
+      // Tier 3 (a config that owns template source): both views, both
+      // editable, always — no collapse, no unlock-ask. The capability, not
+      // a hazard.
+      const t3 = S.source != null;
+      S.unlocked = origin === "user" || t3;
+      S.yamlOpen = origin === "user" || t3;
       S.unlockAsk = false;
-      S.valErr = null; S.valOk = null; S.valMissing = []; S.renameNote = null; S.presetErr = null;
+      S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false;
+      S.renameNote = null; S.presetErr = null;
       S.preset = selectedPreset(info);
+      buildEditorForm(info);
       destroyEditor();
     } else {
       S.editId = null;
+      S.eform = null;
       destroyEditor();
     }
     if (r.screen === "collector") await loadCollector();
@@ -413,15 +424,14 @@ async function enterRoute() {
 let navHash = location.hash;
 window.addEventListener("hashchange", async () => {
   if (location.hash === navHash) return;
-  if (editorDirty() || inlineDirty() || S.tform) {
+  if (editorDirty() || inlineDirty()) {
     const target = location.hash;
     location.hash = navHash;
     const q = editorDirty() ? "leave this configuration? unsaved changes are lost."
-      : S.tform ? "leave this screen? what's in the template form is lost."
-        : "leave this screen? the unsaved preset draft is lost.";
+      : "leave this screen? the unsaved preset draft is lost.";
     if (!(await ask(q, null))) return;
     cm && (cmDirty = false);
-    S.inline = null; S.inlineDraft = null; S.tform = null;
+    S.inline = null; S.inlineDraft = null; S.eform = null;
     location.hash = target;
     return;
   }
@@ -429,7 +439,7 @@ window.addEventListener("hashchange", async () => {
   enterRoute();
 });
 window.addEventListener("beforeunload", (e) => {
-  if (!editorDirty() && !inlineDirty() && !S.tform) return;
+  if (!editorDirty() && !inlineDirty()) return;
   e.preventDefault();
   e.returnValue = "leave this configuration? unsaved changes are lost.";
 });
@@ -472,13 +482,14 @@ function restoreFocus(f) {
 
 /* Screen scroll survives a rebuild the same way focus does: every screen's
    main scroll container (SCREEN_SCROLLER — one shared wrapper per screen;
-   screens without one, like the editor, scroll nothing at this level) has
+   the plain editor scrolls nothing at this level, the tier-3 editor
+   scrolls .ed-scroll) has
    its offset captured before the DOM is torn down and put back after.
    Keyed to the screen the DOM actually shows (domScreen, not S.screen,
    which enterRoute has already flipped), so switching screens still starts
    at the top. The log pane keeps its own smarter tail machinery below;
    CodeMirror keeps its scroll in its own surviving instance. */
-const SCREEN_SCROLLER = "#screen .table-scroll, #screen .settings";
+const SCREEN_SCROLLER = "#screen .table-scroll, #screen .settings, #screen .ed-scroll";
 let domScreen = null; // which screen the DOM currently shows
 function captureScreenScroll() {
   const e = document.querySelector(SCREEN_SCROLLER);
@@ -801,9 +812,6 @@ function screenConfigs() {
   wrap.appendChild(strips);
 
   const scroll = el("div", { class: "table-scroll" });
-  // The creation form scrolls with the table (it can be tall); the
-  // change-options form instead sits under its config's row, below.
-  if (S.tform && !S.tform.forName) scroll.appendChild(templateForm());
   scroll.appendChild(el("div", { class: "cfg-grid cfg-head colhead" }, [
     el("span"), span("", "name"), span("", "preset"), el("span"),
   ]));
@@ -825,10 +833,10 @@ function screenConfigs() {
    supersedes the shown-by-default rule from the copy round; the old
    compy.helpDismissed localStorage keys are swept at boot). */
 const HELP_COPY = {
-  configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml, fetch it from a url, paste an otelbin.io share link, or fill in a template with your own endpoints.",
+  configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml, fetch it from a url, paste an otelbin.io share link, or copy a template — its options stay editable as a form in the editor.",
   collector: "these numbers are the collector's own, scraped from its telemetry endpoint, and listening shows only ports the process actually has open. the log below is the collector's output, grouped by level and filterable. restart and stop live here; the configurations screen picks what runs.",
   settings: "appearance, and how apps find compy: the advertised endpoint, its protocol, and the system-wide OTEL_* toggle. global variables are values every configuration's yaml can reference; the collector table downloads, updates, or replaces the binary every config runs on. the danger area at the bottom deletes everything compy manages.",
-  editor: "a configuration is one whole collector config.yaml plus its presets: named sets of values for the ${VAR} references in the yaml. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. cmd+s saves, and the save button shows amber while anything is unsaved.",
+  editor: "a configuration is one whole collector config.yaml plus its presets: named sets of values for the ${VAR} references in the yaml. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. a config whose text opens with a schema block is templated: the form and the source are two views of the same file, and one save carries both. cmd+s saves, and the save button shows amber while anything is unsaved.",
 };
 function helpButton(page) {
   return el("button", {
@@ -1033,7 +1041,7 @@ function configRow(info) {
       class: "ico" + (sync.on ? " accent" : ""), title: sync.title,
       attrs: sync.on ? null : { disabled: "" },
       on: { click: sync.run },
-    }, [icon(origin === "builtin" ? "undo" : origin === "tmpl" ? "sliders" : "refresh", 13)]),
+    }, [icon(origin === "builtin" ? "undo" : "refresh", 13)]),
     el("button", {
       class: "ico del", title: isActiveCfg ? "can't delete the running config" : "delete " + name,
       attrs: isActiveCfg ? { disabled: "" } : null,
@@ -1050,20 +1058,13 @@ function configRow(info) {
   if (S.confirm && S.confirm.id === name) wrap.appendChild(confirmRow());
   if (S.preflight && S.preflight.name === name) wrap.appendChild(preflightPanel(info));
   if (S.inline && S.inline.name === name) wrap.appendChild(inlinePresetEditor(info));
-  if (S.tform && S.tform.forName === name) wrap.appendChild(templateForm());
   return wrap;
 }
 
 function syncAction(info, origin, host) {
-  // Templated (tier-3): the options form is being rebuilt against the
-  // source model (the config OWNS its template now); until it lands, the
-  // slot points at the source.
-  if (origin === "tmpl") {
-    return {
-      on: false, title: "templated config — edit its source (compy config edit-source) until the reworked options form lands",
-      run: () => {},
-    };
-  }
+  // Templated (tier-3) local configs need nothing here — the config OWNS
+  // its source, edited in the editor like any other content. A remote
+  // templated config has origin "url" and syncs as any remote does.
   if (origin === "builtin") {
     if (!info.modified) return { on: false, title: "this is the shipped version, nothing to reset", run: () => {} };
     return {
@@ -1457,16 +1458,19 @@ function newConfigStrip() {
         text: S.fetching ? "fetching…" : S.newErr || "empty means a blank config · otelbin.io links work",
       }),
     ]),
-    // The third way in: a guided form per catalog template — label and
-    // tooltip come from the template's own schema, so a second template
-    // appears here for free.
+    // The third way in: one button per catalog template (label and tooltip
+    // from its own schema, so a second template appears here for free).
+    // Name + create — the editor IS the form now: creating copies the
+    // template's source into the new config and lands there.
     S.templates && S.templates.length ? el("div", { class: "fieldset tpls" }, [
       span("lbl", "or from a template"),
       el("div", { class: "tpl-row" }, S.templates.map((t) => el("button", {
-        class: "btn quiet", text: t.name, title: t.description,
-        on: { click: () => openTemplateForm(t, null) },
+        class: "btn quiet", text: t.name,
+        title: !s || taken ? "pick a name first" : t.description,
+        attrs: !s || taken || S.fetching ? { disabled: "" } : null,
+        on: { click: () => createFromCatalog(t) },
       }))),
-      el("span", { class: "foot", text: "a form for your endpoints" }),
+      el("span", { class: "foot", text: "copies the template into your config — edit its options and source in the editor" }),
     ]) : null,
     el("button", { class: "act cancel", text: "cancel", on: { click: () => { S.newOpen = false; render(); } } }),
     el("button", {
@@ -1514,57 +1518,87 @@ async function copyText(text, confirmation) {
   } catch (e) { showError(new Error("could not reach the clipboard")); }
 }
 
-/* ── the template form (config templates) ─────────────────────────────
-   One form, built generically from a catalog schema (GET /api/templates):
-   declaration order is form order, sections group, `collapsed` sections and
-   per-row `advanced` fields sit behind disclosures. The same form serves
-   creation (POST from-template) and change-options (POST re-render, seeded
-   from meta.knobs) — forName says which. Secrets are shown but never
-   collected here: they have no value at render time (the design's one
-   special rule), so their cards are placeholders naming where the value
-   actually goes — a preset, after create. */
-function openTemplateForm(tpl, forName) {
-  const from = forName ? ((byName(forName) || {}).meta || {}).knobs : null;
-  S.tform = {
-    tpl, forName,
-    name: forName ? "" : S.newName || "",
-    knobs: seedKnobs(tpl, from), // draft: stored knobs win, defaults fill
-    secOpen: {},                 // collapsed sections opened by hand
-    rowOpen: {},                 // per-backend-row "more options"
-    errs: {},                    // field-adjacent problems, keyed like the server's
-    busy: false,
-    discardAsk: false,           // a "locally modified" 400 armed the discard confirm
-  };
-  S.newOpen = false;
-  render();
-}
-async function openChangeOptions(info) {
+/* ── tier 3: create from the catalog, and the editor's form view ──────
+   A catalog entry is a STARTER: creating from one copies its SOURCE into
+   the new config (POST /api/configs/from-catalog), which owns it from then
+   on — the config lands in the editor, where the form (generated from the
+   config's OWN schema) and the source pane are two views of the same file.
+   Knobs at create are the schema's defaults plus neutral type-derived
+   placeholders (placeholderKnobs) — the editor is the form now. */
+async function createFromCatalog(tpl) {
+  const name = slug(S.newName);
+  if (!name || byName(name) || S.fetching) return;
   clearError();
-  try { await loadTemplates(); } catch (e) { showError(e); return; }
-  const tpl = (S.templates || []).find((t) => t.name === (info.meta && info.meta.template));
-  // A rendered config is a plain config; a retired template strands
-  // nothing — there is just no form to reopen.
-  if (!tpl) { showError(new Error("the " + ((info.meta && info.meta.template) || "") + " template is no longer in the catalog, so its options can't be changed. the config still works as it is.")); return; }
-  openTemplateForm(tpl, info.name);
+  S.fetching = true;
+  render();
+  try {
+    await apiJSON("/api/configs/from-catalog", "POST", { name, template: tpl.name, knobs: placeholderKnobs(tpl) });
+    S.fetching = false; S.newOpen = false; S.newName = ""; S.newUrl = "";
+    await loadCore();
+    go("#/configs/" + enc(name)); // the editor: form above, source below
+  } catch (e) {
+    S.fetching = false;
+    showError(e);
+    render();
+  }
+}
+
+/* The editor's form view, rebuilt from the CONFIG'S OWN source whenever the
+   stored source changes (route entry, every successful save): schema from
+   the front matter (parsed client-side — loosely, the server is the
+   authority), values from meta.knobs seeded through the schema's defaults.
+   parseErr means the form quietly steps aside ("the schema doesn't parse")
+   and the source pane is the recovery path — saving is never blocked on
+   the client parse. Open disclosures survive the rebuild. */
+function buildEditorForm(info) {
+  const prev = S.eform && !S.eform.parseErr ? S.eform : null;
+  S.eform = null;
+  if (S.source == null) return;
+  const tpl = parseSourceSchema(S.source);
+  if (!tpl) { S.eform = { parseErr: true }; return; }
+  let knobs;
+  try {
+    knobs = seedKnobs(tpl, (info && info.meta && info.meta.knobs) || null);
+    if (tpl.backends && !Array.isArray(knobs.backends)) throw new Error("bad backends");
+  } catch (e) { S.eform = { parseErr: true }; return; }
+  S.eform = {
+    tpl, knobs, base: JSON.stringify(knobs),
+    errs: {},
+    secOpen: prev ? prev.secOpen : {}, // collapsed sections opened by hand
+    rowOpen: prev ? prev.rowOpen : {}, // per-backend-row "more options"
+    onChange: edSaveSync,              // a knob keystroke flips the save button in place
+  };
+}
+// Form-side dirtiness: the draft differs from what the store holds. Feeds
+// the ONE save button the source pane shares.
+function eformDirty() {
+  const f = S.eform;
+  return !!(f && !f.parseErr && JSON.stringify(f.knobs) !== f.base);
 }
 
 // One field card — label, field-adjacent error, control, muted helper line.
 // path is the server's error key ("backends[0].endpoint"); row is the draft
-// object the control writes into.
+// object the control writes into. A text keystroke never re-renders (the
+// render would rebuild the focused input); touched() clears the field's
+// error, tells the save button, and re-renders only when the error's span
+// has to disappear.
 function tfField(f, fl, row, path) {
   const err = f.errs[path];
-  const clearErr = () => { if (f.errs[path]) { delete f.errs[path]; render(); } };
+  const touched = () => {
+    if (f.onChange) f.onChange();
+    if (f.errs[path]) { delete f.errs[path]; render(); }
+  };
   let control;
   if (fl.type === "secret") {
     // No value here, honestly: named and described, but visibly not an
-    // input — the key is collected in the preset after create.
+    // input — the key lives in the preset (the value cards above).
     control = el("input", {
-      class: "field", attrs: { disabled: "", placeholder: f.forName ? "lives in the preset — unchanged here" : "collected in the preset after create" },
+      class: "field", attrs: { disabled: "", placeholder: "lives in the preset" },
     });
   } else if (fl.type === "choice") {
     control = el("select", {
       class: "field", attrs: { "data-fk": "tf:" + path, "aria-label": fl.label || fl.name },
-      on: { change: (e) => { row[fl.name] = e.target.value; clearErr(); } },
+      on: { change: (e) => { row[fl.name] = e.target.value; touched(); } },
     }, (fl.options || []).map((o) => el("option", { text: o, attrs: { value: o } })));
     control.value = row[fl.name];
   } else if (fl.type === "multi") {
@@ -1578,7 +1612,7 @@ function tfField(f, fl, row, path) {
             if (e.target.checked) cur.push(o);
             // schema order, not click order
             row[fl.name] = (fl.options || []).filter((x) => cur.indexOf(x) > -1);
-            clearErr();
+            touched();
           },
         },
       });
@@ -1588,14 +1622,14 @@ function tfField(f, fl, row, path) {
     control = el("button", {
       class: "tf-switch",
       attrs: { type: "button", role: "switch", "aria-checked": row[fl.name] ? "true" : "false", "aria-label": fl.label || fl.name, "data-fk": "tf:" + path },
-      on: { click: () => { row[fl.name] = !row[fl.name]; render(); } },
+      on: { click: () => { row[fl.name] = !row[fl.name]; touched(); render(); } },
     }, [el("span", { class: "switch" + (row[fl.name] ? " on" : "") }, [el("i")])]);
   } else { // slug | url | string
     control = el("input", {
       class: "field",
       attrs: { spellcheck: "false", "data-fk": "tf:" + path, "aria-label": fl.label || fl.name, placeholder: fl.optional ? "optional" : null },
       props: { value: row[fl.name] || "" },
-      on: { input: (e) => { row[fl.name] = e.target.value; clearErr(); } },
+      on: { input: (e) => { row[fl.name] = e.target.value; touched(); } },
     });
   }
   return el("div", { class: "val tf-field" + (fl.type === "secret" ? " secret" : "") }, [
@@ -1653,40 +1687,27 @@ function tfBackends(f) {
   return wrap;
 }
 
-function templateForm() {
-  const f = S.tform;
+/* The form view itself — the tier-3 editor's primary view, above the source
+   pane. Declaration order is form order, sections group, `collapsed`
+   sections and per-row `advanced` fields sit behind disclosures; secrets
+   are placeholders (their values live in the preset's cards). Every control
+   writes into S.eform.knobs; the shared header save button carries the
+   result. */
+function editorFormView() {
+  const f = S.eform;
+  if (!f) return null;
+  if (f.parseErr) {
+    return el("div", {
+      class: "eform-broken sans",
+      text: "the schema doesn't parse — fix the front matter in the source below.",
+    });
+  }
   const tpl = f.tpl;
-  const wrap = el("div", { class: "tform" });
-
-  /* head: what this is, and (creating) the config's name */
-  const s = slug(f.name);
-  const taken = !!(s && byName(s));
-  const nameErr = f.errs.__name || (taken ? s + " already exists" : null);
-  wrap.appendChild(el("div", { class: "tf-head" }, [
-    span("colhead", f.forName ? "change options · " + f.forName : "new configuration · " + tpl.name),
-    el("span", { class: "grow" }),
-    el("button", { class: "act", text: "cancel", on: { click: () => { S.tform = null; render(); } } }),
-    el("button", {
-      class: "btn accent", text: f.busy ? (f.forName ? "re-rendering…" : "creating…") : (f.forName ? "re-render" : "create"),
-      attrs: f.busy ? { disabled: "" } : null,
-      on: { click: () => submitTemplateForm(false) },
-    }),
-  ]));
+  const wrap = el("div", { class: "tform eform" });
+  wrap.appendChild(el("div", { class: "tf-head" }, [span("colhead", "options")]));
   // The template's own description doubles as the helper line — for the
   // shipped template it names the vendor tables in the docs.
   if (tpl.description) wrap.appendChild(el("div", { class: "tf-desc sans", text: tpl.description }));
-  if (!f.forName) {
-    wrap.appendChild(el("div", { class: "fieldset tf-name" }, [
-      span("lbl", "name"),
-      el("input", {
-        class: "field",
-        attrs: { placeholder: "my collector", spellcheck: "false", "data-fk": "tf:__name", "aria-label": "name" },
-        props: { value: f.name },
-        on: { input: (e) => { f.name = e.target.value; delete f.errs.__name; render(); } },
-      }),
-      el("span", { class: "foot" + (nameErr ? " bad" : ""), text: nameErr || (!f.name ? "lowercase, digits, dashes" : "saved as " + s) }),
-    ]));
-  }
 
   /* body: fields without a section first, then sections in declaration
      order — the backends repeat group renders under its namesake section. */
@@ -1714,62 +1735,7 @@ function templateForm() {
     if (isBackends) wrap.appendChild(tfBackends(f));
     if (secFields.length) wrap.appendChild(tfGrid(f, secFields, f.knobs, ""));
   }
-
-  /* the discard confirm — resync's idiom, armed by the modified 400 */
-  if (f.discardAsk) {
-    wrap.appendChild(confirmBar(
-      "re-rendering " + f.forName + " throws away your edits.",
-      "discard & re-render", "danger",
-      () => submitTemplateForm(true),
-      () => { f.discardAsk = false; render(); },
-      { cancel: "keep them" }));
-  }
   return wrap;
-}
-
-/* Submit: light client checks first (field-adjacent), then the POST. A 400
-   naming a field lands beside it; "locally modified" arms the discard
-   confirm whose verb re-submits forced; anything else goes to the errbar. */
-async function submitTemplateForm(force) {
-  const f = S.tform;
-  if (!f || f.busy) return;
-  const errs = knobProblems(f.tpl, f.knobs);
-  if (!f.forName) {
-    const name = slug(f.name);
-    if (!name) errs.__name = "a configuration needs a name";
-    else if (byName(name)) errs.__name = name + " already exists";
-  }
-  if (Object.keys(errs).length) { f.errs = errs; render(); return; }
-  f.errs = {}; f.busy = true; f.discardAsk = false;
-  clearError();
-  render();
-  try {
-    if (f.forName) {
-      await apiJSON(cfgURL(f.forName) + "/source", "PUT", { knobs: f.knobs });
-      const name = f.forName;
-      S.tform = null;
-      await loadCore();
-      note(name + " re-rendered with the new options" + (force ? " — your edits were discarded" : ""), 4200);
-    } else {
-      const name = slug(f.name);
-      await apiJSON("/api/configs/from-catalog", "POST", { name, template: f.tpl.name, knobs: f.knobs });
-      S.tform = null; S.newName = "";
-      await loadCore();
-      go("#/configs/" + enc(name)); // the editor: rendered yaml + the secret cards
-    }
-    return;
-  } catch (e) {
-    f.busy = false;
-    if (f.forName && e.status === 400 && /locally modified/.test(e.message || "")) {
-      f.discardAsk = true;
-      render();
-      return;
-    }
-    const fe = e.status === 400 ? parseFieldErr(e.message || "") : null;
-    if (fe) { f.errs[fe.path] = fe.msg; render(); return; }
-    showError(e);
-  }
-  render();
 }
 
 /* ── screen 2: configuration editor ───────────────────────────────── */
@@ -1780,17 +1746,20 @@ async function submitTemplateForm(force) {
    instance. cmBase is the server YAML it last synced to — setValue only
    when the server text changed AND the editor is clean; a clean, unchanged
    editor is not touched at all. */
-let cm = null, cmDirty = false, cmFor = null, cmRO = false, cmBase = null;
-function destroyEditor() { cm = null; cmDirty = false; cmFor = null; cmBase = null; }
-function editorDirty() { return S.screen === "editor" && !!cm && cmDirty; }
-// Flip the header save button in place on a cm keystroke — re-rendering the
-// screen would rebuild CodeMirror under the caret.
+let cm = null, cmDirty = false, cmFor = null, cmRO = false, cmBase = null, cmT3 = false;
+function destroyEditor() { cm = null; cmDirty = false; cmFor = null; cmBase = null; cmT3 = false; }
+// Dirty = either view of the one file: the pane (yaml or source) or the
+// tier-3 form's knob draft. One save serves both.
+function editorDirty() { return S.screen === "editor" && ((!!cm && cmDirty) || eformDirty()); }
+// Flip the header save button in place on a cm or form keystroke —
+// re-rendering the screen would rebuild the focused control under the caret.
 function edSaveSync() {
   const b = document.querySelector(".ed-save");
   if (!b || S.saving) return;
-  b.textContent = cmDirty ? "save" : "saved";
-  b.classList.toggle("accent", cmDirty);
-  if (cmDirty) b.removeAttribute("disabled"); else b.setAttribute("disabled", "");
+  const dirty = cmDirty || eformDirty();
+  b.textContent = dirty ? "save" : "saved";
+  b.classList.toggle("accent", dirty);
+  if (dirty) b.removeAttribute("disabled"); else b.setAttribute("disabled", "");
 }
 
 function screenEditor() {
@@ -1799,8 +1768,12 @@ function screenEditor() {
   const origin = originOf(info);
   const host = hostOf(info);
   const running = isRunningCfg(info.name);
-  const locked = origin !== "user" && !S.unlocked;
-  const yamlShown = origin === "user" || S.yamlOpen;
+  // Tier 3: the config owns template source — the form and the source pane
+  // are two views of one file, both always visible and editable (no
+  // collapse, no unlock-ask, whatever the provenance).
+  const t3 = S.source != null && S.yamlOf === info.name;
+  const locked = !t3 && origin !== "user" && !S.unlocked;
+  const yamlShown = t3 || origin === "user" || S.yamlOpen;
   const list = presetsOf(info);
   if (list.indexOf(S.preset) < 0) S.preset = list[0];
 
@@ -1815,7 +1788,7 @@ function screenEditor() {
     iconWrap("ed-type", { builtin: "package", user: "user", url: "link", tmpl: "template" }[origin], 14, false,
       origin === "url" ? "fetched from " + host
         : origin === "builtin" ? "built in to compy. updates with it until you edit."
-          : origin === "tmpl" ? "templated. the yaml shown is rendered from its source."
+          : origin === "tmpl" ? "templated — the form and the source below are two views of this config."
             : "yours"),
     el("input", {
       class: "ed-name",
@@ -1842,16 +1815,20 @@ function screenEditor() {
       class: "btn withicon", title: origin === "url" && !info.modified ? "in sync with " + host : "your version",
       on: { click: () => headerResync(info, origin) },
     }, [icon(origin === "builtin" ? "undo" : "refresh", 12), span("", resetLabel)]) : null,
-    el("button", {
-      // The button carries the yaml's save state: accent "save" while the
-      // editor is dirty, muted disabled "saved" while there is nothing to
-      // save, "checking…" while the collector is asked. Keystrokes flip it
-      // in place via edSaveSync (a cm change doesn't re-render).
-      class: "btn ed-save" + (cmDirty && !S.saving ? " accent" : ""),
-      text: S.saving ? "checking…" : cmDirty ? "save" : "saved",
-      attrs: S.saving || !cmDirty ? { disabled: "" } : null,
-      on: { click: () => saveConfig(info) },
-    }),
+    (() => {
+      // The button carries the WHOLE save state — the pane's text and the
+      // tier-3 form's knob draft feed the same save: accent "save" while
+      // either view is dirty, muted disabled "saved" while there is nothing
+      // to save, "checking…" while the collector is asked. Keystrokes flip
+      // it in place via edSaveSync (a cm or form change doesn't re-render).
+      const dirty = cmDirty || eformDirty();
+      return el("button", {
+        class: "btn ed-save" + (dirty && !S.saving ? " accent" : ""),
+        text: S.saving ? "checking…" : dirty ? "save" : "saved",
+        attrs: S.saving || !dirty ? { disabled: "" } : null,
+        on: { click: () => saveConfig(info) },
+      });
+    })(),
   ]));
 
   const ehelp = helpStrip("editor");
@@ -1907,13 +1884,13 @@ function screenEditor() {
     wrap.appendChild(el("div", { class: "okstrip" }, [el("span", { class: "dot5" }), span("", S.valOk)]));
   }
   if (S.valErr) {
-    wrap.appendChild(el("div", { class: "valfail" }, [
+    wrap.appendChild(el("div", { class: "valfail" + (S.valExcerpt ? " tall" : "") }, [
       el("div", { class: "bar2" }, [
         el("span", { class: "dot5", attrs: { style: "background: var(--err)" } }),
         span("headline", "the collector rejected this config. nothing was saved."),
         el("span", { class: "grow" }),
         el("button", { class: "act", text: "copy", on: { click: () => copyText(S.valErr, "diagnostic copied") } }),
-        el("button", { class: "act", text: "dismiss", on: { click: () => { S.valErr = null; S.valMissing = []; render(); } } }),
+        el("button", { class: "act", text: "dismiss", on: { click: () => { S.valErr = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; render(); } } }),
       ]),
       // The failure is explained by variables that simply have no values
       // yet — "write the yaml first, fill values second" is a legitimate
@@ -1925,20 +1902,35 @@ function screenEditor() {
         el("span", { class: "grow" }),
         el("button", { class: "act", text: "save without validating", on: { click: () => saveAnyway(info) } }),
       ]) : null,
+      // A tier-3 save is validated-or-restored server-side, so the draft is
+      // only in this window right now; the ?validate=false escape keeps it
+      // so the fixing can continue from what's here.
+      S.valAnyway ? el("div", { class: "bar2" }, [
+        span("sans", "the draft stays here until it validates — or keep it without the collector's blessing."),
+        el("span", { class: "grow" }),
+        el("button", { class: "act", text: "save without validating", on: { click: () => saveSourceAnyway(info) } }),
+      ]) : null,
       el("pre", { text: S.valErr }),
+      // The collector validated the RENDERED yaml; when its diagnostic
+      // names a line, show that neighborhood (±3 lines) of the rendered
+      // config. Line mapping back to the SOURCE is deferred (design note).
+      S.valExcerpt ? el("div", { class: "excerpt" }, [
+        el("div", { class: "xl sans", text: "in the rendered config" }),
+        el("pre", { text: S.valExcerpt }),
+      ]) : null,
     ]));
   }
   if (lastError) wrap.appendChild(el("div", { class: "strip-wrap" }, [errorStrip()]));
 
-  /* YAML: collapsed by default for built-in and linked configs */
+  /* YAML: collapsed by default for built-in and linked configs (a tier-3
+     config never collapses \u2014 both its views are the point) */
   if (!yamlShown) {
     wrap.appendChild(el("div", { class: "yaml-collapsed" }, [
       span("nm", "config.yaml"),
       el("span", {
         class: "why sans",
         text: origin === "url" ? "kept in sync with " + host
-          : origin === "tmpl" ? "rendered from this config\u2019s template source. edit the source, not the render."
-            : "ships with compy. most people never open it.",
+          : "ships with compy. most people never open it.",
       }),
       el("span", { class: "grow" }),
       el("button", { class: "btn quiet", text: "show yaml", on: { click: () => { S.yamlOpen = true; render(); } } }),
@@ -1946,9 +1938,21 @@ function screenEditor() {
     return wrap;
   }
 
+  /* Tier 3 stacks the form view over the source pane in one scroller (the
+     form can be tall, and the pane grows with its text); a plain config
+     keeps the pane as the screen's flex fill. The pane is the same slot
+     either way \u2014 it simply shows whichever text the config has. */
+  const paneParent = t3 ? el("div", { class: "ed-scroll" }) : wrap;
+  if (t3) {
+    const form = editorFormView();
+    if (form) paneParent.appendChild(form);
+    wrap.appendChild(paneParent);
+  }
+
   const pane = el("div", { class: "yaml-pane" });
   pane.appendChild(el("div", { class: "yaml-bar" }, [
-    span("colhead", "config.yaml"),
+    span("colhead", t3 ? "config source" : "config.yaml"),
+    t3 ? el("span", { class: "why sans", text: "schema, then the template body \u2014 the form above is this same file" }) : null,
     el("span", { class: "grow" }),
     locked ? el("span", { class: "ro" }, [
       span("word", "read-only"),
@@ -1959,9 +1963,7 @@ function screenEditor() {
     pane.appendChild(confirmBar(
       origin === "url"
         ? "editing disconnects this from " + host + ". it stops re-syncing."
-        : origin === "tmpl"
-          ? "saving plain yaml here makes this a plain config: its template source and options go away."
-          : "your version stays through compy updates.",
+        : "your version stays through compy updates.",
       "make it mine", "accent",
       () => { S.unlockAsk = false; S.unlocked = true; render(); },
       () => { S.unlockAsk = false; render(); },
@@ -1969,27 +1971,29 @@ function screenEditor() {
   }
   const host2 = el("div", { class: "cm-host" });
   pane.appendChild(host2);
-  wrap.appendChild(pane);
+  paneParent.appendChild(pane);
 
-  // CodeMirror measures itself, so build it once the host is in the document.
-  const yaml = S.yaml;
+  // CodeMirror measures itself, so build it once the host is in the
+  // document. The instance is keyed on (config, readonly, tier) \u2014 a
+  // promotion or demotion swaps which text the pane holds, so it rebuilds.
+  const text = t3 ? S.source : S.yaml;
   const editable = !locked;
   queueMicrotask(() => {
     if (!host2.isConnected) return;
-    if (cm && cmFor === info.name && cmRO === !editable) {
+    if (cm && cmFor === info.name && cmRO === !editable && cmT3 === t3) {
       // Same config, same readonly-ness: re-adopt the live instance.
       // Scroll and cursor live in its doc, and refresh() restores them
       // after the reattach.
       host2.appendChild(cm.getWrapperElement());
-      if (!cmDirty && yaml !== cmBase) {
+      if (!cmDirty && text !== cmBase) {
         // A save already left the editor holding the new server text;
         // setValue only when the text really differs (it resets the caret).
-        if (cm.getValue() !== yaml) {
-          cm.setValue(yaml); // the change handler fires; stay clean
+        if (cm.getValue() !== text) {
+          cm.setValue(text); // the change handler fires; stay clean
           cmDirty = false;
           edSaveSync();
         }
-        cmBase = yaml;
+        cmBase = text;
       }
       cm.refresh();
       return;
@@ -1997,10 +2001,13 @@ function screenEditor() {
     const keep = cm ? cm.getValue() : null;
     const dirty = cmDirty;
     cm = CodeMirror(host2, {
-      value: dirty && keep != null ? keep : yaml,
-      mode: "yaml", lineNumbers: true, readOnly: !editable, lineWrapping: false, viewportMargin: 20,
+      value: dirty && keep != null ? keep : text,
+      mode: "yaml", // v1: yaml highlighting for source too \u2014 schema is the JSON subset, the body is yaml-shaped
+      lineNumbers: true, readOnly: !editable, lineWrapping: false,
+      // In the tier-3 scroller the pane is height:auto, so render everything.
+      viewportMargin: t3 ? Infinity : 20,
     });
-    cmFor = info.name; cmRO = !editable; cmBase = yaml;
+    cmFor = info.name; cmRO = !editable; cmT3 = t3; cmBase = text;
     cmDirty = dirty;
     cm.on("change", () => { cmDirty = true; edSaveSync(); });
   });
@@ -2074,6 +2081,7 @@ async function headerResync(info, origin) {
     await api(cfgURL(info.name) + (info.modified ? "/resync" : "/sync"), { method: "POST" });
     await loadCore();
     await loadYAML(info.name);
+    buildEditorForm(byName(info.name) || info); // a remote source re-syncs like any remote content
     S.unlocked = false; destroyEditor();
     note(info.name + " re-synced from " + hostOf(info));
   } catch (e) { showError(e); }
@@ -2127,29 +2135,50 @@ async function renamePreset(info, from, raw) {
   } catch (e) { showError(e); render(); }
 }
 
-/* Save: the collector's verdict, then the result panel.
+/* Save: ONE button, one save, and the pane's CONTENT picks the route —
+   exactly the backend's own rule (catalog.IsSource). Plain yaml goes
+   through the yaml flow (over a templated config that DEMOTES it: the
+   source is dropped, the form disappears); template source and/or a dirty
+   form go through PUT …/source as one request, source applied first, then
+   knobs — the server's order. */
+async function saveConfig(info) {
+  if (S.saving) return;
+  const paneDirty = !!(cm && cmDirty);
+  const formDirty = eformDirty();
+  if (!paneDirty && !formDirty) return; // both views clean: nothing to save
+  if (paneDirty && !isSourceText(cm.getValue())) { saveYAML(info); return; }
+  saveSource(info, paneDirty, formDirty);
+}
+
+/* The yaml flow: the collector's verdict, then the result panel.
 
    BACKEND NOTE: there is no dry-run — nothing validates YAML text that is
    not on disk yet. So the draft is written, validated, and the previous
    text put back when the collector rejects it, which is what makes the
-   panel's "nothing was saved" true. */
-async function saveConfig(info) {
-  if (S.saving || !cm || !cmDirty) return; // clean editor: nothing to save
+   panel's "nothing was saved" true. (Rejected plain yaml over a templated
+   config restores the source PAIR — plain prev yaml would demote it.) */
+async function saveYAML(info) {
   const next = cm.getValue();
   const prev = S.yaml;
-  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; clearError();
+  const prevSource = S.source; // non-null: this save demotes a templated config
+  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false;
+  clearError();
   render();
   const t0 = Date.now();
   const wasRunning = isRunningCfg(info.name);
   try {
     await api(cfgURL(info.name) + "/yaml", { method: "PUT", headers: { "Content-Type": "text/plain" }, body: next });
     if (!wasRunning) await api(cfgURL(info.name) + "/validate", { method: "POST" });
-    S.yaml = next; cmDirty = false;
+    cmDirty = false;
     const secs = ((Date.now() - t0) / 1000).toFixed(1);
     S.valOk = wasRunning
       ? "saved and re-applied to the running collector in " + secs + "s"
       : "saved in " + secs + "s. " + info.name + " is not running, so nothing restarted.";
     await loadCore();
+    // Reload reflects truth: pasting source text promotes (the form
+    // appears), plain yaml over a templated config demotes (it goes away).
+    await loadYAML(info.name);
+    buildEditorForm(byName(info.name) || info);
   } catch (e) {
     S.valErr = e.message || String(e);
     // Is the rejection explained by variables that simply have no values
@@ -2160,7 +2189,99 @@ async function saveConfig(info) {
       const d = await api(cfgURL(info.name));
       S.valMissing = missingRequired(d.info, S.preset);
     } catch (e2) { /* unexplained stays unexplained */ }
-    try { await api(cfgURL(info.name) + "/yaml", { method: "PUT", headers: { "Content-Type": "text/plain" }, body: prev }); } catch (e2) { /* nothing better to do */ }
+    try {
+      if (prevSource != null) {
+        // The PUT already dropped the source; putting plain prev yaml back
+        // would leave the config demoted by a REJECTED save. Restore the
+        // pair instead — validate=false skips re-validating known-good
+        // text and never touches the running collector.
+        await apiJSON(cfgURL(info.name) + "/source?validate=false", "PUT",
+          { source: prevSource, knobs: (info.meta && info.meta.knobs) || null });
+      } else {
+        await api(cfgURL(info.name) + "/yaml", { method: "PUT", headers: { "Content-Type": "text/plain" }, body: prev });
+      }
+    } catch (e2) { /* nothing better to do */ }
+  }
+  S.saving = false;
+  render();
+}
+
+/* The tier-3 flow: parse → knobs → render → validate happens server-side in
+   the one PUT, with nothing-was-saved semantics on rejection — no client
+   restore dance. Light client checks (the form's own key space) run first;
+   a 400 naming a form field lands beside it; everything else is the
+   failure panel, with the rendered excerpt when the diagnostic names a
+   line and the ?validate=false escape. */
+async function saveSource(info, withSource, withKnobs) {
+  if (withKnobs) {
+    const errs = knobProblems(S.eform.tpl, S.eform.knobs);
+    if (Object.keys(errs).length) { S.eform.errs = errs; render(); return; }
+  }
+  const body = {};
+  if (withSource) body.source = cm.getValue();
+  if (withKnobs) body.knobs = S.eform.knobs;
+  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false;
+  clearError();
+  render();
+  const t0 = Date.now();
+  const wasRunning = isRunningCfg(info.name);
+  try {
+    await apiJSON(cfgURL(info.name) + "/source", "PUT", body);
+    cmDirty = false;
+    await loadCore();
+    await loadYAML(info.name);
+    // Re-derive the form from the (possibly new) schema; knob values the
+    // server pruned or defaulted come back through the reload.
+    buildEditorForm(byName(info.name) || info);
+    const secs = ((Date.now() - t0) / 1000).toFixed(1);
+    S.valOk = wasRunning
+      ? "saved and re-applied to the running collector in " + secs + "s"
+      : "saved in " + secs + "s. " + info.name + " is not running, so nothing restarted.";
+  } catch (e) {
+    const fe = e.status === 400 ? parseFieldErr(e.message || "") : null;
+    if (fe && S.eform && S.eform.tpl && knownKnobPath(S.eform.tpl, fe.path)) {
+      S.eform.errs[fe.path] = fe.msg; // field-adjacent, same key space as the client checks
+    } else {
+      S.valErr = e.message || String(e);
+      // The server validated the RENDER and put everything back, so the
+      // stored render (S.yaml) is the closest thing to the rejected one —
+      // its line numbers can drift by exactly the edit that failed;
+      // rendered→source mapping is deferred (design note).
+      S.valExcerpt = excerptAround(S.yaml, errLineOf(S.valErr), 3);
+      S.valAnyway = true;
+    }
+  }
+  S.saving = false;
+  render();
+}
+
+/* The tier-3 escape hatch: the same {source?, knobs?} body with
+   ?validate=false — the schema still has to parse and the knobs to fit
+   (the server never stores a source it can't render), only the collector's
+   verdict is skipped, and the running collector is never touched. */
+async function saveSourceAnyway(info) {
+  if (S.saving) return;
+  const paneDirty = !!(cm && cmDirty);
+  const formDirty = eformDirty();
+  const body = {};
+  if (paneDirty && isSourceText(cm.getValue())) body.source = cm.getValue();
+  if (formDirty) body.knobs = S.eform.knobs;
+  if (!body.source && !("knobs" in body)) return; // nothing left to keep
+  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false;
+  clearError();
+  render();
+  try {
+    const r = await apiJSON(cfgURL(info.name) + "/source?validate=false", "PUT", body);
+    cmDirty = false;
+    await loadCore();
+    await loadYAML(info.name);
+    buildEditorForm(byName(info.name) || info);
+    S.valOk = "saved without validating. fix it here, then activate to check it."
+      + (r && r.running_stale ? " the running collector keeps the previous version until then." : "");
+  } catch (e) {
+    S.valErr = e.message || String(e);
+    S.valExcerpt = excerptAround(S.yaml, errLineOf(S.valErr), 3);
+    S.valAnyway = true;
   }
   S.saving = false;
   render();
@@ -2174,14 +2295,17 @@ async function saveConfig(info) {
 async function saveAnyway(info) {
   if (S.saving || !cm) return;
   const next = cm.getValue();
-  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; clearError();
+  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false;
+  clearError();
   render();
   try {
     const r = await api(cfgURL(info.name) + "/yaml?validate=false", { method: "PUT", headers: { "Content-Type": "text/plain" }, body: next });
-    S.yaml = next; cmDirty = false;
+    cmDirty = false;
     S.valOk = "saved without validating. fill the values, then activate to check it."
       + (r && r.running_stale ? " the running collector keeps the previous version until then." : "");
     await loadCore();
+    await loadYAML(info.name); // reload reflects truth (a demotion included)
+    buildEditorForm(byName(info.name) || info);
   } catch (e) {
     S.valErr = e.message || String(e);
   }
@@ -2662,10 +2786,10 @@ async function doFactoryReset() {
     // and per-config bit of client state, then load it all fresh.
     Object.assign(S, {
       status: null, configs: [], health: null, log: "", distros: [],
-      yaml: "", yamlOf: null, find: "",
+      yaml: "", yamlOf: null, source: null, eform: null, find: "",
       busyId: null, err: null, errName: null, errKept: null,
       newOpen: false, newName: "", newUrl: "", newErr: null, fetching: false,
-      tform: null, confirm: null,
+      confirm: null,
       presetSel: {}, presetsOpenId: null, inline: null, inlineName: "", inlineDraft: null,
       dl: {}, up: {}, addName: "", addPath: "", settings: null, portsSaved: false,
       resetArm: false, resetTyped: "",
@@ -2915,9 +3039,9 @@ function refreshBlocked() {
   const inField = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT")
     && a.dataset.fk !== "logq";
   return inField || S.busyId || S.stoppingId || S.saving || S.restarting || S.presetsOpenId || S.inline
-    || S.confirm || S.preflight || S.newOpen || S.tform || S.unlockAsk || S.resetArm || S.resetBusy
+    || S.confirm || S.preflight || S.newOpen || S.unlockAsk || S.resetArm || S.resetBusy
     || document.querySelector("dialog[open]")
-    || (S.screen === "editor" && cmDirty);
+    || (S.screen === "editor" && (cmDirty || eformDirty()));
 }
 async function refresh() {
   if (refreshBlocked()) return;
@@ -2964,7 +3088,6 @@ document.addEventListener("keydown", (e) => {
     if (S.preflight) { S.preflight = null; render(); return; }
     if (S.confirm) { S.confirm = null; render(); return; }
     if (S.inline) { S.inline = null; S.inlineDraft = null; render(); return; }
-    if (S.tform) { S.tform = null; render(); return; }
     if (S.newOpen) { S.newOpen = false; render(); return; }
     if (S.unlockAsk) { S.unlockAsk = false; render(); return; }
     if (S.resetArm) { S.resetArm = false; S.resetTyped = ""; render(); return; }

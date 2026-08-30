@@ -146,6 +146,86 @@ function parseFieldErr(msg) {
   const m = /^([a-z0-9_]+(?:\[\d+\])?(?:\.[a-z0-9_]+)?): ([^]+)$/.exec(msg || "");
   return m ? { path: m[1], msg: m[2] } : null;
 }
+// A parsed 400 path is field-adjacent only when the form actually has that
+// control; a collector diagnostic that happens to look like "exporters: …"
+// belongs to the failure panel, never to a field that doesn't exist.
+function knownKnobPath(tpl, path) {
+  if (!tpl || !path) return false;
+  if (tpl.backends) {
+    if (path === "backends") return true;
+    const m = /^backends\[\d+\]\.([a-z0-9_]+)$/.exec(path);
+    if (m) return (tpl.backends.fields || []).some((f) => f.name === m[1]);
+  }
+  return (tpl.fields || []).some((f) => f.name === path);
+}
+
+/* ── tier-3 config sources (schema front matter + "---" + template body) ─
+   isSourceText mirrors internal/catalog's IsSource rule exactly: the text
+   opens with the JSON front matter (first non-blank byte '{') and carries
+   the "---" separator line. Plain collector yaml never starts with '{'.
+   KEEP IN LOCKSTEP with catalog.IsSource. */
+function isSourceText(s) {
+  const t = (s || "").replace(/^[ \t\r\n]+/, "");
+  return t.charAt(0) === "{" && (s || "").indexOf("\n---\n") > -1;
+}
+/* The client-side schema parse the editor's form derives from — the front
+   matter is the JSON subset of YAML, so JSON.parse after slicing at the
+   first "---" line. Deliberately loose: the server (catalog.ParseSource)
+   is the authority, and null just means "no form right now — the source
+   pane is the recovery path". Shape-checks only what the form renderer
+   would trip over. */
+function parseSourceSchema(src) {
+  if (!isSourceText(src)) return null;
+  let t;
+  try { t = JSON.parse(src.slice(0, src.indexOf("\n---\n"))); } catch (e) { return null; }
+  if (!t || typeof t !== "object" || Array.isArray(t)) return null;
+  const objs = (a) => a == null || (Array.isArray(a) && a.every((x) => x && typeof x === "object" && !Array.isArray(x)));
+  if (!objs(t.fields) || !objs(t.sections)) return null;
+  if (t.backends != null && (typeof t.backends !== "object" || Array.isArray(t.backends) || !objs(t.backends.fields))) return null;
+  return t;
+}
+/* Creation from the catalog is name + create — the editor is the form now —
+   but the backend refuses knobs that leave required fields empty. So the
+   create sends the schema's defaults plus neutral TYPE-derived placeholders
+   for required slug/url/multi fields (no template field name appears here;
+   a second catalog entry creates for free), and the user reshapes
+   everything in the editor's form. */
+function placeholderKnobs(tpl) {
+  const fill = (fields, row) => {
+    for (const f of fields || []) {
+      if (f.type === "secret" || f.optional || f.default != null) continue;
+      if (f.type === "slug" && !row[f.name]) row[f.name] = "backend";
+      else if (f.type === "url" && !row[f.name]) row[f.name] = "https://api.example.com";
+      else if (f.type === "multi" && !(row[f.name] || []).length) row[f.name] = (f.options || []).slice();
+    }
+  };
+  const knobs = seedKnobs(tpl, null);
+  fill(tpl.fields, knobs);
+  if (tpl.backends) for (const r of knobs.backends || []) fill(tpl.backends.fields, r);
+  return knobs;
+}
+/* The failure panel's rendered excerpt: the collector validates the
+   RENDERED yaml, so a diagnostic naming a line means that file, not the
+   source. errLineOf finds the named line; excerptAround cuts ±ctx lines
+   with the named one marked ("" when the diagnostic names no line the
+   yaml has). Rendered→source line mapping is deferred (design note,
+   recorded friction). */
+function errLineOf(msg) {
+  const m = /\bline (\d+)/.exec(msg || "");
+  return m ? parseInt(m[1], 10) : 0;
+}
+function excerptAround(yaml, line, ctx) {
+  const all = (yaml || "").split("\n");
+  if (!line || line > all.length) return "";
+  const c = ctx || 3;
+  const from = Math.max(1, line - c), to = Math.min(all.length, line + c);
+  const w = String(to).length;
+  const out = [];
+  for (let n = from; n <= to; n++) {
+    out.push(String(n).padStart(w) + (n === line ? " > " : "   ") + all[n - 1]);
+  }
+  return out.join("\n");
+}
 
 /* ── collector log parsing ────────────────────────────────────────────
    otelcol stderr is heterogeneous: zap console lines (ts \t level \t
@@ -321,6 +401,8 @@ if (typeof module !== "undefined") {
     slug, originOf, hostOf, missingRequired, nameList, freePresetName,
     compyVersionLine,
     fieldDefault, seedRow, seedKnobs, fieldProblem, knobProblems, parseFieldErr,
+    knownKnobPath, isSourceText, parseSourceSchema, placeholderKnobs,
+    errLineOf, excerptAround,
     portsCompact, yamlLineOf, fmtCount, parseZapLine, parseAttrs,
     atLogBottom, logDiff, sameShown,
     distroState,

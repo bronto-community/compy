@@ -579,6 +579,25 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
   font-size: 11.5px; line-height: 1.7; color: var(--diag); white-space: pre;
 }
 
+/* ── tier-3 editor: the form view over the source pane, one scroller ──
+   The plain editor's pane flex-fills the screen; a templated config's form
+   can be tall, so form and source share .ed-scroll and the pane grows with
+   its text (CodeMirror height:auto + full render, viewportMargin
+   Infinity). */
+.ed-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.ed-scroll .tform.eform { margin: 14px 24px 6px; }
+.ed-scroll .yaml-pane { flex: none; }
+.ed-scroll .cm-host { flex: none; min-height: 0; overflow: visible; }
+.ed-scroll .cm-host .CodeMirror { height: auto; }
+.eform-broken { padding: 14px 24px 0; font-size: 12px; color: var(--dim); }
+.yaml-bar .why { font-size: 11.5px; color: var(--dim); }
+
+/* the failure panel's rendered excerpt (±3 lines around the named line) */
+.valfail.tall { max-height: 340px; }
+.valfail .excerpt { border-top: 1px solid var(--errDiv); display: flex; flex-direction: column; }
+.valfail .excerpt .xl { padding: 8px 16px 0; font-size: 11px; color: var(--muted); }
+.valfail .excerpt pre { color: var(--text2); }
+
 .yaml-collapsed { display: flex; align-items: center; gap: 14px; padding: 20px 24px; }
 .yaml-collapsed .nm { font-size: 13px; color: var(--text); }
 .yaml-collapsed .why { font-size: 12px; color: var(--dim); }
