@@ -593,19 +593,22 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 
 /* ── tier-3 editor: the form view over the source pane, one scroller ──
    The plain editor's pane flex-fills the screen; a templated config's form
-   can be tall, so form and source share .ed-scroll. The pane grows with a
-   SHORT source (CodeMirror height:auto) but caps at 72vh and scrolls
-   itself past that — the cap is what lets CM keep its default viewport
-   rendering (only visible lines in the DOM) instead of the old
-   height:auto + viewportMargin:Infinity full render, which put a
-   2000-line source's every line in the DOM and stalled/killed the
-   WKWebView. */
+   can be tall, so form and source share .ed-scroll. Size-adaptive
+   (edSizeSync in app.js): a SHORT source keeps the pane height:auto —
+   it grows with its text and the page scrolls, which CM5 supports only
+   with viewportMargin Infinity (fine at this size). A TALL source gets
+   .cm-tall: a real 72vh pane whose scrolling CM owns, so its default
+   viewport rendering keeps only visible lines in the DOM. (The two
+   models must not be mixed: height:auto with a finite viewportMargin
+   leaves everything below the first viewport unrendered, and a
+   max-height cap on .CodeMirror-scroll nests a permanent second
+   scrollbar — both shipped once, briefly.) */
 .ed-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
 .ed-scroll .tform.eform { margin: 10px 24px 4px; }
 .ed-scroll .yaml-pane { flex: none; }
 .ed-scroll .cm-host { flex: none; min-height: 0; overflow: visible; }
 .ed-scroll .cm-host .CodeMirror { height: auto; }
-.ed-scroll .cm-host .CodeMirror-scroll { max-height: 72vh; }
+.ed-scroll .cm-host.cm-tall .CodeMirror { height: 72vh; }
 .eform-broken { font-size: 12px; color: var(--dim); }
 .yaml-bar .why { font-size: 11.5px; color: var(--dim); }
 

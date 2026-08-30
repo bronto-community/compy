@@ -1833,6 +1833,35 @@ function editorFormView(info) {
    editor is not touched at all. */
 let cm = null, cmDirty = false, cmFor = null, cmRO = false, cmBase = null, cmT3 = false;
 function destroyEditor() { cm = null; cmDirty = false; cmFor = null; cmBase = null; cmT3 = false; }
+/* Size-adaptive tier-3 scroll model. A SHORT source keeps the pane
+   height:auto inside the page scroller (.ed-scroll) and fully renders
+   (viewportMargin Infinity — CM5's documented requirement for auto
+   height, cheap at this size): the page scrolls, no inner scrollbar.
+   Past the threshold the pane takes a real height (.cm-tall) and CM
+   owns its own scrolling with default viewport rendering, so a
+   9.6k-line source keeps ~40 lines in the DOM. The two halves are a
+   package: auto height + finite viewportMargin (the first attempt at
+   this fix) leaves everything below the initial viewport UNRENDERED,
+   because CM only re-renders on its own scroll events and the outer
+   page's scrolling isn't one of them. Checked on create, server-text
+   swap, and every change (a paste can cross the threshold). */
+const T3_TALL_LINES = 400;
+/* The mode class lives on .cm-host (the wrapper's parent), NOT the CM
+   wrapper: it must constrain the height BEFORE the constructor's first
+   render (an uncapped auto-height construction renders the whole doc
+   once — a 450ms task and 79k transient nodes on the 9.6k source), and
+   the host is what exists pre-construction. Each render makes a fresh
+   host, so the re-adopt path re-stamps it from the live option. */
+function edTall() { return cm.getOption("viewportMargin") !== Infinity; }
+function edSizeSync() {
+  if (!cm || !cmT3) return;
+  const tall = cm.lineCount() > T3_TALL_LINES;
+  const h = cm.getWrapperElement().parentElement;
+  if (!h || h.classList.contains("cm-tall") === tall) return;
+  h.classList.toggle("cm-tall", tall);
+  cm.setOption("viewportMargin", tall ? 10 : Infinity); // 10 = CM's default
+  cm.refresh();
+}
 // One reset for the save-result panel's whole state — every save path and
 // the dismiss button clear the same seven fields.
 function resetValPanel() {
@@ -2111,6 +2140,7 @@ function screenEditor() {
       // Same config, same readonly-ness: re-adopt the live instance.
       // Scroll and cursor live in its doc, and refresh() restores them
       // after the reattach.
+      if (t3) host2.classList.toggle("cm-tall", edTall());
       host2.appendChild(cm.getWrapperElement());
       if (!cmDirty && text !== cmBase) {
         // A save already left the editor holding the new server text;
@@ -2121,26 +2151,32 @@ function screenEditor() {
           edSaveSync();
         }
         cmBase = text;
+        edSizeSync();
       }
       cm.refresh();
       return;
     }
     const keep = cm ? cm.getValue() : null;
     const dirty = cmDirty;
+    const val = dirty && keep != null ? keep : text;
+    // Pre-mark the host so the constructor's first render is already the
+    // right mode (see edSizeSync's comment).
+    const tall = t3 && (val.match(/\n/g) || []).length + 1 > T3_TALL_LINES;
+    host2.classList.toggle("cm-tall", tall);
     cm = CodeMirror(host2, {
-      value: dirty && keep != null ? keep : text,
+      value: val,
       mode: "yaml", // v1: yaml highlighting for source too \u2014 schema is the JSON subset, the body is yaml-shaped
       lineNumbers: true, readOnly: !editable, lineWrapping: true,
-      // Default viewportMargin: only the visible lines (plus a small
-      // margin) exist in the DOM. The tier-3 pane used to be height:auto +
-      // viewportMargin Infinity — a full render of a 2000-line source, the
-      // classic CM5 memory/stall hog (and what pushed the WKWebView over).
-      // Its scroller is now capped in CSS (.ed-scroll .CodeMirror-scroll)
-      // so CM scrolls itself and viewport rendering works on both tiers.
+      // Tier 2's pane flex-fills the screen and CM owns its scroll with
+      // the default viewportMargin (viewport rendering — only visible
+      // lines in the DOM). Tier 3 is size-adaptive: a short source
+      // page-scrolls fully rendered, a tall one owns its scroll with
+      // viewport rendering in a fixed pane (edSizeSync above).
+      viewportMargin: t3 && !tall ? Infinity : 10,
     });
     cmFor = info.name; cmRO = !editable; cmT3 = t3; cmBase = text;
     cmDirty = dirty;
-    cm.on("change", () => { cmDirty = true; edSaveSync(); });
+    cm.on("change", () => { cmDirty = true; edSaveSync(); edSizeSync(); });
   });
   return wrap;
 }
