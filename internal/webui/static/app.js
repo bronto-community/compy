@@ -146,7 +146,7 @@ const S = {
   // editor
   unlocked: false, unlockAsk: false, yamlOpen: false,
   preset: null, reveal: {},
-  chipAsk: null,           // preset chip pressed while the tier-3 form is dirty — confirm first
+  chipAsk: null,           // preset tab pressed while the tier-3 form is dirty — confirm first
   saving: false, valErr: null, valOk: null,
   valHead: "",             // the failure panel's headline — each save path says who rejected what
   valNote: "",             // the dual-dirty save's honesty line — what the OTHER half's fate was
@@ -155,7 +155,7 @@ const S = {
   valAnyway: false,        // tier-3 rejection: offer the ?validate=false escape
   eform: null,             // the tier-3 editor's form view (buildEditorForm)
   renameNote: null,        // field-adjacent error beside the header's name field
-  presetErr: null,         // field-adjacent error under the preset chips
+  presetErr: null,         // field-adjacent error under the preset tabs
 
   // collector
   query: "", level: "all", tail: true, restarting: false,
@@ -1597,7 +1597,7 @@ async function createFromCatalog(tpl) {
 }
 
 /* The editor's form view, rebuilt whenever the stored source OR the
-   selected preset changes (route entry, every successful save, a chip
+   selected preset changes (route entry, every successful save, a tab
    switch): schema from the CONFIG'S OWN front matter (parsed client-side —
    loosely, the server is the authority), values from the SELECTED preset's
    bag seeded through the schema's defaults — the form IS that preset's
@@ -1764,19 +1764,21 @@ function tfBackends(f) {
    are placeholders (their values live in the preset's cards). Every control
    writes into S.eform.knobs; the shared header save button carries the
    result. */
-function editorFormView() {
+function editorFormView(info) {
   const f = S.eform;
   if (!f) return null;
+  const wrap = el("div", { class: "tform eform pcard" + (presetsOf(info).length > 1 ? "" : " solo") });
+  // The preset tabs sit on the card's top edge — the selected tab already
+  // says whose values the form shows, so there is no separate header.
+  for (const n of presetTabs(info, true)) wrap.appendChild(n);
   if (f.parseErr) {
-    return el("div", {
+    wrap.appendChild(el("div", {
       class: "eform-broken sans",
       text: "the schema doesn't parse — fix the front matter in the source below.",
-    });
+    }));
+    return wrap;
   }
   const tpl = f.tpl;
-  const wrap = el("div", { class: "tform eform" });
-  // The form is the SELECTED preset's values surface — say whose.
-  wrap.appendChild(el("div", { class: "tf-head" }, [span("colhead", "values · " + (S.preset || ""))]));
   // The template's own description doubles as the helper line — for the
   // shipped template it names the vendor tables in the docs.
   if (tpl.description) wrap.appendChild(el("div", { class: "tf-desc sans", text: tpl.description }));
@@ -1838,6 +1840,77 @@ function edSaveSync() {
   b.textContent = dirty ? "save" : "saved";
   b.classList.toggle("accent", dirty);
   if (dirty) b.removeAttribute("disabled"); else b.setAttribute("disabled", "");
+}
+
+/* ── preset tabs, ON the values surface ───────────────────────────────
+   The presets render as a file-tab row on the top edge of the values card
+   itself (tier 3's form card, tier 2's value-card grid) — one editing
+   surface, the selected tab connected to the card body. The selected tab
+   carries the actions (rename input, duplicate, delete — the last preset
+   has no delete at all); the RUNNING preset wears the accent dot whichever
+   tab is viewed. One preset → no tabs, just a quiet + in the card's
+   corner ("lots of users will only want one"). */
+function presetTabs(info, t3) {
+  const list = presetsOf(info);
+  const running = isRunningCfg(info.name);
+  const out = [];
+  if (list.length > 1) {
+    const tabs = el("div", { class: "ptabs" });
+    for (const p of list) {
+      const on = p === S.preset;
+      const isRunningPreset = running && p === S.status.preset;
+      tabs.appendChild(el("span", { class: "ptab" + (on ? " on" : "") }, [
+        isRunningPreset ? el("span", {
+          class: "dot5", title: "running now",
+          attrs: { style: "background: var(--accent)" },
+        }) : null,
+        on ? el("input", {
+          title: "rename this preset",
+          attrs: { spellcheck: "false", size: Math.max(p.length, 4), "data-fk": "chip:" + p, "aria-label": "rename this preset" },
+          props: { value: p },
+          on: { change: (e) => renamePreset(info, p, e.target.value) },
+        }) : el("button", { class: "pick", text: p, on: { click: () => pickPreset(info, p, t3) } }),
+        on ? el("button", { class: "mini", title: "duplicate this preset", on: { click: () => dupPreset(info, p) } }, [icon("copy", 12)]) : null,
+        on ? el("button", {
+          class: "mini del",
+          title: isRunningPreset ? "this preset is running. activate another one first." : "delete " + p,
+          attrs: isRunningPreset ? { disabled: "" } : null,
+          on: { click: () => delPreset(info, p) },
+        }, [icon("trash", 12)]) : null,
+      ]));
+    }
+    tabs.appendChild(el("button", { class: "ptab-add", title: "add a preset", on: { click: () => addPreset(info) } }, [icon("plus", 13)]));
+    out.push(tabs);
+  } else {
+    out.push(el("button", {
+      class: "padd-solo", title: "add a preset — a second set of values for this config",
+      on: { click: () => addPreset(info) },
+    }, [icon("plus", 13)]));
+  }
+  // Field-adjacent: a tab-rename collision answers right under the tabs.
+  if (S.presetErr) out.push(el("div", { class: "field-err sans", text: S.presetErr }));
+  // A tab pressed while the tier-3 form holds unsaved edits: the switch
+  // would swap the form's values out from under them — confirm inline.
+  if (S.chipAsk) {
+    out.push(confirmBar(
+      "switch to " + S.chipAsk + "? unsaved edits to " + S.preset + " are lost.",
+      "discard & switch", "accent",
+      () => switchPreset(info, S.chipAsk),
+      () => { S.chipAsk = null; render(); },
+      { cls: "unlock-ask", cancel: "keep editing" }));
+  }
+  /* The warn appears only when something is wrong, and it is a real "is
+     any required value missing" check — tier 3 answers from the config's
+     own schema (field paths, made readable), tier 2 from the yaml's vars. */
+  const bag = ((info.meta.presets || {})[S.preset]) || {};
+  const t3tpl = t3 && S.eform && !S.eform.parseErr ? S.eform.tpl : null;
+  const missing = t3
+    ? (t3tpl ? prettyMissing(bag, missingRequiredT3(t3tpl, bag), t3tpl) : [])
+    : missingRequired(info, S.preset);
+  if (S.preset && missing.length) {
+    out.push(el("div", { class: "warn sans", text: S.preset + " has no " + nameList(missing) + ". activating with it will fail." }));
+  }
+  return out;
 }
 
 function screenEditor() {
@@ -1914,67 +1987,16 @@ function screenEditor() {
   const noteEl = noteStrip();
   if (noteEl) wrap.appendChild(noteEl);
 
-  /* presets band */
-  const band = el("div", { class: "band" });
-  const chips = el("div", { class: "chips" }, [span("colhead", "presets")]);
-  for (const p of list) {
-    const on = p === S.preset;
-    const isRunningPreset = running && p === S.status.preset;
-    const last = list.length < 2;
-    const delTitle = last ? "a config always keeps one preset"
-      : isRunningPreset ? "this preset is running. activate another one first."
-        : "delete " + p;
-    chips.appendChild(el("span", { class: "chip" }, [
-      on ? el("span", { class: "dot5", attrs: { style: "background: var(--accent)" } }) : null,
-      on ? el("input", {
-        title: "rename this preset",
-        attrs: { spellcheck: "false", size: Math.max(p.length, 4), "data-fk": "chip:" + p, "aria-label": "rename this preset" },
-        props: { value: p },
-        on: { change: (e) => renamePreset(info, p, e.target.value) },
-      }) : el("button", { class: "pick", text: p, on: { click: () => pickPreset(info, p, t3) } }),
-      el("button", { class: "mini", title: "duplicate this preset", on: { click: () => dupPreset(info, p) } }, [icon("copy", 12)]),
-      el("button", {
-        class: "mini del", title: delTitle,
-        attrs: last || isRunningPreset ? { disabled: "" } : null,
-        on: { click: () => delPreset(info, p) },
-      }, [icon("trash", 12)]),
-    ]));
-  }
-  chips.appendChild(el("button", { class: "chip-add", title: "add a preset", on: { click: () => addPreset(info) } }, [icon("plus", 13)]));
-  band.appendChild(chips);
-  // Field-adjacent: a chip-rename collision answers right under the chips.
-  if (S.presetErr) band.appendChild(el("div", { class: "field-err sans", text: S.presetErr }));
-  // A chip pressed while the tier-3 form holds unsaved edits: the switch
-  // would swap the form's values out from under them — confirm inline.
-  if (S.chipAsk) {
-    band.appendChild(confirmBar(
-      "switch to " + S.chipAsk + "? unsaved edits to " + S.preset + " are lost.",
-      "discard & switch", "accent",
-      () => switchPreset(info, S.chipAsk),
-      () => { S.chipAsk = null; render(); },
-      { cls: "unlock-ask", cancel: "keep editing" }));
-  }
-
-  /* Tier 3: the FORM (below) is the one values surface — it edits the
-     selected preset's bag, secrets included, so the card band would be a
-     second copy of the same truth. Tier 2 keeps its cards. */
+  /* Tier 2: the value cards ARE the values surface — one card, the preset
+     tabs on its top edge (tier 3's form card gets the same tabs inside
+     editorFormView, further down). */
   if (!t3) {
+    const card = el("div", { class: "tform pcard ed-vals" + (list.length > 1 ? "" : " solo") });
+    for (const n of presetTabs(info, false)) card.appendChild(n);
     const values = ((info.meta.presets || {})[S.preset]) || {};
-    band.appendChild(valueCards(info, values, (k, v) => queueValue(info, k, v), "ed"));
+    card.appendChild(valueCards(info, values, (k, v) => queueValue(info, k, v), "ed"));
+    wrap.appendChild(card);
   }
-
-  /* Row three appears only when something is wrong, and it is a real "is
-     any required value missing" check — tier 3 answers from the config's
-     own schema (field paths, made readable), tier 2 from the yaml's vars. */
-  const bag = ((info.meta.presets || {})[S.preset]) || {};
-  const t3tpl = t3 && S.eform && !S.eform.parseErr ? S.eform.tpl : null;
-  const missing = t3
-    ? (t3tpl ? prettyMissing(bag, missingRequiredT3(t3tpl, bag), t3tpl) : [])
-    : missingRequired(info, S.preset);
-  if (S.preset && missing.length) {
-    band.appendChild(el("div", { class: "warn sans", text: S.preset + " has no " + nameList(missing) + ". activating with it will fail." }));
-  }
-  wrap.appendChild(band);
 
   /* save results, at screen level — visible whether the YAML is open or not */
   if (S.valOk) {
@@ -2044,7 +2066,7 @@ function screenEditor() {
      either way \u2014 it simply shows whichever text the config has. */
   const paneParent = t3 ? el("div", { class: "ed-scroll" }) : wrap;
   if (t3) {
-    const form = editorFormView();
+    const form = editorFormView(info);
     if (form) paneParent.appendChild(form);
     wrap.appendChild(paneParent);
   }
@@ -2118,7 +2140,7 @@ function screenEditor() {
    land on the preset they belong to. One shared debounce timer serves the
    whole band, so a pending PUT is flushed — fired immediately, never
    dropped — whenever the target (config, preset) changes: by an edit on
-   another preset, or by switching presets in the chips. */
+   another preset, or by switching presets in the tabs. */
 let valueTimer = null, valuePending = null; // valuePending: { name, preset, values, key }
 async function putPending(p) {
   try {
@@ -2187,10 +2209,10 @@ async function headerResync(info, origin) {
   } catch (e) { showError(e); }
 }
 
-/* Switching the editor's preset chips: on a tier-3 config the chips are the
+/* Switching the editor's preset tabs: on a tier-3 config the tabs are the
    FORM'S switcher — the form's values swap to the newly selected preset's
    bag — so a dirty form gets the inline confirm first (pickPreset arms it,
-   the band's confirmBar runs switchPreset). Tier 2 keeps its instant switch
+   the card's confirmBar runs switchPreset). Tier 2 keeps its instant switch
    (the value cards autosave; there is nothing unsaved to lose). */
 function pickPreset(info, p, t3) {
   if (t3 && eformDirty()) { S.chipAsk = p; render(); return; }
@@ -2228,7 +2250,7 @@ async function createPreset(info, n, values) {
   try {
     await apiJSON(cfgURL(info.name) + "/presets/" + enc(n) + "?validate=false", "PUT", { values });
     await loadCore();
-    if (stay) { note(n + " added — the chips switch to it", 3600); return; }
+    if (stay) { note(n + " added — the tabs switch to it", 3600); return; }
     S.preset = n; S.presetSel[info.name] = n;
     buildEditorForm(byName(info.name) || info);
     render();

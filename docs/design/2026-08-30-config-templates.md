@@ -447,16 +447,24 @@ consumes. Shapes and judged calls:
 The web UI half of Amendment 4 is live; the interim knobs-speaking form
 and the tier-3 value-card band are gone.
 
-- **The form edits the SELECTED preset's bag**: the preset chips (the
-  existing band idiom) are the switcher above it; the form's header names
-  whose values it shows ("values · staging"); switching chips re-seeds
-  the form from the new preset's bag — row counts and all, per-preset
-  structure is real. Switching with unsaved form edits arms the inline
-  confirmBar ("switch to X? unsaved edits to Y are lost" / keep editing /
-  discard & switch — Escape cancels). **Secrets are real masked inputs
-  in the form** (`type=password`, the value cards' reveal/hide idiom);
-  the dashed placeholder cards died with the tier-3 card band. Tier-2
-  editors are untouched — cards, autosave, chips, all of it.
+- **The form edits the SELECTED preset's bag**: the presets are the
+  form's switcher; switching re-seeds the form from the new preset's
+  bag — row counts and all, per-preset structure is real. Switching
+  with unsaved form edits arms the inline confirmBar ("switch to X?
+  unsaved edits to Y are lost" / keep editing / discard & switch —
+  Escape cancels). **Secrets are real masked inputs in the form**
+  (`type=password`, the value cards' reveal/hide idiom); the dashed
+  placeholder cards died with the tier-3 card band. Tier-2 editors keep
+  their cards and autosave. *(Presentation follow-up, same day: the
+  switcher shipped as a standalone "presets" chip band above a separate
+  values surface — the owner read that as two editing surfaces. The
+  presets now render as file-tabs on the top edge of the values card
+  itself — tier 3's form card, tier 2's value-card grid — selected tab
+  connected to the body and carrying the actions (rename input,
+  duplicate, delete), the running preset marked by the accent dot, and
+  the "values · X" form header dropped (the tab says it). One preset →
+  no tabs at all, just a quiet + in the card's corner. Behavior —
+  handlers, dirty guard, autosave, last-preset rule — unchanged.)*
 - **Save**: form dirty → amber → `PUT presets/{selected}` with the whole
   bag. Both views dirty → TWO requests, source first (the server's
   order), and the result panel reflects the pair honestly: both landing
