@@ -55,6 +55,7 @@ test("originOf and hostOf", () => {
   assert.equal(H.originOf({ provenance: "remote" }), "url");
   assert.equal(H.originOf({ provenance: "shipped" }), "builtin");
   assert.equal(H.originOf({ provenance: "local" }), "user");
+  assert.equal(H.originOf({ provenance: "template" }), "tmpl");
   assert.equal(H.hostOf({ meta: { remote_url: "https://otel.acme.dev/c.yaml" } }), "otel.acme.dev");
   // An unparseable URL falls back to the raw string; no meta means "".
   assert.equal(H.hostOf({ meta: { remote_url: "not a url" } }), "not a url");
@@ -181,6 +182,85 @@ test("compyVersionLine", () => {
   for (const [name, version, update, want] of cases) {
     assert.equal(H.compyVersionLine(version, update), want, name);
   }
+});
+
+/* The template form's schema helpers: draft seeding, light validation, and
+   the parse of a field-naming 400 into a field-adjacent error. */
+const TPL = {
+  name: "custom-endpoints",
+  sections: [{ id: "backends", label: "Backends" }, { id: "pipeline", label: "Pipeline options", collapsed: true }],
+  backends: {
+    min: 1, max: 8,
+    fields: [
+      { name: "name", type: "slug", label: "Name" },
+      { name: "endpoint", type: "url", label: "Endpoint" },
+      { name: "auth_header", type: "string", label: "Auth header", optional: true },
+      { name: "api_key", type: "secret", label: "API key" },
+      { name: "auth_scheme", type: "choice", options: ["none", "Bearer"], default: "none", advanced: true },
+      { name: "signals", type: "multi", options: ["traces", "metrics", "logs"], default: ["traces", "metrics", "logs"], advanced: true },
+    ],
+  },
+  fields: [
+    { name: "batch", type: "toggle", default: true, section: "pipeline" },
+    { name: "debug_tee", type: "toggle", default: false, section: "pipeline" },
+  ],
+};
+
+test("seedKnobs fills defaults and keeps stored knobs", () => {
+  // Fresh draft: schema defaults, one empty backend row, no secrets.
+  const fresh = H.seedKnobs(TPL, null);
+  assert.deepEqual(fresh, {
+    batch: true, debug_tee: false,
+    backends: [{ name: "", endpoint: "", auth_header: "", auth_scheme: "none", signals: ["traces", "metrics", "logs"] }],
+  });
+  assert.equal("api_key" in fresh.backends[0], false, "secrets never enter the draft");
+  // Defaults are copies: editing the draft must not mutate the schema.
+  fresh.backends[0].signals.push("junk");
+  assert.deepEqual(TPL.backends.fields[5].default, ["traces", "metrics", "logs"]);
+
+  // Change-options: stored meta.knobs win, schema growth backfills.
+  const seeded = H.seedKnobs(TPL, {
+    debug_tee: true,
+    backends: [{ name: "hc", endpoint: "https://api.honeycomb.io", auth_scheme: "Bearer" }],
+  });
+  assert.equal(seeded.debug_tee, true);
+  assert.equal(seeded.batch, true, "missing knob falls back to the default");
+  assert.equal(seeded.backends[0].name, "hc");
+  assert.deepEqual(seeded.backends[0].signals, ["traces", "metrics", "logs"], "field the schema grew");
+});
+
+test("knobProblems keys errors the way the server does", () => {
+  const knobs = H.seedKnobs(TPL, null);
+  knobs.backends[0].name = "Bad Name";
+  knobs.backends[0].endpoint = "api.honeycomb.io";
+  knobs.backends[0].signals = [];
+  const errs = H.knobProblems(TPL, knobs);
+  assert.deepEqual(errs, {
+    "backends[0].name": "lowercase letters, digits, dashes",
+    "backends[0].endpoint": "must start with http:// or https://",
+    "backends[0].signals": "pick at least one",
+  });
+  // The thirty-second path is clean.
+  knobs.backends[0].name = "honeycomb";
+  knobs.backends[0].endpoint = "https://api.honeycomb.io";
+  knobs.backends[0].signals = ["traces"];
+  assert.deepEqual(H.knobProblems(TPL, knobs), {});
+  // Empty required vs empty optional.
+  knobs.backends[0].name = "";
+  knobs.backends[0].auth_header = "";
+  assert.deepEqual(H.knobProblems(TPL, knobs), { "backends[0].name": "required" });
+});
+
+test("parseFieldErr", () => {
+  assert.deepEqual(H.parseFieldErr("backends[0].endpoint: required"),
+    { path: "backends[0].endpoint", msg: "required" });
+  assert.deepEqual(H.parseFieldErr("memory_limiter: true is not true/false"),
+    { path: "memory_limiter", msg: "true is not true/false" });
+  assert.deepEqual(H.parseFieldErr("backends: need 1 to 8 entries, got 0"),
+    { path: "backends", msg: "need 1 to 8 entries, got 0" });
+  // Errors that name no field go to the errbar instead.
+  assert.equal(H.parseFieldErr('config "x" already exists'), null);
+  assert.equal(H.parseFieldErr(""), null);
 });
 
 /* The log pane's tail-mode scroll rule and its incremental-render diff. */

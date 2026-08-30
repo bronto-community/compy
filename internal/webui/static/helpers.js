@@ -11,6 +11,7 @@ function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^
 function originOf(info) {
   if (info.provenance === "remote") return "url";
   if (info.provenance === "shipped") return "builtin";
+  if (info.provenance === "template") return "tmpl";
   return "user";
 }
 function hostOf(info) {
@@ -67,6 +68,79 @@ function fmtCount(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, "") + "m";
   if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
   return String(n);
+}
+
+/* ── template form (config templates, the schema-driven creation form) ─
+   The schema (GET /api/templates) is arrays in declaration order; these
+   helpers turn it into a knobs draft and back. Secrets never appear in
+   knobs — they have no value at render time (they become preset cards). */
+function fieldDefault(f) {
+  if (f.default != null) return Array.isArray(f.default) ? f.default.slice() : f.default;
+  if (f.type === "toggle") return false;
+  if (f.type === "multi") return [];
+  if (f.type === "choice") return (f.options || [])[0] || "";
+  return "";
+}
+// One row (or the config level) of the draft: stored knobs win, schema
+// defaults fill the rest — so a re-render form seeded from older meta still
+// carries every field the schema has grown since.
+function seedRow(fields, from) {
+  const row = {};
+  for (const f of fields || []) {
+    if (f.type === "secret") continue;
+    row[f.name] = from && from[f.name] != null ? from[f.name] : fieldDefault(f);
+  }
+  return row;
+}
+function seedKnobs(tpl, from) {
+  const knobs = seedRow(tpl.fields, from);
+  if (tpl.backends) {
+    const rows = from && Array.isArray(from.backends) && from.backends.length ? from.backends : [null];
+    knobs.backends = rows.map((r) => seedRow(tpl.backends.fields, r));
+  }
+  return knobs;
+}
+/* Light client-side checks only — the server re-validates everything. */
+function fieldProblem(f, v) {
+  const s = typeof v === "string" ? v.trim() : v;
+  if (f.type === "slug") {
+    if (!s) return f.optional ? "" : "required";
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(s)) return "lowercase letters, digits, dashes";
+  }
+  if (f.type === "url") {
+    if (!s) return f.optional ? "" : "required";
+    if (!/^https?:\/\/./.test(s)) return "must start with http:// or https://";
+  }
+  if (f.type === "string" && !f.optional && f.default == null && !s) return "required";
+  if (f.type === "multi" && !f.optional && (!v || !v.length)) return "pick at least one";
+  return "";
+}
+// Every problem in the draft, keyed the way the server keys its 400s
+// ("backends[0].endpoint") so both land on the same field.
+function knobProblems(tpl, knobs) {
+  const errs = {};
+  for (const f of tpl.fields || []) {
+    if (f.type === "secret") continue;
+    const p = fieldProblem(f, knobs[f.name]);
+    if (p) errs[f.name] = p;
+  }
+  if (tpl.backends) {
+    (knobs.backends || []).forEach((row, i) => {
+      for (const f of tpl.backends.fields || []) {
+        if (f.type === "secret") continue;
+        const p = fieldProblem(f, row[f.name]);
+        if (p) errs["backends[" + i + "]." + f.name] = p;
+      }
+    });
+  }
+  return errs;
+}
+// A validation 400 that names a field ("backends[0].endpoint: required")
+// parses into {path, msg} for field-adjacent display; anything else (a
+// name collision, a render failure) returns null and goes to the errbar.
+function parseFieldErr(msg) {
+  const m = /^([a-z0-9_]+(?:\[\d+\])?(?:\.[a-z0-9_]+)?): ([^]+)$/.exec(msg || "");
+  return m ? { path: m[1], msg: m[2] } : null;
 }
 
 /* ── collector log parsing ────────────────────────────────────────────
@@ -242,6 +316,7 @@ if (typeof module !== "undefined") {
   module.exports = {
     slug, originOf, hostOf, missingRequired, nameList, freePresetName,
     compyVersionLine,
+    fieldDefault, seedRow, seedKnobs, fieldProblem, knobProblems, parseFieldErr,
     portsCompact, yamlLineOf, fmtCount, parseZapLine, parseAttrs,
     atLogBottom, logDiff, sameShown,
     distroState,
