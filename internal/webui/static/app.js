@@ -2177,7 +2177,7 @@ function screenEditor() {
     host2.classList.toggle("cm-tall", tall);
     cm = CodeMirror(host2, {
       value: val,
-      mode: "yaml", // v1: yaml highlighting for source too \u2014 schema is the JSON subset, the body is yaml-shaped
+      mode: "yaml", // v1: yaml highlighting for source too \u2014 the front matter is yaml (or its JSON subset), the body yaml-shaped
       lineNumbers: true, readOnly: !editable, lineWrapping: true,
       // Tier 2's pane flex-fills the screen and CM owns its scroll with
       // the default viewportMargin (viewport rendering — only visible

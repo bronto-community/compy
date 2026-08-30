@@ -504,3 +504,55 @@ and the tier-3 value-card band are gone.
   pipeline into config.yaml and the plist environment carried exactly
   the two secrets plus COMPY ports; a rejected plain-yaml demotion
   restored the templated pair via the source-only body.
+
+---
+
+## Amendment 5 — YAML front matter (owner request, as shipped)
+
+Owner: "for the templates can the front matter not also be YAML." The
+schema front matter now comes in two first-class forms, both forever, no
+migration:
+
+- **JSON** (the original): first non-blank byte `{`, then the `---`
+  separator line. Detection stays purely textual, unchanged.
+- **YAML** (the standard front-matter convention): `---` line, YAML
+  schema, `---` line, body. Decoded strictly with `gopkg.in/yaml.v3`
+  (`KnownFields`, mirroring the JSON path's `DisallowUnknownFields`)
+  into the same schema structs — fields stay arrays, so declaration
+  order is still form order. The dependency is an owner ruling
+  (2026-08-29): a solid library over hand-crafting a parser; the OTel
+  ecosystem itself runs on yaml.v3.
+
+**Detection** (`catalog.IsSource`) is the careful part: a plain
+collector config may legally open with `---` (the YAML document
+marker), so shape alone cannot commit. A YAML candidate (opening AND
+closing `---` lines) commits only when the between-text strictly
+decodes into the schema struct and carries a `name` — otherwise it is a
+plain config and falls through QUIETLY on the paste/demote path. The
+source-save route (`PUT /source`) instead uses the new
+`catalog.LooksLikeSource` (shape only), so a broken YAML schema on an
+already-templated config errors LOUDLY with the real diagnostic — the
+same asymmetry broken JSON front matter always had. Schema errors carry
+line numbers relative to the FULL source (the decoder is fed
+position-preserving blank-line padding). Once either form commits,
+broken details (bad field types, an uncompilable body) error loudly in
+`ParseSource`, as ever.
+
+**The client parses nothing**: config detail
+(`GET /api/configs/{name}`) now carries `template`, the server-parsed
+schema, and the editor's form and tier-3 pre-flight derive from it —
+`parseSourceSchema` is deleted (the form was only ever rebuilt from
+STORED source, so no live-typing nicety was lost). `isSourceText`
+mirrors detection with a documented cheap sniff (`---` markers plus a
+top-level `name:` line); misrouting is self-correcting because the
+server re-judges on either route.
+
+**Serialization**: nothing regenerates front matter anywhere — sources
+are owner-authored text stored and synced verbatim — so a YAML-fronted
+source stays YAML by construction.
+
+**The shipped starter** (`custom-endpoints.tmpl`) converted to YAML
+front matter (it is the reference users copy); its body is
+byte-identical. Existing configs that copied the JSON-fronted source
+own their copies and simply stay JSON — the catalog is a starter,
+nothing upgrades template copies.
