@@ -673,7 +673,7 @@ func TestReplacePresetReactivatesWhenActivePreset(t *testing.T) {
 
 	*calls = nil
 	// Replacing a preset on an inactive config must not re-apply.
-	if err := a.ReplacePreset("other", "prod", map[string]string{"K": "v2"}); err != nil {
+	if _, err := a.ReplacePreset("other", "prod", map[string]any{"K": "v2"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if len(*calls) != 0 {
@@ -690,7 +690,7 @@ func TestReplacePresetReactivatesWhenActivePreset(t *testing.T) {
 	}
 
 	*calls = nil
-	if err := a.ReplacePreset("debug", "prod", map[string]string{"K": "v2"}); err != nil {
+	if _, err := a.ReplacePreset("debug", "prod", map[string]any{"K": "v2"}, true); err != nil {
 		t.Fatalf("ReplacePreset: %v", err)
 	}
 	if !called(*calls, "bootstrap") {
@@ -707,7 +707,7 @@ func TestReplacePresetReactivatesWhenActivePreset(t *testing.T) {
 	*calls = nil
 	// Replacing a *different, non-active* preset on the active config must
 	// not re-apply.
-	if err := a.ReplacePreset("debug", "staging", map[string]string{"K": "v1"}); err != nil {
+	if _, err := a.ReplacePreset("debug", "staging", map[string]any{"K": "v1"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if len(*calls) != 0 {
@@ -1693,8 +1693,8 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 		{"RenameConfig unknown", func() error { return a.RenameConfig(nosuch, "fresh") }},
 		{"RenameConfig existing target", func() error { return a.RenameConfig("mine", "other") }},
 		{"RenameConfig invalid target", func() error { return a.RenameConfig("mine", "Bad Name") }},
-		{"ReplaceSet unknown config", func() error { return a.ReplacePreset(nosuch, "dev", nil) }},
-		{"ReplaceSet invalid set name", func() error { return a.ReplacePreset("mine", "Bad Preset", nil) }},
+		{"ReplaceSet unknown config", func() error { _, err := a.ReplacePreset(nosuch, "dev", nil, true); return err }},
+		{"ReplaceSet invalid set name", func() error { _, err := a.ReplacePreset("mine", "Bad Preset", nil, true); return err }},
 		{"UseSet unknown set", func() error { return a.UsePreset("other", nosuch) }},
 		{"DeleteSet unknown set", func() error { return a.DeletePreset("mine", nosuch) }},
 		{"DeletePreset active preset", func() error { return a.DeletePreset("mine", "dev") }},

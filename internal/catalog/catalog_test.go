@@ -117,9 +117,9 @@ func TestAdvancedRuleLint(t *testing.T) {
 	}
 }
 
-// TestNormalizeKnobs is the validation matrix: every rejection is
+// TestNormalizeBag is the validation matrix: every rejection is
 // BadRequest-marked and names the offending field.
-func TestNormalizeKnobs(t *testing.T) {
+func TestNormalizeBag(t *testing.T) {
 	tmpl := get(t, "custom-endpoints")
 	be := func(rows ...map[string]any) map[string]any {
 		var l []any
@@ -145,16 +145,16 @@ func TestNormalizeKnobs(t *testing.T) {
 		{"bad multi member", "backends[0].signals", be(map[string]any{"name": "a", "endpoint": "https://x.example", "signals": []any{"traces", "profiles"}})},
 		{"empty multi", "backends[0].signals", be(map[string]any{"name": "a", "endpoint": "https://x.example", "signals": []any{}})},
 		{"unknown field", "backends[0].port: unknown field", be(map[string]any{"name": "a", "endpoint": "https://x.example", "port": 1})},
-		{"secret as knob", "backends[0].api_key: secrets are not template knobs", be(map[string]any{"name": "a", "endpoint": "https://x.example", "api_key": "shh"})},
+		{"secret non-string", "backends[0].api_key", be(map[string]any{"name": "a", "endpoint": "https://x.example", "api_key": 5})},
 		{"duplicate names", "duplicate name", be(ok, map[string]any{"name": "a", "endpoint": "https://y.example"})},
 		{"toggle non-bool", "debug_tee", func() map[string]any { m := be(ok); m["debug_tee"] = "yes"; return m }()},
 		{"unknown config field", "sampling: unknown field", func() map[string]any { m := be(ok); m["sampling"] = true; return m }()},
 	}
 	for _, tc := range bad {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := tmpl.NormalizeKnobs(tc.knobs)
+			_, err := tmpl.NormalizeBag(tc.knobs)
 			if err == nil {
-				t.Fatal("NormalizeKnobs = nil error, want rejection")
+				t.Fatal("NormalizeBag = nil error, want rejection")
 			}
 			if !state.IsBadRequest(err) {
 				t.Errorf("err %v not BadRequest-marked", err)
@@ -165,8 +165,9 @@ func TestNormalizeKnobs(t *testing.T) {
 		})
 	}
 
-	// The happy path fills every default.
-	norm, err := tmpl.NormalizeKnobs(be(ok))
+	// The happy path fills every default; an absent secret stays absent
+	// (never defaulted, never demanded — the pre-flight's business).
+	norm, err := tmpl.NormalizeBag(be(ok))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +182,20 @@ func TestNormalizeKnobs(t *testing.T) {
 		t.Errorf("toggle defaults not filled: %v", norm)
 	}
 	if _, present := row["api_key"]; present {
-		t.Error("secret leaked into normalized knobs")
+		t.Error("absent secret invented by normalization")
+	}
+
+	// A set secret rides along in the bag (Amendment 4: presets own
+	// everything; secrets are ordinary bag members).
+	norm, err = tmpl.NormalizeBag(be(map[string]any{
+		"name": "a", "endpoint": "https://x.example", "api_key": "shh",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row = norm["backends"].([]any)[0].(map[string]any)
+	if row["api_key"] != "shh" {
+		t.Errorf("secret dropped from normalized bag: %v", row)
 	}
 }
 
@@ -380,9 +394,10 @@ a: {{.g}}
 	}
 }
 
-// TestPruneUnknown: fields the schema no longer declares vanish (secrets
-// always do), backend rows included — how stored knobs survive a schema
-// edit — while declared values pass through untouched.
+// TestPruneUnknown: fields the schema no longer declares vanish, backend
+// rows included — how stored bags survive a schema edit — while declared
+// values, secrets among them (they are declared fields, and pruning a
+// secret would delete a key), pass through untouched.
 func TestPruneUnknown(t *testing.T) {
 	tmpl := get(t, "custom-endpoints")
 	knobs := map[string]any{
@@ -401,8 +416,8 @@ func TestPruneUnknown(t *testing.T) {
 		t.Errorf("declared field lost: %v", out)
 	}
 	row := out["backends"].([]any)[0].(map[string]any)
-	if _, has := row["api_key"]; has {
-		t.Errorf("secret survived the prune: %v", row)
+	if row["api_key"] != "shh" {
+		t.Errorf("secret did not survive the prune: %v", row)
 	}
 	if _, has := row["old_field"]; has {
 		t.Errorf("unknown row field survived: %v", row)
@@ -412,6 +427,128 @@ func TestPruneUnknown(t *testing.T) {
 	}
 	if got := tmpl.PruneUnknown(nil); len(got) != 0 {
 		t.Errorf("PruneUnknown(nil) = %v, want empty", got)
+	}
+}
+
+// TestRenderNeverBakesSecrets: a bag carrying secret values renders to the
+// same yaml as one without them — the ${env:} references stay, the value
+// appears nowhere. THE invisible rule.
+func TestRenderNeverBakesSecrets(t *testing.T) {
+	tmpl := get(t, "custom-endpoints")
+	bag := map[string]any{
+		"backends": []any{map[string]any{
+			"name": "hc", "endpoint": "https://x.example",
+			"auth_header": "x-team", "api_key": "sup3rs3cret",
+		}},
+	}
+	out, err := tmpl.Render(bag, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "sup3rs3cret") {
+		t.Fatalf("secret value baked into the render:\n%s", out)
+	}
+	if !strings.Contains(out, "${env:HC_API_KEY}") {
+		t.Errorf("env reference missing:\n%s", out)
+	}
+	delete(bag["backends"].([]any)[0].(map[string]any), "api_key")
+	without, err := tmpl.Render(bag, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != without {
+		t.Error("secret presence changed the render")
+	}
+}
+
+// TestSecretEnv: the env split's mapping — a row secret becomes
+// UPPER(row_name)_UPPER(field), agreeing exactly with the rendered
+// ${env:} references; blanks are omitted.
+func TestSecretEnv(t *testing.T) {
+	tmpl := get(t, "custom-endpoints")
+	bag := map[string]any{
+		"backends": []any{
+			map[string]any{"name": "my-backend", "endpoint": "https://x.example",
+				"auth_header": "Authorization", "api_key": "k1"},
+			map[string]any{"name": "other", "endpoint": "https://y.example",
+				"auth_header": "api-key", "api_key": "   "},
+		},
+	}
+	env := tmpl.SecretEnv(bag)
+	if !reflect.DeepEqual(env, map[string]string{"MY_BACKEND_API_KEY": "k1"}) {
+		t.Errorf("SecretEnv = %v, want just MY_BACKEND_API_KEY (blank omitted)", env)
+	}
+	// Agreement with the render: every required ${env:} ref the render
+	// emits is a name SecretEnv would fill when the bag holds a value.
+	norm, err := tmpl.NormalizeBag(bag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := tmpl.Render(norm, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	filled := tmpl.SecretEnv(map[string]any{
+		"backends": []any{
+			map[string]any{"name": "my-backend", "api_key": "a"},
+			map[string]any{"name": "other", "api_key": "b"},
+		},
+	})
+	for _, v := range vars.Parse(out) {
+		if v.HasDefault || strings.HasPrefix(v.Name, "COMPY_") {
+			continue
+		}
+		if _, ok := filled[v.Name]; !ok {
+			t.Errorf("rendered ref %s has no SecretEnv counterpart (%v)", v.Name, filled)
+		}
+	}
+}
+
+// TestReconcile is the per-preset schema-edit rule: unknown pruned, newly
+// defaulted filled, required-without-default left absent (lenient — the
+// strict answer belongs to that preset's next write or activation).
+func TestReconcile(t *testing.T) {
+	tmpl := get(t, "custom-endpoints")
+	bag := tmpl.Reconcile(map[string]any{
+		"gone": 1,
+		"backends": []any{map[string]any{
+			"name": "hc", "api_key": "shh", "old": true,
+		}},
+	})
+	if _, has := bag["gone"]; has {
+		t.Errorf("unknown survived: %v", bag)
+	}
+	if bag["memory_limiter"] != true || bag["offline_queue"] != false {
+		t.Errorf("defaults not filled: %v", bag)
+	}
+	row := bag["backends"].([]any)[0].(map[string]any)
+	if row["api_key"] != "shh" || row["auth_scheme"] != "none" {
+		t.Errorf("row not reconciled: %v", row)
+	}
+	if _, has := row["endpoint"]; has {
+		t.Errorf("reconcile invented a required value: %v", row)
+	}
+}
+
+// TestMissingRequiredBag: the generalized pre-flight — schema-required
+// fields (secrets and non-secrets alike) absent or blank in the bag, named
+// as field paths.
+func TestMissingRequiredBag(t *testing.T) {
+	tmpl := get(t, "custom-endpoints")
+	missing := tmpl.MissingRequired(map[string]any{
+		"backends": []any{
+			map[string]any{"name": "hc", "endpoint": "https://x.example", "api_key": "k"},
+			map[string]any{"name": "dd", "endpoint": "  ", "api_key": ""},
+		},
+	})
+	want := []string{"backends[1].endpoint", "backends[1].api_key"}
+	if !reflect.DeepEqual(missing, want) {
+		t.Errorf("MissingRequired = %v, want %v", missing, want)
+	}
+	if got := tmpl.MissingRequired(map[string]any{"backends": []any{
+		map[string]any{"name": "hc", "endpoint": "https://x.example", "api_key": "k"},
+	}}); got != nil {
+		t.Errorf("complete bag reported missing: %v", got)
 	}
 }
 

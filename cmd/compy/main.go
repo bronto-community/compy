@@ -17,10 +17,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/cfgstore"
 	"github.com/bronto-community/compy/internal/envvars"
 	"github.com/bronto-community/compy/internal/launchd"
@@ -150,8 +152,8 @@ func run(args []string) error {
 			// silently drops everything its exporter can't send. The
 			// window asks first; the CLI names each gap and proceeds.
 			if info, _, err := a.Config(rest[0]); err == nil {
-				for _, v := range cfgstore.MissingRequired(info, preset) {
-					fmt.Fprintf(os.Stderr, "warning: no value for %s (no default in the yaml)\n", v)
+				for _, v := range cfgstore.MissingRequired(a.Dir, info, preset) {
+					fmt.Fprintf(os.Stderr, "warning: no value for %s\n", v)
 				}
 			}
 			return a.Activate(rest[0], preset)
@@ -545,8 +547,57 @@ func listConfigs(a *app.App) error {
 	return w.Flush()
 }
 
+// typedValue parses a `presets set` value per the config's schema: tier-2
+// stays plain strings; a tier-3 field whose type is non-string (toggle,
+// multi, the repeat group) takes a JSON literal, and string-shaped fields
+// (slug, url, string, choice, secret) take the raw text. An unknown key
+// falls through as a string — the preset write's own validation names it.
+func typedValue(a *app.App, config, key, raw string) (any, error) {
+	src, ok, err := a.ConfigSource(config)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return raw, nil // tier 2: env values are strings
+	}
+	t, err := catalog.ParseSource(src)
+	if err != nil {
+		return raw, nil // an unparseable source: let the save say so
+	}
+	if key == "backends" && t.Backends != nil {
+		var rows []any
+		if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+			return nil, fmt.Errorf("presets set: %s takes a JSON array of objects: %v", key, err)
+		}
+		return rows, nil
+	}
+	for _, f := range t.Fields {
+		if f.Name != key {
+			continue
+		}
+		switch f.Type {
+		case "toggle":
+			b, err := strconv.ParseBool(raw)
+			if err != nil {
+				return nil, fmt.Errorf("presets set: %s is a toggle; use true or false", key)
+			}
+			return b, nil
+		case "multi":
+			var list []any
+			if err := json.Unmarshal([]byte(raw), &list); err != nil {
+				return nil, fmt.Errorf("presets set: %s takes a JSON array of strings: %v", key, err)
+			}
+			return list, nil
+		}
+		break
+	}
+	return raw, nil
+}
+
 // printVars renders the configuration's variables as a table: one row per
-// variable, one column per preset.
+// variable, one column per preset. A tier-3 config's table comes from its
+// SCHEMA instead — its values live in preset bags, keyed by field — with
+// secrets shown as (set) or -.
 func printVars(a *app.App, name string) error {
 	info, _, err := a.Config(name)
 	if err != nil {
@@ -557,6 +608,13 @@ func printVars(a *app.App, name string) error {
 		presets = append(presets, preset)
 	}
 	slices.Sort(presets)
+	if info.HasTemplate {
+		if src, ok, _ := a.ConfigSource(name); ok {
+			if t, err := catalog.ParseSource(src); err == nil {
+				return printSchemaVars(t, info, presets)
+			}
+		}
+	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprint(w, "VARIABLE\tDEFAULT\tDESCRIPTION")
@@ -575,9 +633,81 @@ func printVars(a *app.App, name string) error {
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s", v.Name, def, v.Description)
 		for _, preset := range presets {
-			fmt.Fprintf(w, "\t%s", info.Meta.Presets[preset][v.Name])
+			val, _ := info.Meta.Presets[preset][v.Name].(string)
+			fmt.Fprintf(w, "\t%s", val)
 		}
 		fmt.Fprintln(w)
+	}
+	return w.Flush()
+}
+
+// printSchemaVars is the tier-3 `compy vars` table: the schema's fields
+// (repeat-group rows expanded per stored entry) with each preset's value —
+// secrets only ever as (set) or -, never the value itself.
+func printSchemaVars(t catalog.Template, info cfgstore.Info, presets []string) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprint(w, "FIELD\tTYPE")
+	for _, preset := range presets {
+		mark := ""
+		if preset == info.Meta.ActivePreset {
+			mark = "*"
+		}
+		fmt.Fprintf(w, "\t%s%s", preset, mark)
+	}
+	fmt.Fprintln(w)
+	cell := func(f catalog.Field, v any, present bool) string {
+		switch {
+		case f.Type == "secret":
+			if s, _ := v.(string); strings.TrimSpace(s) != "" {
+				return "(set)"
+			}
+			return "-"
+		case !present:
+			return "-"
+		}
+		if s, ok := v.(string); ok {
+			return s
+		}
+		j, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(j)
+	}
+	row := func(path string, f catalog.Field, at func(bag map[string]any) (any, bool)) {
+		fmt.Fprintf(w, "%s\t%s", path, f.Type)
+		for _, preset := range presets {
+			v, present := at(info.Meta.Presets[preset])
+			fmt.Fprintf(w, "\t%s", cell(f, v, present))
+		}
+		fmt.Fprintln(w)
+	}
+	for _, f := range t.Fields {
+		row(f.Name, f, func(bag map[string]any) (any, bool) {
+			v, ok := bag[f.Name]
+			return v, ok
+		})
+	}
+	if t.Backends != nil {
+		rowCount := 0
+		for _, preset := range presets {
+			if rows, ok := info.Meta.Presets[preset]["backends"].([]any); ok {
+				rowCount = max(rowCount, len(rows))
+			}
+		}
+		for i := 0; i < rowCount; i++ {
+			for _, f := range t.Backends.Fields {
+				row(fmt.Sprintf("backends[%d].%s", i, f.Name), f, func(bag map[string]any) (any, bool) {
+					rows, _ := bag["backends"].([]any)
+					if i >= len(rows) {
+						return nil, false
+					}
+					entry, _ := rows[i].(map[string]any)
+					v, ok := entry[f.Name]
+					return v, ok
+				})
+			}
+		}
 	}
 	return w.Flush()
 }
@@ -594,7 +724,13 @@ func cmdPresets(args []string) error {
 			if !ok {
 				return errors.New("presets set: need KEY=VALUE")
 			}
-			return withApp(func(a *app.App) error { return a.SetVar(args[1], args[2], key, value) })
+			return withApp(func(a *app.App) error {
+				typed, err := typedValue(a, args[1], key, value)
+				if err != nil {
+					return err
+				}
+				return a.SetVar(args[1], args[2], key, typed)
+			})
 		}
 	}
 	if len(args) != 3 {
@@ -973,7 +1109,7 @@ func editSource(a *app.App, name string) error {
 		return err
 	}
 	return editThen(tmp.Name(), func(s string) error {
-		_, err := a.WriteConfigSource(name, s, nil, true)
+		_, err := a.WriteConfigSource(name, s, true)
 		return err
 	})
 }

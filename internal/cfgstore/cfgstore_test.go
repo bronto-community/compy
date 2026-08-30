@@ -308,7 +308,7 @@ func TestWriteSetCreatesAndReplaces(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := WritePreset(root, "cfg", "prod", map[string]string{"HOST": "prod.example.com"}); err != nil {
+	if err := WritePreset(root, "cfg", "prod", map[string]any{"HOST": "prod.example.com"}); err != nil {
 		t.Fatalf("WritePreset: %v", err)
 	}
 	info, _, err := Get(root, "cfg")
@@ -320,7 +320,7 @@ func TestWriteSetCreatesAndReplaces(t *testing.T) {
 	}
 
 	// A second WritePreset replaces the whole set, not merges into it.
-	if err := WritePreset(root, "cfg", "prod", map[string]string{"PORT": "443"}); err != nil {
+	if err := WritePreset(root, "cfg", "prod", map[string]any{"PORT": "443"}); err != nil {
 		t.Fatalf("WritePreset (replace): %v", err)
 	}
 	info, _, err = Get(root, "cfg")
@@ -334,7 +334,7 @@ func TestWriteSetCreatesAndReplaces(t *testing.T) {
 		t.Fatalf("Presets after replace = %+v", info.Meta.Presets)
 	}
 
-	if err := WritePreset(root, "missing", "prod", map[string]string{}); err == nil {
+	if err := WritePreset(root, "missing", "prod", map[string]any{}); err == nil {
 		t.Fatal("WritePreset on missing config: want error, got nil")
 	}
 }
@@ -591,7 +591,7 @@ func TestAllNamedFunctionsRejectTraversal(t *testing.T) {
 		{"Rename(from)", func() error { return Rename(root, bad, "dst") }},
 		{"Rename(to)", func() error { return Rename(root, "src", bad) }},
 		{"SetVar", func() error { return SetVar(root, bad, "set", "K", "V") }},
-		{"WritePreset", func() error { return WritePreset(root, bad, "set", map[string]string{"K": "V"}) }},
+		{"WritePreset", func() error { return WritePreset(root, bad, "set", map[string]any{"K": "V"}) }},
 		{"DeletePreset", func() error { return DeletePreset(root, bad, "set") }},
 		{"UsePreset", func() error { return UsePreset(root, bad, "set") }},
 		{"RenamePreset", func() error { return RenamePreset(root, bad, "set", "set2") }},
@@ -828,10 +828,11 @@ func TestMissingRequired(t *testing.T) {
 	//
 	// internal/webui/static/helpers.test.js mirrors this table verbatim
 	// against the JS missingRequired — keep these tables identical.
+	root := t.TempDir() // no config on disk: the tier-2 path
 	info := Info{
 		Meta: Meta{
 			ActivePreset: "staging",
-			Presets: map[string]map[string]string{
+			Presets: map[string]map[string]any{
 				"staging": {"BRONTO_KEY": "bro_live_1"},
 				"empty":   {"BRONTO_KEY": "   "}, // whitespace is not a value
 				"full":    {"BRONTO_KEY": "k", "OTLP_ENDPOINT": "e"},
@@ -855,16 +856,46 @@ func TestMissingRequired(t *testing.T) {
 		{"unknown preset has no values", "nope", []string{"BRONTO_KEY", "OTLP_ENDPOINT"}},
 	}
 	for _, tc := range cases {
-		got := MissingRequired(info, tc.preset)
+		got := MissingRequired(root, info, tc.preset)
 		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
 			t.Errorf("%s: MissingRequired(%q) = %v, want %v", tc.name, tc.preset, got, tc.want)
 		}
 	}
 
 	// No presets at all: nothing has a value, everything required is missing.
-	bare := Info{Vars: info.Vars, Meta: Meta{Presets: map[string]map[string]string{}}}
-	if got := MissingRequired(bare, ""); strings.Join(got, ",") != "BRONTO_KEY,OTLP_ENDPOINT" {
+	bare := Info{Vars: info.Vars, Meta: Meta{Presets: map[string]map[string]any{}}}
+	if got := MissingRequired(root, bare, ""); strings.Join(got, ",") != "BRONTO_KEY,OTLP_ENDPOINT" {
 		t.Errorf("no presets: got %v, want BRONTO_KEY and OTLP_ENDPOINT", got)
+	}
+}
+
+// TestMissingRequiredTier3: a config with a template source answers from
+// its SCHEMA — required fields (secrets included) absent or blank in the
+// preset's bag, named as field paths.
+func TestMissingRequiredTier3(t *testing.T) {
+	root := t.TempDir()
+	src := `{"name": "t", "description": "d",
+ "fields": [{"name": "endpoint", "type": "url", "label": "E"},
+            {"name": "key", "type": "secret", "label": "K"}]}
+---
+a: {{.endpoint}}
+`
+	if err := CreateWithSource(root, "tpl", src, map[string]any{"endpoint": "https://x.example"}); err != nil {
+		t.Fatal(err)
+	}
+	info, _, err := Get(root, "tpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := MissingRequired(root, info, ""); strings.Join(got, ",") != "key" {
+		t.Errorf("MissingRequired = %v, want the unset secret", got)
+	}
+	if err := SetVar(root, "tpl", info.Meta.ActivePreset, "key", "s3cret"); err != nil {
+		t.Fatal(err)
+	}
+	info, _, _ = Get(root, "tpl")
+	if got := MissingRequired(root, info, ""); got != nil {
+		t.Errorf("filled bag still missing: %v", got)
 	}
 }
 
@@ -1013,7 +1044,7 @@ func TestDeleteLastPresetRefused(t *testing.T) {
 
 	// With a second preset the non-active one deletes fine, and the survivor
 	// is then refused again.
-	if err := WritePreset(root, "cfg", "extra", map[string]string{"K": "v"}); err != nil {
+	if err := WritePreset(root, "cfg", "extra", map[string]any{"K": "v"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := DeletePreset(root, "cfg", "extra"); err != nil {
@@ -1070,7 +1101,7 @@ func TestEmptyVarKeyRefused(t *testing.T) {
 			t.Errorf("SetVar key %q = %v, want a BadRequest-marked error", key, err)
 		}
 	}
-	err := WritePreset(root, "cfg", "prod", map[string]string{"": "value"})
+	err := WritePreset(root, "cfg", "prod", map[string]any{"": "value"})
 	if err == nil || !state.IsBadRequest(err) {
 		t.Errorf("WritePreset with empty key = %v, want a BadRequest-marked error", err)
 	}
@@ -1109,8 +1140,9 @@ func TestCreateDetectsSource(t *testing.T) {
 	if yaml != "a: hello\n" {
 		t.Errorf("rendered yaml = %q", yaml)
 	}
-	if info.Meta.Knobs["greeting"] != "hello" {
-		t.Errorf("knobs = %v, want the defaults recorded", info.Meta.Knobs)
+	// The fresh default preset IS the schema defaults (Amendment 4).
+	if info.Meta.Presets["default"]["greeting"] != "hello" || info.Meta.Knobs != nil {
+		t.Errorf("meta = %+v, want the defaults seeded into the default preset", info.Meta)
 	}
 	src, ok, err := Source(root, "tpl")
 	if err != nil || !ok || src != testSource {
@@ -1137,7 +1169,8 @@ func TestCreateDetectsSource(t *testing.T) {
 }
 
 // TestWriteYAMLDemotesTier3: plain yaml written over a templated config
-// drops the source and its knobs — editing is editing, no lock-in.
+// drops the source — editing is editing, no lock-in. The preset bags stay:
+// they are the user's values, and a demotion must never delete a secret.
 func TestWriteYAMLDemotesTier3(t *testing.T) {
 	root := t.TempDir()
 	if err := Create(root, "tpl", testSource); err != nil {
@@ -1153,8 +1186,8 @@ func TestWriteYAMLDemotesTier3(t *testing.T) {
 	if info.HasTemplate || yaml != "b: 2\n" {
 		t.Errorf("demote: has_template=%v yaml=%q", info.HasTemplate, yaml)
 	}
-	if info.Meta.Knobs != nil {
-		t.Errorf("knobs survived the demotion: %v", info.Meta.Knobs)
+	if info.Meta.Presets["default"]["greeting"] != "hello" {
+		t.Errorf("preset bag lost in the demotion: %v", info.Meta.Presets)
 	}
 	if _, err := os.Stat(SourcePath(root, "tpl")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("config.tmpl survived the demotion: %v", err)
@@ -1179,7 +1212,7 @@ func TestWriteSourceRestoresOnRenderedWriteFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	newSrc := strings.Replace(testSource, "hello", "goodbye", 1)
-	if err := WriteSource(root, "tpl", newSrc, "a: goodbye\n", map[string]any{"greeting": "goodbye"}); err == nil {
+	if err := WriteSource(root, "tpl", newSrc, "a: goodbye\n"); err == nil {
 		t.Fatal("WriteSource with unwritable yaml = nil, want error")
 	}
 	if src, _ := readSource(root, "tpl"); src != testSource {
@@ -1189,13 +1222,13 @@ func TestWriteSourceRestoresOnRenderedWriteFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Knobs["greeting"] != "hello" {
-		t.Errorf("knobs changed despite the failed save: %v", m.Knobs)
+	if m.Presets["default"]["greeting"] != "hello" {
+		t.Errorf("presets changed despite the failed save: %v", m.Presets)
 	}
 }
 
-// TestCopyCarriesSourcePair: Copy duplicates the source and its knobs along
-// with yaml and presets; provenance is dropped as ever.
+// TestCopyCarriesSourcePair: Copy duplicates the source along with yaml
+// and presets (bags included); provenance is dropped as ever.
 func TestCopyCarriesSourcePair(t *testing.T) {
 	root := t.TempDir()
 	if err := Create(root, "tpl", testSource); err != nil {
@@ -1214,8 +1247,8 @@ func TestCopyCarriesSourcePair(t *testing.T) {
 	if !info.HasTemplate || info.Provenance != "local" {
 		t.Errorf("copy info = %+v, want has_template local", info)
 	}
-	if yaml != "a: hello\n" || info.Meta.Knobs["greeting"] != "hello" {
-		t.Errorf("copy pair: yaml=%q knobs=%v", yaml, info.Meta.Knobs)
+	if yaml != "a: hello\n" || info.Meta.Presets["default"]["greeting"] != "hello" {
+		t.Errorf("copy pair: yaml=%q presets=%v", yaml, info.Meta.Presets)
 	}
 	if src, ok, _ := Source(root, "dup"); !ok || src != testSource {
 		t.Errorf("copy source = %q %v", src, ok)
@@ -1248,17 +1281,22 @@ func TestSyncRemoteTier3(t *testing.T) {
 		t.Errorf("rendered = %q", yaml)
 	}
 
-	// A local knob change does NOT make it modified: the SOURCE carries the
-	// pristine hash, and knobs are local state a sync must respect.
-	if err := WriteSource(root, "r", testSource, "a: hi\n", map[string]any{"greeting": "hi"}); err != nil {
+	// A local preset value change does NOT make it modified: the SOURCE
+	// carries the pristine hash, and preset bags are local state a sync must
+	// respect.
+	if err := SetVar(root, "r", "default", "greeting", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetVar(root, "r", "other", "greeting", "yo"); err != nil {
 		t.Fatal(err)
 	}
 	if info, _, _ := Get(root, "r"); info.Modified {
-		t.Error("knob-only change flagged the source as modified")
+		t.Error("preset-only change flagged the source as modified")
 	}
 
 	// The remote's schema evolves: greeting is gone, shout arrives. Sync
-	// prunes the stored greeting knob and defaults the new field.
+	// reconciles EVERY preset's bag — the stored greeting pruned, the new
+	// field defaulted, per preset — and re-renders from the active bag.
 	remote = `{"name": "t", "description": "d",
  "fields": [{"name": "shout", "type": "toggle", "label": "S", "default": true}]}
 ---
@@ -1277,16 +1315,19 @@ b: {{.shout}}
 	if info.Modified {
 		t.Error("fresh sync reports modified — pristine hash not moved to the new source")
 	}
-	if _, has := info.Meta.Knobs["greeting"]; has {
-		t.Errorf("removed field survived the sync: %v", info.Meta.Knobs)
-	}
-	if info.Meta.Knobs["shout"] != true {
-		t.Errorf("new field not defaulted: %v", info.Meta.Knobs)
+	for _, preset := range []string{"default", "other"} {
+		bag := info.Meta.Presets[preset]
+		if _, has := bag["greeting"]; has {
+			t.Errorf("%s: removed field survived the sync: %v", preset, bag)
+		}
+		if bag["shout"] != true {
+			t.Errorf("%s: new field not defaulted: %v", preset, bag)
+		}
 	}
 
 	// An edited SOURCE is a modified config: sync refuses, resync discards.
 	edited := strings.Replace(remote, "b: ", "c: ", 1)
-	if err := WriteSource(root, "r", edited, "c: true\n", info.Meta.Knobs); err != nil {
+	if err := WriteSource(root, "r", edited, "c: true\n"); err != nil {
 		t.Fatal(err)
 	}
 	if info, _, _ := Get(root, "r"); !info.Modified {
@@ -1317,7 +1358,7 @@ b: {{.shout}}
 }
 
 // TestSnapshotRestoreTier3: last-good captures the whole pair — source,
-// rendered yaml, knobs — and restore brings all of it back.
+// rendered yaml, preset bags — and restore brings all of it back.
 func TestSnapshotRestoreTier3(t *testing.T) {
 	root := t.TempDir()
 	if err := Create(root, "tpl", testSource); err != nil {
@@ -1340,7 +1381,7 @@ func TestSnapshotRestoreTier3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !info.HasTemplate || yaml != "a: hello\n" || info.Meta.Knobs["greeting"] != "hello" {
+	if !info.HasTemplate || yaml != "a: hello\n" || info.Meta.Presets["default"]["greeting"] != "hello" {
 		t.Errorf("restore lost the pair: %+v yaml=%q", info, yaml)
 	}
 	if src, ok, _ := Source(root, "tpl"); !ok || src != testSource {
@@ -1375,5 +1416,48 @@ func TestEnsurePresetsStripsWizardMeta(t *testing.T) {
 	}
 	if info.Meta.Template != "" || info.Meta.Knobs != nil || info.Meta.PristineSHA256 != "" {
 		t.Errorf("wizard meta not stripped: %+v", info.Meta)
+	}
+}
+
+// TestEnsurePresetsMigratesKnobs is the Amendment 4 migration: a tier-3
+// config's options-era knobs merge into EVERY preset's bag — existing
+// preset values win — and the knobs key is deleted. Idempotent: the second
+// run rewrites nothing.
+func TestEnsurePresetsMigratesKnobs(t *testing.T) {
+	root := t.TempDir()
+	if err := Create(root, "tpl", testSource); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"presets": {"default": {}, "prod": {"greeting": "kept", "KEY": "s"}},
+ "active_preset": "default",
+ "knobs": {"greeting": "hello"}}`
+	if err := os.WriteFile(metaPath(root, "tpl"), []byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePresets(root); err != nil {
+		t.Fatal(err)
+	}
+	info, _, err := Get(root, "tpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Meta.Knobs != nil {
+		t.Errorf("knobs survived the migration: %v", info.Meta.Knobs)
+	}
+	if info.Meta.Presets["default"]["greeting"] != "hello" {
+		t.Errorf("knobs not merged into default: %v", info.Meta.Presets)
+	}
+	if info.Meta.Presets["prod"]["greeting"] != "kept" || info.Meta.Presets["prod"]["KEY"] != "s" {
+		t.Errorf("existing preset values did not win: %v", info.Meta.Presets["prod"])
+	}
+	before, err := os.ReadFile(metaPath(root, "tpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePresets(root); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(metaPath(root, "tpl")); string(after) != string(before) {
+		t.Errorf("second run rewrote meta:\n%s", after)
 	}
 }

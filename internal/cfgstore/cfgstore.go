@@ -30,14 +30,18 @@ import (
 // settings, runs every configuration (docs/design/handoff/README.md,
 // "Departures"). A "distro" key left in an older meta.json is ignored.
 type Meta struct {
-	RemoteURL      string                       `json:"remote_url,omitempty"`
-	PristineSHA256 string                       `json:"pristine_sha256,omitempty"`
-	Presets        map[string]map[string]string `json:"presets"`
-	ActivePreset   string                       `json:"active_preset"`
-	// Knobs are a tier-3 (templated) configuration's normalized knob values
-	// (secrets excluded — their values live in presets): what the source's
-	// schema was last rendered with, and what the form seeds from. Only
-	// meaningful alongside config.tmpl; EnsurePresets clears strays.
+	RemoteURL      string `json:"remote_url,omitempty"`
+	PristineSHA256 string `json:"pristine_sha256,omitempty"`
+	// Presets are the configuration's value bags: one preset holds ALL of a
+	// config's values (Amendment 4) — plain env strings for a tier-2 config,
+	// typed schema values (options, repeat groups, toggles, secrets) for a
+	// tier-3 one. Activation renders the source with the selected preset's
+	// bag; only secret-typed values travel via the environment.
+	Presets      map[string]map[string]any `json:"presets"`
+	ActivePreset string                    `json:"active_preset"`
+	// Knobs is the options-era value store (pre-Amendment 4). EnsurePresets
+	// merges it into every preset on first load and deletes it; it is never
+	// written non-nil again.
 	Knobs map[string]any `json:"knobs,omitempty"`
 	// Template is a legacy wizard-era marker ("created from this catalog
 	// template"). The corrected model has no such object — a config OWNS its
@@ -58,24 +62,35 @@ type Info struct {
 	Vars        []vars.Var `json:"vars"`
 }
 
-// MissingRequired names the variables an activation of this config with
-// this preset would leave without a value: no `${VAR:-default}` fallback in
-// the yaml (vars.Var.HasDefault false), not compy-injected (COMPY_*), and
-// empty or absent in the preset. An empty preset name resolves to the
-// config's active preset, exactly as Activate does — and every config has
-// one (EnsurePresets). Callers decide what to do with the answer: the
-// window asks before activating, the CLI warns and proceeds.
-func MissingRequired(info Info, preset string) []string {
+// MissingRequired names the values an activation of this config with this
+// preset would leave unfilled. Tier 2: variables with no `${VAR:-default}`
+// fallback in the yaml, not compy-injected (COMPY_*), and empty or absent
+// in the preset. Tier 3 (a template source exists): schema-required fields
+// — secrets included, non-secrets too — absent or blank in the preset's
+// bag, named as field paths ("backends[0].api_key"). An empty preset name
+// resolves to the config's active preset, exactly as Activate does — and
+// every config has one (EnsurePresets). Callers decide what to do with the
+// answer: the window asks before activating, the CLI warns and proceeds.
+func MissingRequired(root string, info Info, preset string) []string {
 	if preset == "" {
 		preset = info.Meta.ActivePreset
 	}
 	values := info.Meta.Presets[preset]
+	if src, ok := readSource(root, info.Name); ok {
+		t, err := catalog.ParseSource(src)
+		if err != nil {
+			return nil // an unparseable source can't say; activation will
+		}
+		return t.MissingRequired(values)
+	}
 	var missing []string
 	for _, v := range info.Vars {
 		if v.HasDefault || strings.HasPrefix(v.Name, "COMPY_") {
 			continue
 		}
-		if strings.TrimSpace(values[v.Name]) == "" {
+		// Non-string values (a demoted tier-3 bag's leftovers) count as set:
+		// no claim is better than a wrong one.
+		if s, isStr := values[v.Name].(string); values[v.Name] == nil || (isStr && strings.TrimSpace(s) == "") {
 			missing = append(missing, v.Name)
 		}
 	}
@@ -194,15 +209,15 @@ func readYAML(root, name string) (string, error) {
 func readMeta(root, name string) (Meta, error) {
 	data, err := os.ReadFile(metaPath(root, name))
 	if errors.Is(err, os.ErrNotExist) {
-		return Meta{Presets: map[string]map[string]string{}}, nil
+		return Meta{Presets: map[string]map[string]any{}}, nil
 	}
 	if err != nil {
 		return Meta{}, err
 	}
 	var raw struct {
 		Meta
-		LegacyPresets map[string]map[string]string `json:"variable_sets"`
-		LegacyActive  string                       `json:"active_set"`
+		LegacyPresets map[string]map[string]any `json:"variable_sets"`
+		LegacyActive  string                    `json:"active_set"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Meta{}, err
@@ -215,7 +230,7 @@ func readMeta(root, name string) (Meta, error) {
 		m.ActivePreset = raw.LegacyActive
 	}
 	if m.Presets == nil {
-		m.Presets = map[string]map[string]string{}
+		m.Presets = map[string]map[string]any{}
 	}
 	return m, nil
 }
@@ -233,7 +248,7 @@ const DefaultPreset = "default"
 func ensureDefaultPreset(m *Meta) bool {
 	changed := false
 	if len(m.Presets) == 0 {
-		m.Presets = map[string]map[string]string{DefaultPreset: {}}
+		m.Presets = map[string]map[string]any{DefaultPreset: {}}
 		changed = true
 	}
 	if _, ok := m.Presets[m.ActivePreset]; !ok {
@@ -257,8 +272,11 @@ func withDefaultPreset(m Meta) Meta {
 // EnsurePresets backfills the every-config-has-a-preset invariant onto
 // configs written before it existed (app.New runs it once per start): any
 // config on disk with no presets gets presets {"default": {}} and
-// active_preset "default". Deterministic and idempotent; a repair, not an
-// event, so nothing is logged.
+// active_preset "default". It is also the Amendment 4 migration: a tier-3
+// config's options-era `knobs` merge into every preset's bag (existing
+// preset values win — they are newer) and the knobs key is deleted.
+// Deterministic and idempotent; a repair, not an event, so nothing is
+// logged.
 func EnsurePresets(root string) error {
 	entries, err := os.ReadDir(Dir(root))
 	if errors.Is(err, os.ErrNotExist) {
@@ -290,6 +308,23 @@ func EnsurePresets(root string) error {
 				m.Knobs = nil
 				changed = true
 			}
+		} else if m.Knobs != nil {
+			// Amendment 4: presets own everything. The options-era knobs merge
+			// into every preset's bag — existing preset values win (they are
+			// newer) — and the store forgets knobs ever existed.
+			for name, bag := range m.Presets {
+				if bag == nil {
+					bag = map[string]any{}
+					m.Presets[name] = bag
+				}
+				for k, v := range m.Knobs {
+					if _, ok := bag[k]; !ok {
+						bag[k] = v
+					}
+				}
+			}
+			m.Knobs = nil
+			changed = true
 		}
 		if changed {
 			if err := writeMeta(root, e.Name(), m); err != nil {
@@ -451,24 +486,27 @@ func Create(root, name, content string) error {
 }
 
 // CreateWithSource makes a new local tier-3 configuration from a template
-// source plus knob values (nil = the schema's defaults). This is what
+// source plus initial values (nil = the schema's defaults). This is what
 // creating from a catalog entry does: the source is COPIED in, immediately
 // the user's own — no provenance, nothing special about it afterward.
-func CreateWithSource(root, name, src string, knobs map[string]any) error {
-	return createSource(root, name, src, knobs, Meta{})
+func CreateWithSource(root, name, src string, values map[string]any) error {
+	return createSource(root, name, src, values, Meta{})
 }
 
-// createSource parses, normalizes knobs, and renders BEFORE creating any
-// directory, so a bad source or unsatisfiable knobs leave nothing behind.
-// Knobs are strict here (an unknown field is a 400 naming it — they are
-// fresh, a typo deserves an answer); only SAVES over stored knobs prune.
-// m carries provenance (remote URL / pristine hash) from the caller.
-func createSource(root, name, src string, knobs map[string]any, m Meta) error {
+// createSource parses, normalizes the initial values, and renders BEFORE
+// creating any directory, so a bad source or unsatisfiable values leave
+// nothing behind. Values are strict here (an unknown field is a 400 naming
+// it — they are fresh, a typo deserves an answer); only SAVES over stored
+// bags prune. The normalized bag seeds the fresh default preset — a new
+// tier-3 config's one preset IS its schema defaults plus whatever the
+// caller filled in. m carries provenance (remote URL / pristine hash) from
+// the caller.
+func createSource(root, name, src string, values map[string]any, m Meta) error {
 	t, err := catalog.ParseSource(src)
 	if err != nil {
 		return err
 	}
-	norm, err := t.NormalizeKnobs(knobs)
+	norm, err := t.NormalizeBag(values)
 	if err != nil {
 		return err
 	}
@@ -485,8 +523,9 @@ func createSource(root, name, src string, knobs map[string]any, m Meta) error {
 	if err := writeYAMLFile(root, name, rendered); err != nil {
 		return err
 	}
-	m.Knobs = norm
-	return writeMeta(root, name, withDefaultPreset(m))
+	m = withDefaultPreset(m)
+	m.Presets[m.ActivePreset] = norm
+	return writeMeta(root, name, m)
 }
 
 // CreateFromURL fetches yaml from url and creates a new remote configuration,
@@ -541,7 +580,7 @@ func CreateFromURL(root, name, url string, fetch Fetch) error {
 	}))
 }
 
-// Copy duplicates src's YAML, template source (with its knobs), and presets
+// Copy duplicates src's YAML, template source, and presets (bags and all)
 // into a new local configuration dst; provenance (remote URL / pristine
 // hash) is dropped.
 func Copy(root, src, dst string) error {
@@ -567,7 +606,7 @@ func Copy(root, src, dst string) error {
 		return err
 	}
 	m := Meta{
-		Presets:      make(map[string]map[string]string, len(srcMeta.Presets)),
+		Presets:      make(map[string]map[string]any, len(srcMeta.Presets)),
 		ActivePreset: srcMeta.ActivePreset,
 	}
 	for name, kv := range srcMeta.Presets {
@@ -577,7 +616,6 @@ func Copy(root, src, dst string) error {
 		if err := state.WriteFileAtomic(SourcePath(root, dst), []byte(tmpl), 0o600); err != nil {
 			return err
 		}
-		m.Knobs = srcMeta.Knobs
 	}
 	return writeMeta(root, dst, withDefaultPreset(m))
 }
@@ -611,9 +649,10 @@ func WriteYAML(root, name, yaml string) error {
 	return clearSource(root, name)
 }
 
-// clearSource removes a configuration's template source and knobs, if any —
-// the tier-3 → plain demotion shared by WriteYAML, Reset, and a sync whose
-// remote turned plain.
+// clearSource removes a configuration's template source and any stray
+// options-era knobs — the tier-3 → plain demotion shared by WriteYAML,
+// Reset, and a sync whose remote turned plain. Preset bags stay: they are
+// the user's values, and deleting a source must never delete a secret.
 func clearSource(root, name string) error {
 	if err := os.Remove(SourcePath(root, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -629,15 +668,14 @@ func clearSource(root, name string) error {
 	return writeMeta(root, name, m)
 }
 
-// WriteSource stores a tier-3 configuration's pair: the source, the
-// rendered yaml, and the knobs it was rendered with. The caller (app) has
-// already parsed, rendered, and decided about collector validation; this is
+// WriteSource stores a tier-3 configuration's pair: the source and the
+// yaml rendered from it. The caller (app) has already parsed, rendered
+// with a preset's bag, and decided about collector validation; this is
 // only the write, with its failure atomicity: each file lands via
 // temp+rename, and a failure after the source landed puts the prior source
 // back — a config never holds a source its rendered yaml doesn't derive
-// from. The pristine hash is untouched (edit detection is sync's, not
-// ours).
-func WriteSource(root, name, src, rendered string, knobs map[string]any) error {
+// from. Meta (presets, pristine hash) is untouched.
+func WriteSource(root, name, src, rendered string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
@@ -645,35 +683,32 @@ func WriteSource(root, name, src, rendered string, knobs map[string]any) error {
 		return userErrf("config %q not found", name)
 	}
 	prevSrc, hadSrc := readSource(root, name)
-	prevYAML, err := readYAML(root, name)
-	if err != nil {
+	if err := state.WriteFileAtomic(SourcePath(root, name), []byte(src), 0o600); err != nil {
 		return err
 	}
-	m, err := readMeta(root, name)
-	if err != nil {
-		return err
-	}
-	restoreSrc := func() {
+	if err := writeYAMLFile(root, name, rendered); err != nil {
 		if hadSrc {
 			_ = state.WriteFileAtomic(SourcePath(root, name), []byte(prevSrc), 0o600)
 		} else {
 			_ = os.Remove(SourcePath(root, name))
 		}
-	}
-	if err := state.WriteFileAtomic(SourcePath(root, name), []byte(src), 0o600); err != nil {
-		return err
-	}
-	if err := writeYAMLFile(root, name, rendered); err != nil {
-		restoreSrc()
-		return err
-	}
-	m.Knobs = knobs
-	if err := writeMeta(root, name, m); err != nil {
-		restoreSrc()
-		_ = writeYAMLFile(root, name, prevYAML)
 		return err
 	}
 	return nil
+}
+
+// WriteRendered overwrites a tier-3 configuration's DERIVED config.yaml —
+// what activation regenerates from the selected preset's bag — leaving the
+// source and meta untouched. Unlike WriteYAML this is no demotion: the
+// yaml is output, not the config.
+func WriteRendered(root, name, rendered string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	if !exists(root, name) {
+		return userErrf("config %q not found", name)
+	}
+	return writeYAMLFile(root, name, rendered)
 }
 
 // WriteMeta overwrites a configuration's meta.json.
@@ -700,29 +735,28 @@ func refetch(root, name string, fetch Fetch) error {
 		return state.BadRequest(err) // the URL is the user's; a log tail says nothing about it
 	}
 	body := string(content)
-	// A tier-3 remote syncs its SOURCE: the local knobs are reconciled with
-	// the fetched schema (removed fields pruned, new ones defaulted) and the
-	// pair re-rendered. Render trouble aborts before anything is written.
+	// A tier-3 remote syncs its SOURCE: every preset's bag is reconciled
+	// with the fetched schema (removed fields pruned, new defaulted ones
+	// filled — per preset), and the yaml re-rendered from the ACTIVE
+	// preset's bag. Render trouble (a schema change the active bag cannot
+	// satisfy) aborts before anything is written.
 	if catalog.IsSource(body) {
 		t, err := catalog.ParseSource(body)
 		if err != nil {
 			return err
 		}
-		norm, err := t.NormalizeKnobs(t.PruneUnknown(m.Knobs))
+		m = withDefaultPreset(m)
+		for pname, bag := range m.Presets {
+			m.Presets[pname] = t.Reconcile(bag)
+		}
+		rendered, err := t.Render(t.PruneUnknown(m.Presets[m.ActivePreset]), StorageDir(root))
 		if err != nil {
 			return err
 		}
-		rendered, err := t.Render(norm, StorageDir(root))
-		if err != nil {
+		if err := WriteSource(root, name, body, rendered); err != nil {
 			return err
 		}
-		if err := WriteSource(root, name, body, rendered, norm); err != nil {
-			return err
-		}
-		m, err = readMeta(root, name) // WriteSource rewrote knobs
-		if err != nil {
-			return err
-		}
+		m.Knobs = nil
 		m.PristineSHA256 = hashOf(body)
 		return writeMeta(root, name, m)
 	}
@@ -847,9 +881,11 @@ func validateVarKey(key string) error {
 	return nil
 }
 
-// SetVar sets a key/value pair in a preset, creating the preset on first
-// write.
-func SetVar(root, name, preset, key, value string) error {
+// SetVar sets a key/value pair in a preset's bag, creating the preset on
+// first write. The value is typed: a plain string for tier-2 env values,
+// whatever the schema says for a tier-3 field (app parses; this is only
+// the store write).
+func SetVar(root, name, preset, key string, value any) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
@@ -867,18 +903,18 @@ func SetVar(root, name, preset, key, value string) error {
 		return userErrf("config %q not found", name)
 	}
 	if m.Presets == nil {
-		m.Presets = map[string]map[string]string{}
+		m.Presets = map[string]map[string]any{}
 	}
 	if m.Presets[preset] == nil {
-		m.Presets[preset] = map[string]string{}
+		m.Presets[preset] = map[string]any{}
 	}
 	m.Presets[preset][key] = value
 	return writeMeta(root, name, m)
 }
 
-// WritePreset creates or replaces a preset's entire contents (the preset
-// need not already exist).
-func WritePreset(root, name, preset string, values map[string]string) error {
+// WritePreset creates or replaces a preset's entire bag (the preset need
+// not already exist).
+func WritePreset(root, name, preset string, values map[string]any) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
@@ -898,7 +934,7 @@ func WritePreset(root, name, preset string, values map[string]string) error {
 		return userErrf("config %q not found", name)
 	}
 	if m.Presets == nil {
-		m.Presets = map[string]map[string]string{}
+		m.Presets = map[string]map[string]any{}
 	}
 	m.Presets[preset] = maps.Clone(values)
 	return writeMeta(root, name, m)

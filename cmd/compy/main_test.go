@@ -172,6 +172,49 @@ func TestRunPresetsSetAndVars(t *testing.T) {
 	}
 }
 
+// TestRunPresetsSetTypedTier3: `presets set` on a templated config parses
+// values per the schema — toggles from true/false, the repeat group from a
+// JSON array — and `vars` lists schema fields with secrets shown as (set),
+// never the value.
+func TestRunPresetsSetTypedTier3(t *testing.T) {
+	cliSetup(t, "")
+	if err := run([]string{"status"}); err != nil { // materialize the state dir
+		t.Fatal(err)
+	}
+	cliFakeDistro(t)
+	knobs := filepath.Join(t.TempDir(), "knobs.json")
+	if err := os.WriteFile(knobs, []byte(`{"backends": [{"name": "hc", "endpoint": "https://hc.example", "auth_header": "x-team"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"config", "create", "t3", "--template", "custom-endpoints", "--knobs", knobs}); err != nil {
+		t.Fatalf("config create --template: %v", err)
+	}
+
+	if err := run([]string{"presets", "set", "t3", "default", "debug_tee=true"}); err != nil {
+		t.Fatalf("presets set toggle: %v", err)
+	}
+	if err := run([]string{"presets", "set", "t3", "default", "debug_tee=maybe"}); err == nil || !strings.Contains(err.Error(), "toggle") {
+		t.Errorf("bad toggle value = %v, want the toggle guidance", err)
+	}
+	if err := run([]string{"presets", "set", "t3", "default",
+		`backends=[{"name": "hc", "endpoint": "https://hc.example", "auth_header": "x-team", "api_key": "sup3r"}]`}); err != nil {
+		t.Fatalf("presets set backends JSON: %v", err)
+	}
+
+	out, err := captureStdout(t, func() error { return run([]string{"vars", "t3"}) })
+	if err != nil {
+		t.Fatalf("vars: %v", err)
+	}
+	for _, want := range []string{"FIELD", "debug_tee", "true", "backends[0].api_key", "(set)", "backends[0].endpoint", "https://hc.example"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("vars output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "sup3r") {
+		t.Errorf("vars printed a secret value:\n%s", out)
+	}
+}
+
 func TestRunSettingsShowAndSet(t *testing.T) {
 	cliSetup(t, "")
 	out, err := captureStdout(t, func() error { return run([]string{"settings"}) })

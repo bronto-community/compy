@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -72,16 +73,18 @@ func TestCreateFromCatalog(t *testing.T) {
 	if strings.Contains(yaml, "{{") {
 		t.Errorf("unrendered template syntax leaked:\n%s", yaml)
 	}
-	// Normalized knobs recorded, secrets excluded, defaults filled.
-	row := info.Meta.Knobs["backends"].([]any)[0].(map[string]any)
-	if _, has := row["api_key"]; has {
-		t.Error("secret recorded in knobs")
+	// The normalized values seed the fresh default preset (Amendment 4:
+	// presets own everything), defaults filled, and nothing lands in knobs.
+	if info.Meta.Knobs != nil {
+		t.Errorf("options-era knobs written: %v", info.Meta.Knobs)
 	}
+	bag, ok := info.Meta.Presets[cfgstore.DefaultPreset]
+	if !ok {
+		t.Fatalf("no default preset: %v", info.Meta.Presets)
+	}
+	row := bag["backends"].([]any)[0].(map[string]any)
 	if row["temporality"] != "as-is" {
-		t.Errorf("knob defaults not normalized into meta: %v", row)
-	}
-	if _, ok := info.Meta.Presets[cfgstore.DefaultPreset]; !ok {
-		t.Errorf("no default preset: %v", info.Meta.Presets)
+		t.Errorf("defaults not normalized into the preset bag: %v", row)
 	}
 
 	// Caller mistakes are BadRequest: unknown template, taken name, bad
@@ -99,10 +102,11 @@ func TestCreateFromCatalog(t *testing.T) {
 }
 
 // TestWriteConfigSourcePipeline is the save-pipeline matrix over a
-// hand-written (pasted) tier-3 config: a schema edit re-derives the knobs
-// (removed pruned, new defaulted), a knob-only save re-renders over the
-// stored source, and the entry-path judgments hold (plain yaml refused on
-// the source route, front matter refused... routed on the yaml route).
+// hand-written (pasted) tier-3 config: value saves go through the preset
+// pipeline and re-render the derived yaml; a schema edit reconciles every
+// preset's bag (removed pruned, new defaulted); and the entry-path
+// judgments hold (plain yaml refused on the source route, an empty source
+// refused — values belong to the preset routes).
 func TestWriteConfigSourcePipeline(t *testing.T) {
 	setup(t, "")
 	fakeDistro(t, "exit 0")
@@ -118,19 +122,24 @@ func TestWriteConfigSourcePipeline(t *testing.T) {
 		t.Fatal("pasted source not detected as tier 3")
 	}
 
-	// Knob-only save: empty source, explicit knobs.
-	if _, err := a.WriteConfigSource("tpl", "", map[string]any{"greeting": "hey"}, true); err != nil {
+	// A value save is a preset write: the active preset's bag re-renders
+	// the derived yaml.
+	if _, err := a.ReplacePreset("tpl", "default", map[string]any{"greeting": "hey"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, yaml, _ := a.Config("tpl"); yaml != "a: hey\n" {
-		t.Errorf("knob save render = %q", yaml)
+		t.Errorf("preset save render = %q", yaml)
 	}
 
-	// Source edit adds a field: stored knobs carry over, the new field
-	// takes its default.
+	// Source edit adds a field: stored bags carry over, the new field takes
+	// its default — in every preset (a second one proves the per-preset
+	// reconcile).
+	if _, err := a.ReplacePreset("tpl", "other", map[string]any{"greeting": "yo"}, true); err != nil {
+		t.Fatal(err)
+	}
 	src2 := srcWith(`{"name": "loud", "type": "toggle", "label": "L", "default": false}`,
 		"a: {{.greeting}}{{if .loud}}!{{end}}")
-	if _, err := a.WriteConfigSource("tpl", src2, nil, true); err != nil {
+	if _, err := a.WriteConfigSource("tpl", src2, true); err != nil {
 		t.Fatal(err)
 	}
 	info, yaml, err := a.Config("tpl")
@@ -140,41 +149,43 @@ func TestWriteConfigSourcePipeline(t *testing.T) {
 	if yaml != "a: hey\n" {
 		t.Errorf("schema-edit render = %q, want the stored greeting kept", yaml)
 	}
-	if info.Meta.Knobs["loud"] != false {
-		t.Errorf("new field not defaulted into knobs: %v", info.Meta.Knobs)
+	for _, preset := range []string{"default", "other"} {
+		if info.Meta.Presets[preset]["loud"] != false {
+			t.Errorf("%s: new field not defaulted into the bag: %v", preset, info.Meta.Presets[preset])
+		}
 	}
 
-	// Both dirty in one call: source first, then knobs.
-	if _, err := a.WriteConfigSource("tpl", src2, map[string]any{"greeting": "hey", "loud": true}, true); err != nil {
+	// A value flip through the preset route changes the render.
+	if _, err := a.ReplacePreset("tpl", "default", map[string]any{"greeting": "hey", "loud": true}, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, yaml, _ := a.Config("tpl"); yaml != "a: hey!\n" {
-		t.Errorf("both-dirty render = %q", yaml)
+		t.Errorf("value-flip render = %q", yaml)
 	}
 
-	// Source edit removes the field: the stored knob is pruned.
+	// Source edit removes the field: the stored value is pruned from every
+	// bag.
 	src3 := srcWith("", "a: {{.greeting}}")
-	if _, err := a.WriteConfigSource("tpl", src3, nil, true); err != nil {
+	if _, err := a.WriteConfigSource("tpl", src3, true); err != nil {
 		t.Fatal(err)
 	}
 	info, _, err = a.Config("tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, has := info.Meta.Knobs["loud"]; has {
-		t.Errorf("removed field survived in knobs: %v", info.Meta.Knobs)
+	for _, preset := range []string{"default", "other"} {
+		if _, has := info.Meta.Presets[preset]["loud"]; has {
+			t.Errorf("%s: removed field survived in the bag: %v", preset, info.Meta.Presets[preset])
+		}
 	}
 
-	// Plain yaml has no business on the source route.
-	if _, err := a.WriteConfigSource("tpl", "plain: true\n", nil, true); !state.IsBadRequest(err) {
+	// Plain yaml has no business on the source route; neither has an empty
+	// source (values travel through the preset routes now).
+	if _, err := a.WriteConfigSource("tpl", "plain: true\n", true); !state.IsBadRequest(err) {
 		t.Errorf("plain yaml on the source route = %v, want BadRequest", err)
 	}
-	// A knob save needs a templated config.
-	if err := a.CreateConfig("plain", "a: 1\n"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.WriteConfigSource("plain", "", map[string]any{"x": true}, true); !state.IsBadRequest(err) {
-		t.Errorf("knob save on plain config = %v, want BadRequest", err)
+	if _, err := a.WriteConfigSource("tpl", "", true); !state.IsBadRequest(err) {
+		t.Errorf("empty source = %v, want BadRequest", err)
 	}
 }
 
@@ -196,7 +207,7 @@ func TestWriteConfigSourceValidateOrRestore(t *testing.T) {
 
 	fakeDistro(t, "exit 1") // the collector now rejects everything
 	src2 := srcWith("", "b: {{.greeting}}")
-	_, err = a.WriteConfigSource("tpl", src2, map[string]any{"greeting": "boom"}, true)
+	_, err = a.WriteConfigSource("tpl", src2, true)
 	if !state.IsBadRequest(err) {
 		t.Fatalf("rejected save = %v, want BadRequest", err)
 	}
@@ -211,17 +222,33 @@ func TestWriteConfigSourceValidateOrRestore(t *testing.T) {
 	if yaml != "a: hello\n" {
 		t.Errorf("rendered yaml not restored: %q", yaml)
 	}
-	if info.Meta.Knobs["greeting"] != "hello" {
-		t.Errorf("knobs not restored: %v", info.Meta.Knobs)
+	if info.Meta.Presets["default"]["greeting"] != "hello" {
+		t.Errorf("preset bags not restored: %v", info.Meta.Presets)
 	}
 
-	// The skip-validation escape stores anyway (the yaml route's twin).
-	stale, err := a.WriteConfigSource("tpl", src2, map[string]any{"greeting": "boom"}, false)
+	// A preset write the collector rejects stores NOTHING (validated in a
+	// scratch file before any write — no restore needed).
+	if _, err := a.ReplacePreset("tpl", "default", map[string]any{"greeting": "boom"}, true); !state.IsBadRequest(err) {
+		t.Fatalf("rejected preset write = %v, want BadRequest", err)
+	}
+	if info, _, _ := a.Config("tpl"); info.Meta.Presets["default"]["greeting"] != "hello" {
+		t.Errorf("rejected preset write changed the bag: %v", info.Meta.Presets)
+	}
+
+	// The skip-validation escapes store anyway (the yaml route's twin):
+	// first the source, then a preset value — the render tracks both.
+	stale, err := a.WriteConfigSource("tpl", src2, false)
 	if err != nil || stale {
 		t.Fatalf("skip-validate save = %v stale=%v", err, stale)
 	}
-	if _, yaml, _ := a.Config("tpl"); yaml != "b: boom\n" {
+	if _, yaml, _ := a.Config("tpl"); yaml != "b: hello\n" {
 		t.Errorf("skip-validate render = %q", yaml)
+	}
+	if stale, err := a.ReplacePreset("tpl", "default", map[string]any{"greeting": "boom"}, false); err != nil || stale {
+		t.Fatalf("skip-validate preset write = %v stale=%v", err, stale)
+	}
+	if _, yaml, _ := a.Config("tpl"); yaml != "b: boom\n" {
+		t.Errorf("skip-validate preset render = %q", yaml)
 	}
 
 	// Pasting a bad source over a PLAIN config restores the plain config.
@@ -235,7 +262,7 @@ func TestWriteConfigSourceValidateOrRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.HasTemplate || yaml != "keep: me\n" || info.Meta.Knobs != nil {
+	if info.HasTemplate || yaml != "keep: me\n" {
 		t.Errorf("plain config not restored: %+v yaml=%q", info, yaml)
 	}
 }
@@ -270,10 +297,10 @@ func TestPastedSourceRoundTrip(t *testing.T) {
 	}
 }
 
-// TestWriteConfigSourceReactivatesWhenActive: saving the active running
-// config's source re-applies it (the shared reactivateIf rule); an inactive
-// one never touches launchd.
-func TestWriteConfigSourceReactivatesWhenActive(t *testing.T) {
+// TestPresetWriteReactivatesWhenActive: a preset save on the active running
+// config re-applies it (the shared reactivateIf rule); an inactive one
+// never touches launchd.
+func TestPresetWriteReactivatesWhenActive(t *testing.T) {
 	calls := setup(t, "state = running")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
@@ -286,29 +313,29 @@ func TestWriteConfigSourceReactivatesWhenActive(t *testing.T) {
 	}
 
 	*calls = nil
-	if _, err := a.WriteConfigSource("tpl", "", map[string]any{"greeting": "hey"}, true); err != nil {
+	if _, err := a.ReplacePreset("tpl", "default", map[string]any{"greeting": "hey"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if called(*calls, "bootstrap") {
-		t.Errorf("saving an inactive config touched launchd: %v", *calls)
+		t.Errorf("saving an inactive config's preset touched launchd: %v", *calls)
 	}
 
 	if err := a.Activate("tpl", ""); err != nil {
 		t.Fatal(err)
 	}
 	*calls = nil
-	if _, err := a.WriteConfigSource("tpl", "", map[string]any{"greeting": "ho"}, true); err != nil {
+	if _, err := a.ReplacePreset("tpl", "default", map[string]any{"greeting": "ho"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if !called(*calls, "bootstrap") {
-		t.Errorf("saving the active running config did not re-apply: %v", *calls)
+		t.Errorf("saving the active running config's preset did not re-apply: %v", *calls)
 	}
 }
 
-// TestKnobsSurviveJSONRoundTrip: knobs read back from meta.json (JSON
-// shapes: []any, not []string) still normalize and render on a nil-knob
-// save from a fresh App.
-func TestKnobsSurviveJSONRoundTrip(t *testing.T) {
+// TestBagsSurviveJSONRoundTrip: preset bags read back from meta.json (JSON
+// shapes: []any, not []string) still normalize and render on a source
+// re-save from a fresh App.
+func TestBagsSurviveJSONRoundTrip(t *testing.T) {
 	setup(t, "")
 	fakeDistro(t, "exit 0")
 	a, err := app.New()
@@ -319,14 +346,110 @@ func TestKnobsSurviveJSONRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, before, _ := a.Config("mine")
+	src, _, err := a.ConfigSource("mine")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// A second App re-reads meta.json from disk — the round trip.
 	b := &app.App{Dir: a.Dir}
-	if _, err := b.WriteConfigSource("mine", "", nil, true); err != nil {
-		t.Fatalf("save from persisted knobs: %v", err)
+	if _, err := b.WriteConfigSource("mine", src, true); err != nil {
+		t.Fatalf("save from persisted bags: %v", err)
 	}
 	if _, after, _ := b.Config("mine"); after != before {
-		t.Error("nil-knobs save changed the yaml")
+		t.Error("same-source save changed the yaml")
 	}
+}
+
+// TestActivateRendersSelectedPreset is THE per-preset-structure proof:
+// activation renders the source with the SELECTED preset's bag, so two
+// presets with different backends produce different rendered pipelines —
+// switching presets switches structure.
+func TestActivateRendersSelectedPreset(t *testing.T) {
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateFromCatalog("mine", "custom-endpoints", catalogKnobs("hc")); err != nil {
+		t.Fatal(err)
+	}
+	two := map[string]any{"backends": []any{
+		map[string]any{"name": "hc", "endpoint": "https://hc.example",
+			"auth_header": "Authorization", "auth_scheme": "Bearer"},
+		map[string]any{"name": "bronto", "endpoint": "https://in.bronto.example",
+			"auth_header": "x-bronto-api-key", "temporality": "to-delta"},
+	}}
+	if _, err := a.ReplacePreset("mine", "two", two, true); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.Activate("mine", "default"); err != nil {
+		t.Fatal(err)
+	}
+	_, yaml, _ := a.Config("mine")
+	if !strings.Contains(yaml, "otlphttp/hc") || strings.Contains(yaml, "otlphttp/bronto") {
+		t.Errorf("default-preset render wrong:\n%s", yaml)
+	}
+
+	if err := a.Activate("mine", "two"); err != nil {
+		t.Fatal(err)
+	}
+	_, yaml, _ = a.Config("mine")
+	if !strings.Contains(yaml, "otlphttp/bronto") || !strings.Contains(yaml, "metrics/delta") {
+		t.Errorf("two-preset render did not switch structure:\n%s", yaml)
+	}
+
+	// And back: the derived yaml always tracks the activated preset.
+	if err := a.Activate("mine", "default"); err != nil {
+		t.Fatal(err)
+	}
+	if _, yaml, _ = a.Config("mine"); strings.Contains(yaml, "otlphttp/bronto") {
+		t.Errorf("switching back kept the other preset's structure:\n%s", yaml)
+	}
+}
+
+// TestActivationEnvSplitTier3 locks the env split: a tier-3 activation's
+// plist environment dict holds ONLY the preset's secret values (under
+// their derived env names) plus COMPY_* — non-secret values are baked into
+// the render and must NOT be exported.
+func TestActivationEnvSplitTier3(t *testing.T) {
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := catalogKnobs("hc")
+	values["backends"].([]any)[0].(map[string]any)["api_key"] = "s3cret-key"
+	values["debug_tee"] = true
+	if err := a.CreateFromCatalog("mine", "custom-endpoints", values); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("mine", ""); err != nil {
+		t.Fatal(err)
+	}
+	plist := readPlist(t)
+	if !strings.Contains(plist, "<key>HC_API_KEY</key><string>s3cret-key</string>") {
+		t.Errorf("secret missing from the plist env:\n%s", plist)
+	}
+	_, envDict, found := strings.Cut(plist, "<key>EnvironmentVariables</key><dict>")
+	if !found {
+		t.Fatalf("no EnvironmentVariables dict in plist:\n%s", plist)
+	}
+	envDict, _, _ = strings.Cut(envDict, "</dict>")
+	envKeys := regexp.MustCompile(`<key>([^<]+)</key>`).FindAllStringSubmatch(envDict, -1)
+	for _, m := range envKeys {
+		switch m[1] {
+		case "HC_API_KEY", "COMPY_GRPC_PORT", "COMPY_HTTP_PORT":
+		default:
+			t.Errorf("non-secret value exported as env: %s", m[1])
+		}
+	}
+	// The tier-2 rule is untouched: TestActivateHappyPath locks the full
+	// export for plain configs.
 }
 
 // TestTemplatesList: the catalog reaches the app surface.

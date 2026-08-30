@@ -47,10 +47,11 @@ func fakeAPI() API {
 		RenameConfig:            func(from, to string) error { return nil },
 		SyncAll:                 func() ([]string, error) { return nil, nil },
 
-		PutPreset:    func(name, preset string, values map[string]string) error { return nil },
-		DeletePreset: func(name, preset string) error { return nil },
-		UsePreset:    func(name, preset string) error { return nil },
-		RenamePreset: func(name, from, to string) error { return nil },
+		PutPreset:           func(name, preset string, values map[string]any) error { return nil },
+		PutPresetNoValidate: func(name, preset string, values map[string]any) (bool, error) { return false, nil },
+		DeletePreset:        func(name, preset string) error { return nil },
+		UsePreset:           func(name, preset string) error { return nil },
+		RenamePreset:        func(name, from, to string) error { return nil },
 
 		Distros:          func() (any, error) { return []map[string]any{}, nil },
 		AddDistro:        func(name, path string) (string, error) { return "", nil },
@@ -567,8 +568,8 @@ func TestValidateConfigRoute(t *testing.T) {
 func TestPutPresetRoute(t *testing.T) {
 	api := fakeAPI()
 	var gotName, gotPreset string
-	var gotValues map[string]string
-	api.PutPreset = func(name, preset string, values map[string]string) error {
+	var gotValues map[string]any
+	api.PutPreset = func(name, preset string, values map[string]any) error {
 		gotName, gotPreset, gotValues = name, preset, values
 		return nil
 	}
@@ -613,10 +614,40 @@ func TestPutPresetRoute(t *testing.T) {
 		t.Fatalf("malformed body status = %d, want 400", rec.Code)
 	}
 
-	api.PutPreset = func(name, preset string, values map[string]string) error { return errWithMessage("no such config") }
+	api.PutPreset = func(name, preset string, values map[string]any) error { return errWithMessage("no such config") }
 	rec = call(handlePutPreset(api), http.MethodPut, `{"values":{}}`, pv)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("closure error status = %d, want 500", rec.Code)
+	}
+}
+
+// TestPutPresetNoValidateRoute: ?validate=false routes to the NoValidate
+// closure, carries the typed bag through, and reports running_stale.
+func TestPutPresetNoValidateRoute(t *testing.T) {
+	api := fakeAPI()
+	var gotValues map[string]any
+	api.PutPresetNoValidate = func(name, preset string, values map[string]any) (bool, error) {
+		gotValues = values
+		return true, nil
+	}
+	req := httptest.NewRequest(http.MethodPut, "/api/configs/t3/presets/prod?validate=false",
+		strings.NewReader(`{"values":{"debug_tee":true,"backends":[{"name":"hc"}]}}`))
+	req.SetPathValue("name", "t3")
+	req.SetPathValue("preset", "prod")
+	rec := httptest.NewRecorder()
+	handlePutPreset(api)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]bool
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil || !body["ok"] || !body["running_stale"] {
+		t.Fatalf("body = %v, %v, want ok with running_stale", body, err)
+	}
+	if gotValues["debug_tee"] != true {
+		t.Fatalf("typed value lost: %v", gotValues)
+	}
+	if _, ok := gotValues["backends"].([]any); !ok {
+		t.Fatalf("repeat group lost its shape: %v", gotValues)
 	}
 }
 
@@ -1169,8 +1200,8 @@ func recordingAPI(rec *[]string, errFn func() error) API {
 			r("CreateFromCatalog")
 			return errFn()
 		},
-		PutConfigSource: func(name, source string, knobs map[string]any) error { r("PutConfigSource"); return errFn() },
-		PutConfigSourceNoValidate: func(name, source string, knobs map[string]any) (bool, error) {
+		PutConfigSource: func(name, source string) error { r("PutConfigSource"); return errFn() },
+		PutConfigSourceNoValidate: func(name, source string) (bool, error) {
 			r("PutConfigSourceNoValidate")
 			return false, errFn()
 		},
@@ -1191,7 +1222,11 @@ func recordingAPI(rec *[]string, errFn func() error) API {
 		RenameConfig:   func(from, to string) error { r("RenameConfig"); return errFn() },
 		SyncAll:        func() ([]string, error) { r("SyncAll"); return nil, errFn() },
 
-		PutPreset:    func(name, preset string, values map[string]string) error { r("PutPreset"); return errFn() },
+		PutPreset: func(name, preset string, values map[string]any) error { r("PutPreset"); return errFn() },
+		PutPresetNoValidate: func(name, preset string, values map[string]any) (bool, error) {
+			r("PutPresetNoValidate")
+			return false, errFn()
+		},
 		DeletePreset: func(name, preset string) error { r("DeletePreset"); return errFn() },
 		UsePreset:    func(name, preset string) error { r("UsePreset"); return errFn() },
 		RenamePreset: func(name, from, to string) error { r("RenamePreset"); return errFn() },

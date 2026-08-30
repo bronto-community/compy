@@ -62,9 +62,9 @@ func TestDigitsRetargetOnResort(t *testing.T) {
 	eqs := digitEquivalents(slots)
 
 	info := func(name string, presets ...string) cfgstore.Info {
-		i := cfgstore.Info{Name: name, Meta: cfgstore.Meta{Presets: map[string]map[string]string{}}}
+		i := cfgstore.Info{Name: name, Meta: cfgstore.Meta{Presets: map[string]map[string]any{}}}
 		for _, p := range presets {
-			i.Meta.Presets[p] = map[string]string{}
+			i.Meta.Presets[p] = map[string]any{}
 		}
 		return i
 	}

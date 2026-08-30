@@ -49,14 +49,16 @@ type API struct {
 	// config (tier 3, immediately user-editable).
 	Templates         func() (any, error)
 	CreateFromCatalog func(name, template string, knobs map[string]any) error
-	// PutConfigSource is the tier-3 save: source and/or knobs (empty source
-	// = knob-only save over the stored source; nil knobs = the stored ones;
-	// both = source first, then knobs). Renders, then validates against the
-	// collector with nothing-was-saved semantics on rejection. The
-	// NoValidate twin (?validate=false) skips validation and never touches
-	// the running collector, reporting running_stale like the yaml route's.
-	PutConfigSource           func(name, source string, knobs map[string]any) error
-	PutConfigSourceNoValidate func(name, source string, knobs map[string]any) (bool, error)
+	// PutConfigSource is the tier-3 source save: the source only — preset
+	// values travel through the preset routes (a preset owns ALL of a
+	// config's values). Every preset's bag is reconciled with the new
+	// schema, the yaml re-rendered from the active preset's bag, then the
+	// render validated against the collector with nothing-was-saved
+	// semantics on rejection. The NoValidate twin (?validate=false) skips
+	// the collector's verdict and never touches the running collector,
+	// reporting running_stale like the yaml route's.
+	PutConfigSource           func(name, source string) error
+	PutConfigSourceNoValidate func(name, source string) (bool, error)
 	GetConfig                 func(name string) (any, error) // {"info":..., "yaml":..., "source"?:...}
 	PutConfigYAML             func(name, yaml string) error
 	// PutConfigYAMLNoValidate writes without validating and never touches
@@ -74,10 +76,17 @@ type API struct {
 	RenameConfig            func(from, to string) error
 	SyncAll                 func() ([]string, error)
 
-	PutPreset    func(name, preset string, values map[string]string) error // create/replace a whole preset
-	DeletePreset func(name, preset string) error
-	UsePreset    func(name, preset string) error
-	RenamePreset func(name, from, to string) error
+	// PutPreset creates or replaces a whole preset's value bag. Tier-2
+	// values are env strings; a tier-3 bag holds the config's typed schema
+	// values (options, repeat groups, toggles, secrets) and is validated —
+	// schema and collector — before anything is stored. The NoValidate twin
+	// (?validate=false) skips the collector's verdict, never touches the
+	// running collector, and reports running_stale like the source route's.
+	PutPreset           func(name, preset string, values map[string]any) error
+	PutPresetNoValidate func(name, preset string, values map[string]any) (bool, error)
+	DeletePreset        func(name, preset string) error
+	UsePreset           func(name, preset string) error
+	RenamePreset        func(name, from, to string) error
 
 	Distros          func() (any, error)
 	AddDistro        func(name, path string) (string, error) // returns the override warning, "" if none
@@ -629,16 +638,13 @@ func handleCreateFromCatalog(api API) http.HandlerFunc {
 	}
 }
 
-// handlePutConfigSource's body is {"source"?, "knobs"?}: an absent source is
-// a knob-only save over the stored source, absent knobs re-render with the
-// stored ones (nil stays nil — the closure reads them back), and both is
-// one save with the source applied first. ?validate=false is the same
+// handlePutConfigSource's body is {"source"}: the source text only — preset
+// values are saved through the preset routes. ?validate=false is the same
 // escape hatch as the yaml route's, with the same running_stale answer.
 func handlePutConfigSource(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Source string         `json:"source"`
-			Knobs  map[string]any `json:"knobs"`
+			Source string `json:"source"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeBodyErr(w, err)
@@ -646,7 +652,7 @@ func handlePutConfigSource(api API) http.HandlerFunc {
 		}
 		name := r.PathValue("name")
 		if r.URL.Query().Get("validate") == "false" {
-			stale, err := api.PutConfigSourceNoValidate(name, body.Source, body.Knobs)
+			stale, err := api.PutConfigSourceNoValidate(name, body.Source)
 			if err != nil {
 				writeClosureErr(w, err)
 				return
@@ -654,7 +660,7 @@ func handlePutConfigSource(api API) http.HandlerFunc {
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true, "running_stale": stale})
 			return
 		}
-		if err := api.PutConfigSource(name, body.Source, body.Knobs); err != nil {
+		if err := api.PutConfigSource(name, body.Source); err != nil {
 			writeClosureErr(w, err)
 			return
 		}
@@ -815,7 +821,9 @@ func handleSyncAll(api API) http.HandlerFunc {
 }
 
 // handlePutPreset treats an absent or null "values" as {}: the closure never
-// sees a nil map.
+// sees a nil map. ?validate=false is the tier-3 escape hatch (a tier-2
+// preset write never asked the collector in the first place), with the same
+// running_stale answer as the source route's.
 func handlePutPreset(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		preset := r.PathValue("preset")
@@ -824,14 +832,23 @@ func handlePutPreset(api API) http.HandlerFunc {
 			return
 		}
 		var body struct {
-			Values map[string]string `json:"values"`
+			Values map[string]any `json:"values"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeBodyErr(w, err)
 			return
 		}
 		if body.Values == nil {
-			body.Values = map[string]string{}
+			body.Values = map[string]any{}
+		}
+		if r.URL.Query().Get("validate") == "false" {
+			stale, err := api.PutPresetNoValidate(r.PathValue("name"), preset, body.Values)
+			if err != nil {
+				writeClosureErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true, "running_stale": stale})
+			return
 		}
 		if err := api.PutPreset(r.PathValue("name"), preset, body.Values); err != nil {
 			writeClosureErr(w, err)

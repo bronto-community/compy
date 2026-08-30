@@ -45,9 +45,9 @@ func TestFlatRows(t *testing.T) {
 	info := func(name string, presets ...string) cfgstore.Info {
 		i := cfgstore.Info{Name: name}
 		if len(presets) > 0 {
-			i.Meta.Presets = map[string]map[string]string{}
+			i.Meta.Presets = map[string]map[string]any{}
 			for _, p := range presets {
-				i.Meta.Presets[p] = map[string]string{}
+				i.Meta.Presets[p] = map[string]any{}
 			}
 		}
 		return i

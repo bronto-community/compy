@@ -44,8 +44,10 @@ type ceData struct {
 
 // envVarFor derives the secret's env var name from a backend name:
 // "my-backend" → "MY_BACKEND_API_KEY" (dashes are not legal in env names).
+// It MUST agree with SecretEnv's naming for the row's api_key field — the
+// rendered ${env:} references and the activation environment share it.
 func envVarFor(name string) string {
-	return strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_API_KEY"
+	return secretEnvName(name, "api_key")
 }
 
 // vocabulary computes the render data from normalized knobs:

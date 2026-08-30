@@ -7,6 +7,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -169,20 +170,43 @@ func (a *App) ActiveConfig() (string, string, error) {
 	return s.ActiveConfig, info.Meta.ActivePreset, nil
 }
 
-// activationEnv is the LaunchAgent's EnvironmentVariables dict: the active
-// preset's values plus compy's port variables, which the preset may not override
-// (shipped configs bind their receivers to them).
+// activationEnv is the tier-2 LaunchAgent EnvironmentVariables dict: the
+// preset's string values plus compy's port variables, which the preset may
+// not override (shipped configs bind their receivers to them).
 //
 // Empty and whitespace-only preset values are omitted: the preset editor
 // saves a value for every referenced variable, empty included, and an
 // exported-but-empty VAR defeats the yaml's own `${env:VAR:-default}`
 // fallback (set-but-empty is "set" to the collector). Whitespace is not a
-// value, per cfgstore.MissingRequired's rule.
-func activationEnv(values map[string]string, s state.Settings) map[string]string {
+// value, per cfgstore.MissingRequired's rule. Non-string values (a demoted
+// tier-3 config's bag leftovers) are not env material and are skipped.
+func activationEnv(values map[string]any, s state.Settings) map[string]string {
 	env := map[string]string{}
 	for k, v := range values {
-		if strings.TrimSpace(v) != "" {
-			env[k] = v
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			env[k] = s
+		}
+	}
+	env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
+	env["COMPY_HTTP_PORT"] = strconv.Itoa(s.HTTPPort)
+	return env
+}
+
+// activationEnvFor computes the LaunchAgent environment for one preset,
+// per the Amendment 4 env split: a tier-3 preset exports ONLY its
+// secret-typed values (everything else is baked into the render) plus
+// compy's ports; a tier-2 preset exports every non-empty value, as always.
+// An unparseable source yields ports-only — activation fails at the render
+// with the real diagnostic before this could matter.
+func (a *App) activationEnvFor(info cfgstore.Info, preset string, s state.Settings) map[string]string {
+	values := info.Meta.Presets[preset]
+	if !info.HasTemplate {
+		return activationEnv(values, s)
+	}
+	env := map[string]string{}
+	if src, ok, _ := cfgstore.Source(a.Dir, info.Name); ok {
+		if t, err := catalog.ParseSource(src); err == nil {
+			env = t.SecretEnv(values)
 		}
 	}
 	env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
@@ -210,7 +234,7 @@ func (a *App) launch(name, preset string) error {
 	if err != nil {
 		return err
 	}
-	env := activationEnv(info.Meta.Presets[preset], s)
+	env := a.activationEnvFor(info, preset, s)
 	return launchd.Install(bin, []string{"--config", a.ConfigPath(name)}, a.LogPath(), env)
 }
 
@@ -253,7 +277,7 @@ func (a *App) restorePrevious() (string, error) {
 // persists the user's intent BEFORE re-activating, so a snapshot taken here
 // would capture the very edit that is about to fail and "restore" it.
 func (a *App) Activate(name, preset string) error {
-	info, _, err := cfgstore.Get(a.Dir, name)
+	info, prevYAML, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
 	}
@@ -271,13 +295,34 @@ func (a *App) Activate(name, preset string) error {
 	if err != nil {
 		return err
 	}
-	env := activationEnv(info.Meta.Presets[preset], s)
+	// Tier 3: activation = render(source, selected preset) → validate → run.
+	// The config.yaml is derived — regenerated here from THIS preset's bag,
+	// so switching presets may switch pipeline structure. A failed render is
+	// the preset's values being wrong: 400, nothing changed.
+	rerendered := false
+	if info.HasTemplate {
+		rendered, rerr := a.renderPreset(info, preset)
+		if rerr != nil {
+			return rerr
+		}
+		if rendered != prevYAML {
+			if err := cfgstore.WriteRendered(a.Dir, name, rendered); err != nil {
+				return err
+			}
+			rerendered = true
+		}
+	}
+	env := a.activationEnvFor(info, preset, s)
 	args := []string{"--config", a.ConfigPath(name)}
 
 	// A config the collector rejects is the user's YAML being wrong, not a
 	// fault of ours: 400, and the collector's own diagnostics are the whole
-	// answer (a log tail from the previous run would only bury them).
+	// answer (a log tail from the previous run would only bury them). A
+	// rejected activation changes nothing, so a fresh render goes back too.
 	if err := collector.Validate(bin, args, env); err != nil {
+		if rerendered {
+			_ = cfgstore.WriteRendered(a.Dir, name, prevYAML)
+		}
 		return state.BadRequest(err)
 	}
 
@@ -478,7 +523,7 @@ func (a *App) ValidateConfig(name string) error {
 	if err != nil {
 		return err
 	}
-	env := activationEnv(info.Meta.Presets[info.Meta.ActivePreset], s)
+	env := a.activationEnvFor(info, info.Meta.ActivePreset, s)
 	if err := collector.Validate(bin, []string{"--config", a.ConfigPath(name)}, env); err != nil {
 		return state.BadRequest(err)
 	}
@@ -569,7 +614,7 @@ func (a *App) DeleteConfig(name string) error {
 // config demotes it to plain (cfgstore.WriteYAML drops the source).
 func (a *App) WriteConfigYAML(name, yaml string) error {
 	if catalog.IsSource(yaml) {
-		_, err := a.WriteConfigSource(name, yaml, nil, true)
+		_, err := a.WriteConfigSource(name, yaml, true)
 		return err
 	}
 	if err := cfgstore.WriteYAML(a.Dir, name, yaml); err != nil {
@@ -588,7 +633,7 @@ func (a *App) WriteConfigYAML(name, yaml string) error {
 // activates. runningStale reports exactly that case, so callers can say so.
 func (a *App) WriteConfigYAMLNoValidate(name, yaml string) (runningStale bool, err error) {
 	if catalog.IsSource(yaml) {
-		return a.WriteConfigSource(name, yaml, nil, false)
+		return a.WriteConfigSource(name, yaml, false)
 	}
 	if err := cfgstore.WriteYAML(a.Dir, name, yaml); err != nil {
 		return false, err
@@ -697,14 +742,31 @@ func (a *App) SyncAll() ([]string, error) {
 	return synced, nil
 }
 
-// SetVar sets a variable in a preset (creating the preset), re-activating if that
-// preset is the running one.
-func (a *App) SetVar(name, preset, key, value string) error {
-	if err := cfgstore.SetVar(a.Dir, name, preset, key, value); err != nil {
-		return err
-	}
+// SetVar sets one value in a preset's bag (creating the preset),
+// re-activating if that preset is the running one. On a tier-3 config the
+// value is typed (the CLI parses per the schema) and the write runs the
+// full preset pipeline — normalize, prove the render, store. A preset
+// created here on a tier-3 config seeds from the config's active preset:
+// "same setup, different key" is what a new preset is for.
+func (a *App) SetVar(name, preset, key string, value any) error {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
+		return err
+	}
+	if info.HasTemplate {
+		bag, ok := info.Meta.Presets[preset]
+		if !ok {
+			bag = info.Meta.Presets[info.Meta.ActivePreset]
+		}
+		bag = maps.Clone(bag)
+		if bag == nil {
+			bag = map[string]any{}
+		}
+		bag[key] = value
+		_, err := a.writePresetBag(info, preset, bag, true)
+		return err
+	}
+	if err := cfgstore.SetVar(a.Dir, name, preset, key, value); err != nil {
 		return err
 	}
 	if info.Meta.ActivePreset == preset {
@@ -713,20 +775,106 @@ func (a *App) SetVar(name, preset, key, value string) error {
 	return nil
 }
 
-// ReplacePreset creates or replaces a preset's entire contents,
-// re-activating if the configuration is active and preset is its active_preset.
-func (a *App) ReplacePreset(name, preset string, values map[string]string) error {
-	if err := cfgstore.WritePreset(a.Dir, name, preset, values); err != nil {
-		return err
-	}
+// ReplacePreset creates or replaces a preset's entire bag, re-activating if
+// the configuration is active and preset is its active_preset. On a tier-3
+// config the bag is validated against the schema and — with validate true —
+// its render proven against the collector BEFORE anything is stored
+// (nothing-was-saved without needing a restore); validate=false is the
+// usual escape hatch, and runningStale reports when the active running
+// collector now runs a stale render. Tier-2 presets ignore validate: their
+// only check is the reactivation itself, as always.
+func (a *App) ReplacePreset(name, preset string, values map[string]any, validate bool) (runningStale bool, err error) {
 	info, _, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
-		return err
+		return false, err
+	}
+	if info.HasTemplate {
+		return a.writePresetBag(info, preset, values, validate)
+	}
+	if err := cfgstore.WritePreset(a.Dir, name, preset, values); err != nil {
+		return false, err
 	}
 	if info.Meta.ActivePreset == preset {
-		return a.reactivateIf(name)
+		return false, a.reactivateIf(name)
 	}
-	return nil
+	return false, nil
+}
+
+// writePresetBag is the tier-3 preset save pipeline: normalize the bag
+// strictly against the config's schema (a 400 names the field), optionally
+// prove the render against the collector — in a scratch file, with the
+// bag's own secrets in the environment, BEFORE anything is stored — then
+// write the bag, refresh the derived config.yaml when this is the active
+// preset, and re-apply if that preset is the running one.
+func (a *App) writePresetBag(info cfgstore.Info, preset string, bag map[string]any, validate bool) (runningStale bool, err error) {
+	src, ok, err := cfgstore.Source(a.Dir, info.Name)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, state.BadRequest(fmt.Errorf("config %q has no template source", info.Name))
+	}
+	t, err := catalog.ParseSource(src)
+	if err != nil {
+		return false, err
+	}
+	norm, err := t.NormalizeBag(t.PruneUnknown(bag))
+	if err != nil {
+		return false, err
+	}
+	rendered, err := t.Render(norm, cfgstore.StorageDir(a.Dir))
+	if err != nil {
+		return false, err
+	}
+	if validate {
+		bin, err := a.EnsureDistro("", nil)
+		if err != nil {
+			return false, err
+		}
+		s, err := state.LoadSettings()
+		if err != nil {
+			return false, err
+		}
+		env := t.SecretEnv(norm)
+		env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
+		env["COMPY_HTTP_PORT"] = strconv.Itoa(s.HTTPPort)
+		tmp, err := os.CreateTemp(a.Dir, "validate-*.yaml")
+		if err != nil {
+			return false, err
+		}
+		defer os.Remove(tmp.Name())
+		if _, err := tmp.WriteString(rendered); err != nil {
+			tmp.Close()
+			return false, err
+		}
+		if err := tmp.Close(); err != nil {
+			return false, err
+		}
+		if verr := collector.Validate(bin, []string{"--config", tmp.Name()}, env); verr != nil {
+			return false, state.BadRequest(verr)
+		}
+	}
+	if err := cfgstore.WritePreset(a.Dir, info.Name, preset, norm); err != nil {
+		return false, err
+	}
+	if preset != info.Meta.ActivePreset {
+		return false, nil
+	}
+	// The derived yaml tracks the active preset's render.
+	if err := cfgstore.WriteRendered(a.Dir, info.Name, rendered); err != nil {
+		return false, err
+	}
+	if !validate {
+		// An unvalidated bag must never be auto-applied; the running
+		// collector keeps its previous render until the user restarts.
+		if a.isActive(info.Name) {
+			if running, _ := launchd.Running(); running {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return false, a.reactivateIf(info.Name)
 }
 
 // UsePreset makes preset the configuration's active preset, re-activating if

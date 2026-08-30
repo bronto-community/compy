@@ -92,12 +92,12 @@ func (a *App) WebUIAPI() webui.API {
 		CreateFromURL:     a.CreateFromURL,
 		Templates:         func() (any, error) { return a.Templates() },
 		CreateFromCatalog: a.CreateFromCatalog,
-		PutConfigSource: func(name, source string, knobs map[string]any) error {
-			_, err := a.WriteConfigSource(name, source, knobs, true)
+		PutConfigSource: func(name, source string) error {
+			_, err := a.WriteConfigSource(name, source, true)
 			return err
 		},
-		PutConfigSourceNoValidate: func(name, source string, knobs map[string]any) (bool, error) {
-			return a.WriteConfigSource(name, source, knobs, false)
+		PutConfigSourceNoValidate: func(name, source string) (bool, error) {
+			return a.WriteConfigSource(name, source, false)
 		},
 		GetConfig:               a.configDetail,
 		PutConfigYAML:           a.WriteConfigYAML,
@@ -113,7 +113,13 @@ func (a *App) WebUIAPI() webui.API {
 		RenameConfig:            a.RenameConfig,
 		SyncAll:                 a.SyncAll,
 
-		PutPreset:    a.ReplacePreset,
+		PutPreset: func(name, preset string, values map[string]any) error {
+			_, err := a.ReplacePreset(name, preset, values, true)
+			return err
+		},
+		PutPresetNoValidate: func(name, preset string, values map[string]any) (bool, error) {
+			return a.ReplacePreset(name, preset, values, false)
+		},
 		DeletePreset: a.DeletePreset,
 		UsePreset:    a.UsePreset,
 		RenamePreset: a.RenamePreset,

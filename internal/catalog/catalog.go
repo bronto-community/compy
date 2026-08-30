@@ -238,10 +238,16 @@ func Get(name string) (Template, error) {
 	return Template{}, userErrf("unknown template %q", name)
 }
 
-// checkValue validates one knob value against its field, returning the
+// checkValue validates one bag value against its field, returning the
 // value in canonical Go shape (strings, bools, []string).
 func checkValue(f Field, v any) (any, error) {
 	switch f.Type {
+	case "secret":
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("%v is not a string", v)
+		}
+		return s, nil
 	case "slug":
 		s, ok := v.(string)
 		if !ok || !state.ValidBackendName(s) {
@@ -305,31 +311,29 @@ func checkValue(f Field, v any) (any, error) {
 	return nil, fmt.Errorf("internal: unvalidatable type %q", f.Type)
 }
 
-// normalizeFields validates knobs against fields and fills defaults,
+// normalizeFields validates bag values against fields and fills defaults,
 // returning the normalized map. where prefixes error messages
-// ("backends[1].endpoint: ..."). Secrets are refused: they have no value at
-// render time — their value lives in presets.
-func normalizeFields(where string, fields []Field, knobs map[string]any) (map[string]any, error) {
+// ("backends[1].endpoint: ..."). Secret fields are ordinary bag members
+// (Amendment 4: presets own everything) — validated as strings when present,
+// never defaulted or demanded here: a missing key is the pre-flight's
+// business (MissingRequired), not the render's.
+func normalizeFields(where string, fields []Field, bag map[string]any) (map[string]any, error) {
 	known := map[string]Field{}
 	for _, f := range fields {
 		known[f.Name] = f
 	}
-	for k := range knobs {
-		f, ok := known[k]
-		if !ok {
+	for k := range bag {
+		if _, ok := known[k]; !ok {
 			return nil, userErrf("%s%s: unknown field", where, k)
-		}
-		if f.Type == "secret" {
-			return nil, userErrf("%s%s: secrets are not template knobs; set the value in a preset", where, k)
 		}
 	}
 	out := map[string]any{}
 	for _, f := range fields {
-		if f.Type == "secret" {
-			continue
-		}
-		v, present := knobs[f.Name]
+		v, present := bag[f.Name]
 		if !present {
+			if f.Type == "secret" {
+				continue
+			}
 			if f.Default != nil {
 				v = f.Default
 			} else if f.Optional {
@@ -347,14 +351,16 @@ func normalizeFields(where string, fields []Field, knobs map[string]any) (map[st
 	return out, nil
 }
 
-// NormalizeKnobs validates knobs against the template's schema and returns
-// a defaults-filled copy — what gets rendered and what meta.json records.
-// All errors are BadRequest-marked and name the offending field.
-func (t Template) NormalizeKnobs(knobs map[string]any) (map[string]any, error) {
+// NormalizeBag validates a preset's value bag against the template's schema
+// and returns a defaults-filled copy — what a preset write stores and what
+// the render draws on. Secret values ride along as strings; every other
+// missing required field errors. All errors are BadRequest-marked and name
+// the offending field.
+func (t Template) NormalizeBag(bag map[string]any) (map[string]any, error) {
 	rest := map[string]any{}
 	var backends any
 	hasBackends := false
-	for k, v := range knobs {
+	for k, v := range bag {
 		if k == "backends" && t.Backends != nil {
 			backends, hasBackends = v, true
 			continue
@@ -407,16 +413,15 @@ func (t Template) NormalizeKnobs(knobs map[string]any) (map[string]any, error) {
 	return out, nil
 }
 
-// PruneUnknown drops knob keys the schema does not declare (secrets
-// included — they are never knobs), backend rows' unknown keys too. It is
-// how stored knobs survive a schema edit: removed fields vanish here, new
-// fields pick up their defaults in NormalizeKnobs. A nil map prunes to an
-// empty one.
-func (t Template) PruneUnknown(knobs map[string]any) map[string]any {
+// PruneUnknown drops bag keys the schema does not declare (secrets are
+// declared fields and stay), backend rows' unknown keys too. It is how
+// stored bags survive a schema edit: removed fields vanish here, new fields
+// pick up their defaults in NormalizeBag. A nil map prunes to an empty one.
+func (t Template) PruneUnknown(bag map[string]any) map[string]any {
 	keep := func(fields []Field, in map[string]any) map[string]any {
 		known := map[string]bool{}
 		for _, f := range fields {
-			known[f.Name] = f.Type != "secret"
+			known[f.Name] = true
 		}
 		out := map[string]any{}
 		for k, v := range in {
@@ -426,9 +431,9 @@ func (t Template) PruneUnknown(knobs map[string]any) map[string]any {
 		}
 		return out
 	}
-	out := keep(t.Fields, knobs)
+	out := keep(t.Fields, bag)
 	if t.Backends != nil {
-		if rows, ok := knobs["backends"].([]any); ok {
+		if rows, ok := bag["backends"].([]any); ok {
 			var pruned []any
 			for _, r := range rows {
 				if row, ok := r.(map[string]any); ok {
@@ -441,18 +446,152 @@ func (t Template) PruneUnknown(knobs map[string]any) map[string]any {
 	return out
 }
 
-// Render validates knobs and executes the template body. The data is the
-// normalized knob map merged with the computed vocabulary (Backends,
+// Reconcile adapts a stored preset bag to this (possibly newer) schema:
+// unknown fields are pruned, fields the schema defaults are filled in —
+// per preset, at every source save and sync. Lenient by design: a required
+// field with no default stays absent (that preset's next write or
+// activation answers strictly); reconciliation must never invent values or
+// fail over a preset that isn't the one running.
+func (t Template) Reconcile(bag map[string]any) map[string]any {
+	fill := func(fields []Field, in map[string]any) {
+		for _, f := range fields {
+			if _, ok := in[f.Name]; !ok && f.Default != nil {
+				in[f.Name] = f.Default
+			}
+		}
+	}
+	out := t.PruneUnknown(bag)
+	fill(t.Fields, out)
+	if t.Backends != nil {
+		if rows, ok := out["backends"].([]any); ok {
+			for _, r := range rows {
+				if row, ok := r.(map[string]any); ok {
+					fill(t.Backends.Fields, row)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// secretEnvName derives a secret's environment variable name from its bag
+// path parts: lowercase-dashed names become UPPER_SNAKE ("honeycomb",
+// "api_key" → "HONEYCOMB_API_KEY"). The render vocabulary and SecretEnv
+// share it, so the yaml's ${env:...} references and the activation
+// environment always agree on names.
+func secretEnvName(parts ...string) string {
+	return strings.ToUpper(strings.ReplaceAll(strings.Join(parts, "_"), "-", "_"))
+}
+
+// SecretEnv extracts a bag's secret values as environment variables — the
+// one invisible rule: `type: secret` values travel via the environment,
+// never baked into rendered yaml. A top-level secret field F maps to
+// UPPER(F); a repeat-row secret field F in the row named N maps to
+// UPPER(N_F). Empty and whitespace-only values are omitted, per the
+// activation-env rule (set-but-empty defeats the yaml's own fallbacks).
+func (t Template) SecretEnv(bag map[string]any) map[string]string {
+	env := map[string]string{}
+	add := func(name string, v any) {
+		if s, _ := v.(string); strings.TrimSpace(s) != "" {
+			env[name] = s
+		}
+	}
+	for _, f := range t.Fields {
+		if f.Type == "secret" {
+			add(secretEnvName(f.Name), bag[f.Name])
+		}
+	}
+	if t.Backends != nil {
+		rows, _ := bag["backends"].([]any)
+		for _, r := range rows {
+			row, _ := r.(map[string]any)
+			n, _ := row["name"].(string)
+			if n == "" {
+				continue
+			}
+			for _, f := range t.Backends.Fields {
+				if f.Type == "secret" {
+					add(secretEnvName(n, f.Name), row[f.Name])
+				}
+			}
+		}
+	}
+	return env
+}
+
+// MissingRequired names the schema-required fields a preset bag leaves
+// without a value — non-optional fields with no default (secrets never have
+// one) that are absent or blank — as form-keyed paths
+// ("backends[0].api_key"). The activation pre-flight's rule, generalized
+// from tier 2's yaml-vars version.
+func (t Template) MissingRequired(bag map[string]any) []string {
+	var missing []string
+	check := func(prefix string, fields []Field, in map[string]any) {
+		for _, f := range fields {
+			if f.Optional || f.Default != nil {
+				continue
+			}
+			if s, isStr := in[f.Name].(string); in[f.Name] == nil || (isStr && strings.TrimSpace(s) == "") {
+				missing = append(missing, prefix+f.Name)
+			}
+		}
+	}
+	check("", t.Fields, bag)
+	if t.Backends != nil {
+		rows, _ := bag["backends"].([]any)
+		for i, r := range rows {
+			row, _ := r.(map[string]any)
+			check(fmt.Sprintf("backends[%d].", i), t.Backends.Fields, row)
+		}
+	}
+	return missing
+}
+
+// stripSecrets removes secret-typed entries (top-level and per backend row)
+// from a bag copy: render inputs never include a secret, so a template body
+// that references one fails loudly instead of baking it.
+func (t Template) stripSecrets(bag map[string]any) map[string]any {
+	strip := func(fields []Field, in map[string]any) map[string]any {
+		out := maps.Clone(in)
+		for _, f := range fields {
+			if f.Type == "secret" {
+				delete(out, f.Name)
+			}
+		}
+		return out
+	}
+	out := strip(t.Fields, bag)
+	if t.Backends != nil {
+		if rows, ok := out["backends"].([]any); ok {
+			stripped := make([]any, 0, len(rows))
+			for _, r := range rows {
+				if row, ok := r.(map[string]any); ok {
+					stripped = append(stripped, strip(t.Backends.Fields, row))
+				} else {
+					stripped = append(stripped, r)
+				}
+			}
+			out["backends"] = stripped
+		}
+	}
+	return out
+}
+
+// Render validates a preset's bag and executes the template body. Secret
+// values are stripped from the inputs first (they travel via the
+// environment; the rendered yaml keeps its ${env:} references). The data is
+// the normalized bag merged with the computed vocabulary (Backends,
 // MetricsGroups, TracesProcs, …) every template body may draw on — user
 // templates included, so a copied catalog source keeps rendering after
 // edits. storageDir is where the offline queue's file_storage extension
 // keeps its state — the caller's state directory; it bakes in as a literal.
 // Execution errors are BadRequest-marked: the body is the user's file.
-func (t Template) Render(knobs map[string]any, storageDir string) (string, error) {
-	norm, err := t.NormalizeKnobs(knobs)
+func (t Template) Render(bag map[string]any, storageDir string) (string, error) {
+	norm, err := t.NormalizeBag(bag)
 	if err != nil {
 		return "", err
 	}
+	norm = t.stripSecrets(norm)
 	data := map[string]any{}
 	maps.Copy(data, norm)
 	maps.Copy(data, vocabulary(norm, storageDir))

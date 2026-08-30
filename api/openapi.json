@@ -128,17 +128,13 @@
               "pristine_sha256": { "type": "string" },
               "presets": {
                 "type": "object",
+                "description": "One value bag per preset — a preset holds ALL of a config's values. Tier 2: env strings keyed by variable name. Tier 3: typed schema values keyed by field name (plus \"backends\": an array of per-row objects), secrets included as strings.",
                 "additionalProperties": {
                   "type": "object",
-                  "additionalProperties": { "type": "string" }
+                  "additionalProperties": true
                 }
               },
-              "active_preset": { "type": "string" },
-              "knobs": {
-                "type": "object",
-                "description": "For a templated (tier-3) configuration: the normalized knob values of the last render (secrets excluded — they never have values at render time). The form seeds itself from these.",
-                "additionalProperties": true
-              }
+              "active_preset": { "type": "string" }
             }
           },
           "vars": {
@@ -276,7 +272,7 @@
       },
       "Knobs": {
         "type": "object",
-        "description": "Knob values keyed by field name (plus \"backends\": an array of per-row objects when the template has a repeat group). Values: string for slug/url/string/choice, boolean for toggle, array of strings for multi. Omitted fields take their schema default; a field with neither value nor default is a 400 naming the field. On create, an unknown field or a secret is a 400; on a source save, fields the schema no longer declares (secrets included) are pruned — that is how stored knobs survive a schema edit.",
+        "description": "Initial values for a config created from a catalog entry, keyed by field name (plus \"backends\": an array of per-row objects when the template has a repeat group); they seed the fresh default preset, which owns ALL of the config's values. Values: string for slug/url/string/choice/secret, boolean for toggle, array of strings for multi. Omitted fields take their schema default; a non-secret field with neither value nor default is a 400 naming the field, as is an unknown field.",
         "additionalProperties": true
       },
       "Ok": {
@@ -627,7 +623,7 @@
     },
     "/api/configs/from-catalog": {
       "post": {
-        "summary": "Create a configuration from a catalog starter: the entry's SOURCE is copied into the new config (tier 3, immediately user-editable) and rendered with the given knob values (defaults where omitted). Only secrets survive as ${env:...} references.",
+        "summary": "Create a configuration from a catalog starter: the entry's SOURCE is copied into the new config (tier 3, immediately user-editable) and rendered with the given initial values (defaults where omitted), which seed the fresh default preset. Only secrets survive as ${env:...} references.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -967,7 +963,7 @@
     },
     "/api/configs/{name}/source": {
       "put": {
-        "summary": "Save a tier-3 configuration's template source and/or knob values. Omitted source = knob-only save over the stored source; omitted knobs = re-render with the stored ones (removed fields pruned, new fields defaulted); both = one save, source applied first. The pipeline parses the schema, renders, stores source + rendered yaml + knobs, then validates the rendered config against the collector — a rejection restores everything (nothing was saved).",
+        "summary": "Save a tier-3 configuration's template source. The source ONLY — preset values travel through the preset routes (a preset owns ALL of a config's values). The pipeline parses the schema, reconciles every preset's bag with it (unknown fields pruned, newly defaulted fields filled — per preset), re-renders from the active preset's bag, stores source + rendered yaml + reconciled presets, then validates the rendered config against the collector — a rejection restores everything (nothing was saved).",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
           {
@@ -984,9 +980,9 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "source": { "type": "string", "description": "The full template source (schema front matter + \"---\" + body). Omit for a knob-only save." },
-                  "knobs": { "$ref": "#/components/schemas/Knobs" }
-                }
+                  "source": { "type": "string", "description": "The full template source (schema front matter + \"---\" + body)." }
+                },
+                "required": ["source"]
               }
             }
           }
@@ -1008,7 +1004,7 @@
             }
           },
           "400": {
-            "description": "Bad request — a knob-only save on a config with no template source, a source without front matter, a schema or body that does not parse, invalid knob values (the message names the offending field), or a rendered config the collector rejects (nothing was saved)",
+            "description": "Bad request — an empty source, a source without front matter, a schema or body that does not parse, a render the active preset's bag cannot satisfy (the message names the field), or a rendered config the collector rejects (nothing was saved)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "413": {
@@ -1111,10 +1107,17 @@
     },
     "/api/configs/{name}/presets/{preset}": {
       "put": {
-        "summary": "Create or replace a whole preset",
+        "summary": "Create or replace a whole preset's value bag. A preset owns ALL of a config's values: env strings for a tier-2 config; typed schema values (options, repeat groups, toggles, secrets) for a tier-3 one, validated against the schema (a 400 names the field) and proven against the collector BEFORE anything is stored (nothing-was-saved without a restore). Writing the config's active preset also refreshes the derived config.yaml and re-applies a running config.",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "preset", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "preset", "in": "path", "required": true, "schema": { "type": "string" } },
+          {
+            "name": "validate",
+            "in": "query",
+            "required": false,
+            "description": "Pass \"false\" to skip the collector's verdict on a tier-3 bag (schema validation still applies) — the same escape hatch as the source route's. The running collector is never touched; running_stale reports when the active running collector kept a stale render. A tier-2 preset write never asked the collector, so the flag changes nothing there.",
+            "schema": { "type": "string", "enum": ["false"] }
+          }
         ],
         "requestBody": {
           "content": {
@@ -1122,7 +1125,11 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "values": { "type": "object", "additionalProperties": { "type": "string" } }
+                  "values": {
+                    "type": "object",
+                    "description": "The preset's whole value bag. Tier 2: env strings keyed by variable name. Tier 3: schema values keyed by field name (plus \"backends\": an array of per-row objects); string for slug/url/string/choice/secret, boolean for toggle, array of strings for multi. Omitted fields take their schema default.",
+                    "additionalProperties": true
+                  }
                 },
                 "required": ["values"]
               }
@@ -1132,10 +1139,21 @@
         "responses": {
           "200": {
             "description": "OK",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "running_stale": { "type": "boolean", "description": "Only with validate=false: the active running collector kept the previous render of this config." }
+                  },
+                  "required": ["ok"]
+                }
+              }
+            }
           },
           "400": {
-            "description": "Malformed body",
+            "description": "Bad request — a malformed body, a tier-3 bag the schema rejects (the message names the field, e.g. backends[0].endpoint), or a render the collector rejects (nothing was saved)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "413": {

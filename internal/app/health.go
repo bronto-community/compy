@@ -72,7 +72,7 @@ func (a *App) activeMissing() []string {
 	if err != nil {
 		return nil
 	}
-	return cfgstore.MissingRequired(info, "")
+	return cfgstore.MissingRequired(a.Dir, info, "")
 }
 
 // DropDiagnosis is the tray's and the CLI's entry to the same rule Health

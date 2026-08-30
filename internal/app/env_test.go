@@ -11,10 +11,11 @@ import (
 // yaml's own ${env:VAR:-default} fallback.
 func TestActivationEnvOmitsEmptyValues(t *testing.T) {
 	s := state.Settings{GRPCPort: 14317, HTTPPort: 14318}
-	env := activationEnv(map[string]string{
+	env := activationEnv(map[string]any{
 		"EMPTY":      "",
 		"WHITESPACE": "  \t ",
 		"REAL":       "value",
+		"TYPED":      true, // a demoted tier-3 bag's leftover: not env material
 	}, s)
 
 	want := map[string]string{
@@ -30,7 +31,7 @@ func TestActivationEnvOmitsEmptyValues(t *testing.T) {
 			t.Errorf("env[%s] = %q, want %q", k, env[k], v)
 		}
 	}
-	for _, k := range []string{"EMPTY", "WHITESPACE"} {
+	for _, k := range []string{"EMPTY", "WHITESPACE", "TYPED"} {
 		if _, ok := env[k]; ok {
 			t.Errorf("env contains %s, want it omitted", k)
 		}
