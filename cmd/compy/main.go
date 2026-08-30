@@ -37,11 +37,14 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy version
   compy apply | validate | stop | start
   compy adopt-ports [--grpc N] [--http N]
+  compy templates
   compy config list
   compy config show|edit|delete|sync|resync|reset <name>
   compy config create <name> [--from-url URL]
     (otelbin.io share links import as local configs; quote fragment URLs:
      --from-url 'https://www.otelbin.io/#config=...')
+  compy config create <name> --template <template> --knobs <file.json>
+  compy config re-render <name> [--knobs <file.json>] [--discard-edits]
   compy config copy <src> <dst>
   compy config rename <old> <new>
   compy config sync-all
@@ -121,6 +124,18 @@ func run(args []string) error {
 		})
 	case "config":
 		return cmdConfig(rest)
+	case "templates":
+		return withApp(func(a *app.App) error {
+			templates, err := a.Templates()
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			for _, t := range templates {
+				fmt.Fprintf(w, "%s\t%s\n", t.Name, t.Description)
+			}
+			return w.Flush()
+		})
 	case "use":
 		if len(rest) < 1 || len(rest) > 2 {
 			return errors.New("use: need <config> [<preset>]")
@@ -374,14 +389,53 @@ func cmdConfig(args []string) error {
 		name := rest[0]
 		fs := flag.NewFlagSet("config create", flag.ContinueOnError)
 		fromURL := fs.String("from-url", "", "fetch the configuration from this URL (otelbin.io share links import as local configs)")
+		tmpl := fs.String("template", "", "render this catalog template (see `compy templates`)")
+		knobsFile := fs.String("knobs", "", "JSON file with the template's knob values")
 		if err := fs.Parse(rest[1:]); err != nil {
 			return err
+		}
+		if *fromURL != "" && *tmpl != "" {
+			return errors.New("config create: --from-url and --template are mutually exclusive")
+		}
+		if *knobsFile != "" && *tmpl == "" {
+			return errors.New("config create: --knobs needs --template")
 		}
 		return withApp(func(a *app.App) error {
 			if *fromURL != "" {
 				return a.CreateFromURL(name, *fromURL)
 			}
+			if *tmpl != "" {
+				knobs, err := readKnobs(*knobsFile)
+				if err != nil {
+					return err
+				}
+				return a.CreateFromTemplate(name, *tmpl, knobs)
+			}
 			return a.CreateConfig(name, blankConfig)
+		})
+	case "re-render":
+		if len(rest) == 0 {
+			return errors.New("config re-render: need a name")
+		}
+		name := rest[0]
+		fs := flag.NewFlagSet("config re-render", flag.ContinueOnError)
+		knobsFile := fs.String("knobs", "", "JSON file with new knob values (omit to re-render with the stored ones)")
+		discard := fs.Bool("discard-edits", false, "re-render even a hand-edited config, discarding the edits (like resync)")
+		if err := fs.Parse(rest[1:]); err != nil {
+			return err
+		}
+		return withApp(func(a *app.App) error {
+			var knobs map[string]any // nil = the stored knobs
+			if *knobsFile != "" {
+				var err error
+				if knobs, err = readKnobs(*knobsFile); err != nil {
+					return err
+				}
+			}
+			if *discard {
+				return a.ReRenderForce(name, knobs)
+			}
+			return a.ReRender(name, knobs)
 		})
 	case "copy":
 		if len(rest) != 2 {
@@ -437,6 +491,24 @@ func cmdConfig(args []string) error {
 	default:
 		return fmt.Errorf("config: unknown subcommand %q", sub)
 	}
+}
+
+// readKnobs parses a template knobs file: a JSON object of knob values
+// keyed by field name ("" means no file, i.e. defaults only). JSON is a
+// subset of YAML, so a .yaml file holding a JSON object works too.
+func readKnobs(path string) (map[string]any, error) {
+	knobs := map[string]any{}
+	if path == "" {
+		return knobs, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &knobs); err != nil {
+		return nil, fmt.Errorf("knobs file %s: not a JSON object: %v", path, err)
+	}
+	return knobs, nil
 }
 
 // blankConfig is the starting point for `compy config create` without a URL:

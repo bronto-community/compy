@@ -273,3 +273,88 @@ func TestErrorText(t *testing.T) {
 		t.Errorf("errorText(wrapped) = %q, want %q", got, want)
 	}
 }
+
+// TestRunTemplates: `compy templates` lists the catalog, and the
+// create/re-render commands drive the full CLI shape — knobs file parsed,
+// validation errors naming the field, --discard-edits mirroring resync.
+func TestRunTemplates(t *testing.T) {
+	cliSetup(t, "")
+
+	out, err := captureStdout(t, func() error { return run([]string{"templates"}) })
+	if err != nil {
+		t.Fatalf("templates: %v", err)
+	}
+	if !strings.Contains(out, "custom-endpoints") {
+		t.Errorf("templates output missing custom-endpoints:\n%s", out)
+	}
+
+	knobs := filepath.Join(t.TempDir(), "knobs.json")
+	if err := os.WriteFile(knobs, []byte(`{"backends":[{"name":"hc","endpoint":"https://api.hc.example","auth_header":"x-key"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureStdout(t, func() error {
+		return run([]string{"config", "create", "mine", "--template", "custom-endpoints", "--knobs", knobs})
+	}); err != nil {
+		t.Fatalf("config create --template: %v", err)
+	}
+	out, err = captureStdout(t, func() error { return run([]string{"config", "show", "mine"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "${env:HC_API_KEY}  # hc api key") {
+		t.Errorf("rendered config missing secret card:\n%s", out)
+	}
+
+	// A bad knobs file names the offending field.
+	badKnobs := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(badKnobs, []byte(`{"backends":[{"name":"hc","endpoint":"nope"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = captureStdout(t, func() error {
+		return run([]string{"config", "create", "other", "--template", "custom-endpoints", "--knobs", badKnobs})
+	})
+	if err == nil || !strings.Contains(err.Error(), "backends[0].endpoint") {
+		t.Errorf("bad knobs err = %v, want the field named", err)
+	}
+
+	// Re-render without --knobs reuses the stored ones; a hand-edited
+	// config needs --discard-edits, mirroring resync.
+	if _, err := captureStdout(t, func() error { return run([]string{"config", "re-render", "mine"}) }); err != nil {
+		t.Fatalf("re-render: %v", err)
+	}
+	dir := os.Getenv("COMPY_HOME")
+	yamlPath := filepath.Join(dir, "configs", "mine", "config.yaml")
+	data, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(yamlPath, append(data, []byte("# edited\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = captureStdout(t, func() error { return run([]string{"config", "re-render", "mine"}) })
+	if err == nil || !strings.Contains(err.Error(), "locally modified") {
+		t.Errorf("re-render of edited = %v, want the modified refusal", err)
+	}
+	if _, err := captureStdout(t, func() error {
+		return run([]string{"config", "re-render", "mine", "--discard-edits"})
+	}); err != nil {
+		t.Fatalf("re-render --discard-edits: %v", err)
+	}
+	if data, _ := os.ReadFile(yamlPath); strings.Contains(string(data), "# edited") {
+		t.Error("--discard-edits left the edits in place")
+	}
+
+	// Flag conflicts are refused up front.
+	_, err = captureStdout(t, func() error {
+		return run([]string{"config", "create", "x", "--template", "custom-endpoints", "--from-url", "https://x"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("--template + --from-url = %v", err)
+	}
+	_, err = captureStdout(t, func() error {
+		return run([]string{"config", "create", "x", "--knobs", knobs})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--knobs needs --template") {
+		t.Errorf("--knobs without --template = %v", err)
+	}
+}

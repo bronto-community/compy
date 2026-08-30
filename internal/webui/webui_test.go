@@ -1164,6 +1164,13 @@ func recordingAPI(rec *[]string, errFn func() error) API {
 		Configs:       func() (any, error) { r("Configs"); return []any{}, errFn() },
 		CreateConfig:  func(name, yaml string) error { r("CreateConfig"); return errFn() },
 		CreateFromURL: func(name, url string) error { r("CreateFromURL"); return errFn() },
+		Templates:     func() (any, error) { r("Templates"); return []any{}, errFn() },
+		CreateFromTemplate: func(name, template string, knobs map[string]any) error {
+			r("CreateFromTemplate")
+			return errFn()
+		},
+		ReRender:      func(name string, knobs map[string]any) error { r("ReRender"); return errFn() },
+		ReRenderForce: func(name string, knobs map[string]any) error { r("ReRenderForce"); return errFn() },
 		GetConfig:     func(name string) (any, error) { r("GetConfig"); return map[string]any{}, errFn() },
 		PutConfigYAML: func(name, yaml string) error { r("PutConfigYAML"); return errFn() },
 		PutConfigYAMLNoValidate: func(name, yaml string) (bool, error) {
@@ -1236,6 +1243,10 @@ func TestRouteTableSmoke(t *testing.T) {
 		"GET /api/configs":                                 {"Configs", false},
 		"POST /api/configs":                                {"CreateConfig", true},
 		"POST /api/configs/from-url":                       {"CreateFromURL", true},
+		"GET /api/templates":                               {"Templates", false},
+		"POST /api/configs/from-template":                  {"CreateFromTemplate", true},
+		"POST /api/configs/{name}/re-render":               {"ReRender", true},
+		"POST /api/configs/{name}/re-render-force":         {"ReRenderForce", true},
 		"GET /api/configs/{name}":                          {"GetConfig", false},
 		"PUT /api/configs/{name}/yaml":                     {"PutConfigYAML", false}, // raw text body, no JSON decode
 		"PUT /api/configs/{name}/meta":                     {"PutConfigMeta", true},

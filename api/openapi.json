@@ -118,7 +118,7 @@
         "type": "object",
         "properties": {
           "name": { "type": "string" },
-          "provenance": { "type": "string", "enum": ["shipped", "remote", "local"] },
+          "provenance": { "type": "string", "enum": ["shipped", "remote", "local", "template"] },
           "modified": { "type": "boolean" },
           "meta": {
             "type": "object",
@@ -132,7 +132,16 @@
                   "additionalProperties": { "type": "string" }
                 }
               },
-              "active_preset": { "type": "string" }
+              "active_preset": { "type": "string" },
+              "template": {
+                "type": "string",
+                "description": "For a template-born configuration: the catalog template it was rendered from. Absent otherwise."
+              },
+              "knobs": {
+                "type": "object",
+                "description": "For a template-born configuration: the normalized knob values of the last render (secrets excluded — they never have values at render time). The change-options form seeds itself from these.",
+                "additionalProperties": true
+              }
             }
           },
           "vars": {
@@ -214,6 +223,63 @@
           "error": { "type": "string" }
         },
         "required": ["status", "pct"]
+      },
+      "TemplateField": {
+        "type": "object",
+        "description": "One form input in a template schema. Array order IS form order.",
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["slug", "url", "string", "choice", "multi", "toggle", "secret"] },
+          "label": { "type": "string" },
+          "description": { "type": "string" },
+          "default": { "description": "String for slug/url/string/choice, boolean for toggle, array of strings for multi. A secret never has one. Absent means required (unless optional)." },
+          "options": { "type": "array", "items": { "type": "string" }, "description": "For choice/multi." },
+          "optional": { "type": "boolean" },
+          "section": { "type": "string", "description": "The section id this field renders under." },
+          "advanced": { "type": "boolean", "description": "Per-repeat-row disclosure: hidden behind \"more options\", always with a common-case-correct default." }
+        },
+        "required": ["name", "type", "label"]
+      },
+      "Template": {
+        "type": "object",
+        "description": "One catalog entry: enough schema for the creation form to render itself. A `secret` field takes no knob value — it renders as a ${env:...} reference whose value lives in presets.",
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "label": { "type": "string" },
+                "collapsed": { "type": "boolean", "description": "A collapsed section is safely ignorable: every field in it defaults to the common case." }
+              },
+              "required": ["id", "label"]
+            }
+          },
+          "fields": {
+            "type": "array",
+            "description": "Config-level fields, in form order.",
+            "items": { "$ref": "#/components/schemas/TemplateField" }
+          },
+          "backends": {
+            "type": "object",
+            "description": "The repeat group: min..max rows of fields. Knob shape: {\"backends\": [{...}, ...]}.",
+            "properties": {
+              "min": { "type": "integer" },
+              "max": { "type": "integer" },
+              "fields": { "type": "array", "items": { "$ref": "#/components/schemas/TemplateField" } }
+            },
+            "required": ["min", "max", "fields"]
+          }
+        },
+        "required": ["name", "description"]
+      },
+      "Knobs": {
+        "type": "object",
+        "description": "Knob values keyed by field name (plus \"backends\": an array of per-row objects when the template has a repeat group). Values: string for slug/url/string/choice, boolean for toggle, array of strings for multi. Omitted fields take their schema default; a field with neither value nor default is a 400 naming the field. Secrets are never knobs (400).",
+        "additionalProperties": true
       },
       "Ok": {
         "type": "object",
@@ -546,6 +612,59 @@
         }
       }
     },
+    "/api/templates": {
+      "get": {
+        "summary": "The config-template catalog: name, description, and the full schema the creation form renders itself from",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Template" } } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/from-template": {
+      "post": {
+        "summary": "Create a configuration by rendering a catalog template ONCE with the given knob values. Only secrets survive as ${env:...} references; meta records template + knobs for later re-renders.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "template": { "type": "string" },
+                  "knobs": { "$ref": "#/components/schemas/Knobs" }
+                },
+                "required": ["name", "template"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request — unknown template, invalid knob values (the message names the offending field), or a config name that is invalid or taken",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "Body too large",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
     "/api/configs/from-url": {
       "post": {
         "summary": "Create a configuration from a remote YAML URL",
@@ -839,6 +958,74 @@
           },
           "400": {
             "description": "Bad request \u2014 a caller mistake (invalid name, unknown configuration or preset, a configuration the collector rejects, a binary that isn't there)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/re-render": {
+      "post": {
+        "summary": "Re-render a template-born configuration with new knob values (the change-options action; the sync twin: a hand-edited config is refused). Presets are kept; the running configuration is re-applied.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "knobs": { "$ref": "#/components/schemas/Knobs" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request — not a template-born configuration, locally modified (use re-render-force to discard the edits), or invalid knob values (the message names the offending field)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/configs/{name}/re-render-force": {
+      "post": {
+        "summary": "Re-render a template-born configuration, discarding local hand edits (the resync twin). An omitted knobs body re-renders with the stored knob values.",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "knobs": { "$ref": "#/components/schemas/Knobs" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": {
+            "description": "Bad request — not a template-born configuration, or invalid knob values (the message names the offending field)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {
