@@ -2131,8 +2131,12 @@ function screenEditor() {
       value: dirty && keep != null ? keep : text,
       mode: "yaml", // v1: yaml highlighting for source too \u2014 schema is the JSON subset, the body is yaml-shaped
       lineNumbers: true, readOnly: !editable, lineWrapping: false,
-      // In the tier-3 scroller the pane is height:auto, so render everything.
-      viewportMargin: t3 ? Infinity : 20,
+      // Default viewportMargin: only the visible lines (plus a small
+      // margin) exist in the DOM. The tier-3 pane used to be height:auto +
+      // viewportMargin Infinity — a full render of a 2000-line source, the
+      // classic CM5 memory/stall hog (and what pushed the WKWebView over).
+      // Its scroller is now capped in CSS (.ed-scroll .CodeMirror-scroll)
+      // so CM scrolls itself and viewport rendering works on both tiers.
     });
     cmFor = info.name; cmRO = !editable; cmT3 = t3; cmBase = text;
     cmDirty = dirty;
@@ -3230,11 +3234,10 @@ function refreshBlocked() {
 }
 async function refresh() {
   if (refreshBlocked()) return;
-  // The editor screen holds a fully-rendered CodeMirror (viewportMargin
-  // Infinity on tier 3): rebuilding it costs a ~140ms main-thread stall on
-  // a 2000-line source, every 3 seconds, under a reader who saw nothing
-  // change. When the tick brought back an identical snapshot, only the
-  // sidebar re-renders (its own container — the screen DOM is untouched).
+  // Rebuilding the editor screen re-adopts and re-measures its CodeMirror —
+  // pointless under a reader who saw nothing change. When the tick brought
+  // back an identical snapshot, only the sidebar re-renders (its own
+  // container — the screen DOM is untouched).
   const before = S.screen === "editor" ? JSON.stringify([S.status, S.configs]) : null;
   try {
     await loadCore();
