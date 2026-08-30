@@ -147,6 +147,7 @@ const S = {
   unlocked: false, unlockAsk: false, yamlOpen: false,
   preset: null, reveal: {},
   saving: false, valErr: null, valOk: null,
+  valHead: "",             // the failure panel's headline — each save path says who rejected what
   valMissing: [],          // unset required vars explaining valErr — offers save-without-validating
   valExcerpt: "",          // ±3 rendered-yaml lines around the line valErr names ("" when it names none)
   valAnyway: false,        // tier-3 rejection: offer the ?validate=false escape
@@ -395,7 +396,7 @@ async function enterRoute() {
       S.unlocked = origin === "user" || t3;
       S.yamlOpen = origin === "user" || t3;
       S.unlockAsk = false;
-      S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false;
+      S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = "";
       S.renameNote = null; S.presetErr = null;
       S.preset = selectedPreset(info);
       buildEditorForm(info);
@@ -1887,10 +1888,10 @@ function screenEditor() {
     wrap.appendChild(el("div", { class: "valfail" + (S.valExcerpt ? " tall" : "") }, [
       el("div", { class: "bar2" }, [
         el("span", { class: "dot5", attrs: { style: "background: var(--err)" } }),
-        span("headline", "the collector rejected this config. nothing was saved."),
+        span("headline", S.valHead || "the collector rejected this config. nothing was saved."),
         el("span", { class: "grow" }),
         el("button", { class: "act", text: "copy", on: { click: () => copyText(S.valErr, "diagnostic copied") } }),
-        el("button", { class: "act", text: "dismiss", on: { click: () => { S.valErr = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; render(); } } }),
+        el("button", { class: "act", text: "dismiss", on: { click: () => { S.valErr = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = ""; render(); } } }),
       ]),
       // The failure is explained by variables that simply have no values
       // yet — "write the yaml first, fill values second" is a legitimate
@@ -2161,7 +2162,7 @@ async function saveYAML(info) {
   const next = cm.getValue();
   const prev = S.yaml;
   const prevSource = S.source; // non-null: this save demotes a templated config
-  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false;
+  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = "";
   clearError();
   render();
   const t0 = Date.now();
@@ -2220,7 +2221,7 @@ async function saveSource(info, withSource, withKnobs) {
   const body = {};
   if (withSource) body.source = cm.getValue();
   if (withKnobs) body.knobs = S.eform.knobs;
-  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false;
+  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = "";
   clearError();
   render();
   const t0 = Date.now();
@@ -2243,12 +2244,20 @@ async function saveSource(info, withSource, withKnobs) {
       S.eform.errs[fe.path] = fe.msg; // field-adjacent, same key space as the client checks
     } else {
       S.valErr = e.message || String(e);
+      // Honest headline: a source that doesn't PARSE was refused by the
+      // template engine, not the collector — and validate=false can't keep
+      // it either (the server never stores what it can't render), so the
+      // escape hatch is only offered when the source parses.
+      const parseFail = /^template (schema|body):/.test(S.valErr);
+      S.valHead = parseFail
+        ? "the template source doesn't parse. nothing was saved."
+        : "the rendered config was rejected. nothing was saved.";
       // The server validated the RENDER and put everything back, so the
       // stored render (S.yaml) is the closest thing to the rejected one —
       // its line numbers can drift by exactly the edit that failed;
       // rendered→source mapping is deferred (design note).
-      S.valExcerpt = excerptAround(S.yaml, errLineOf(S.valErr), 3);
-      S.valAnyway = true;
+      S.valExcerpt = parseFail ? "" : excerptAround(S.yaml, errLineOf(S.valErr), 3);
+      S.valAnyway = !parseFail;
     }
   }
   S.saving = false;
@@ -2267,7 +2276,7 @@ async function saveSourceAnyway(info) {
   if (paneDirty && isSourceText(cm.getValue())) body.source = cm.getValue();
   if (formDirty) body.knobs = S.eform.knobs;
   if (!body.source && !("knobs" in body)) return; // nothing left to keep
-  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false;
+  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = "";
   clearError();
   render();
   try {
@@ -2280,8 +2289,12 @@ async function saveSourceAnyway(info) {
       + (r && r.running_stale ? " the running collector keeps the previous version until then." : "");
   } catch (e) {
     S.valErr = e.message || String(e);
-    S.valExcerpt = excerptAround(S.yaml, errLineOf(S.valErr), 3);
-    S.valAnyway = true;
+    const parseFail = /^template (schema|body):/.test(S.valErr);
+    S.valHead = parseFail
+      ? "the template source doesn't parse. nothing was saved."
+      : "the rendered config was rejected. nothing was saved.";
+    S.valExcerpt = parseFail ? "" : excerptAround(S.yaml, errLineOf(S.valErr), 3);
+    S.valAnyway = !parseFail;
   }
   S.saving = false;
   render();
@@ -2295,7 +2308,7 @@ async function saveSourceAnyway(info) {
 async function saveAnyway(info) {
   if (S.saving || !cm) return;
   const next = cm.getValue();
-  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false;
+  S.saving = true; S.valErr = null; S.valOk = null; S.valMissing = []; S.valExcerpt = ""; S.valAnyway = false; S.valHead = "";
   clearError();
   render();
   try {
