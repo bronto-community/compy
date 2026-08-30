@@ -2704,7 +2704,7 @@ function logPane(stopped) {
 function entryRows(logs, l) {
   const m = el("span", { class: "m" });
   if (l.text) m.appendChild(span("", l.text));
-  if (l.attrs) for (const k in l.attrs) m.appendChild(kvPair(k, l.attrs[k]));
+  if (l.attrs) attrPairs(m, l.attrs);
   // The caller (service@…/file.go:123) is deliberately a row tooltip,
   // not an inline cell — it earns no space at this density.
   logs.appendChild(el("div", { class: "logline", title: l.caller || null }, [
@@ -2718,10 +2718,39 @@ function entryRows(logs, l) {
     // whitespace verbatim.
     const attrs = c.trimStart().startsWith("{") ? parseAttrs(c.trim()) : null;
     const cm = el("span", { class: "m" });
-    if (attrs) for (const k in attrs) cm.appendChild(kvPair(k, attrs[k]));
+    if (attrs) attrPairs(cm, attrs);
     else cm.textContent = c;
     logs.appendChild(el("div", { class: "logline cont" }, [span("t", ""), span("", ""), cm]));
   }
+}
+
+/* The attrs of one line, with the collector's self-telemetry boilerplate
+   (splitAttrs: the run-constant "resource" identity object plus
+   "otelcol.*" keys — repeated verbatim on every line, drowning the real
+   fields) folded behind a per-line "…" chip; clicking toggles the hidden
+   pairs inline, so the full line stays reachable (the copy button copies
+   raw regardless). Per-line and stateless, so recycled rows and the
+   sliding window render identically; the tick with no visible change
+   stays zero DOM operations. */
+function attrPairs(m, attrs) {
+  const { main, noise } = splitAttrs(attrs);
+  for (const k in main) m.appendChild(kvPair(k, main[k]));
+  const keys = Object.keys(noise);
+  if (!keys.length) return;
+  const hid = el("span", { class: "noise" });
+  for (const k of keys) hid.appendChild(kvPair(k, noise[k]));
+  m.appendChild(el("button", {
+    class: "kv more", text: "…",
+    title: "the collector's own attributes (" + keys.join(", ") + ") — the same on nearly every line. click to show.",
+    attrs: { "aria-expanded": "false", "aria-label": "toggle collector attributes" },
+    on: {
+      click: (e) => {
+        const open = m.classList.toggle("open");
+        e.currentTarget.setAttribute("aria-expanded", String(open));
+      },
+    },
+  }));
+  m.appendChild(hid);
 }
 
 /* The .logs element persists across renders (logDom) so the 3s refresh can

@@ -310,6 +310,27 @@ function parseAttrs(s) {
   return null;
 }
 
+/* splitAttrs: the collector staples its OWN telemetry identity onto every
+   zap line — a "resource" object ({service.instance.id, service.name,
+   service.version}, identical for the whole run) plus per-component
+   "otelcol.*" keys on component lines — and that boilerplate drowns the
+   actual fields ("resource logs": 2, "endpoint": …). Split an attrs object
+   into {main, noise}: noise is that self-telemetry (a "resource" key whose
+   value is an object, and any "otelcol."-prefixed key), main is everything
+   else. Stateless per line by design, so row recycling and the sliding
+   window never change how a given line renders; a line carrying neither
+   shape renders unchanged (noise empty). */
+function splitAttrs(attrs) {
+  const main = {}, noise = {};
+  for (const k in attrs) {
+    const v = attrs[k];
+    const selfRes = k === "resource" && v && typeof v === "object" && !Array.isArray(v);
+    if (selfRes || k.startsWith("otelcol.")) noise[k] = v;
+    else main[k] = v;
+  }
+  return { main, noise };
+}
+
 /* ── log pane scroll + incremental diff ───────────────────────────────
    atLogBottom: within the threshold of the end counts as pinned (tail
    mode); scrolling further up holds position across refreshes instead. */
@@ -454,7 +475,7 @@ if (typeof module !== "undefined") {
     fieldProblem, knobProblems, parseFieldErr,
     knownKnobPath, isSourceText, placeholderKnobs,
     errLineOf, excerptAround,
-    portsCompact, yamlLineOf, fmtCount, parseZapLine, parseAttrs,
+    portsCompact, yamlLineOf, fmtCount, parseZapLine, parseAttrs, splitAttrs,
     atLogBottom, logDiff, sameShown,
     distroState,
   };

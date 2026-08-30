@@ -740,6 +740,16 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 .logline .kv .k { color: var(--dim2); }
 /* continuation rows (debug-exporter dumps): no time/level, indented,
    dimmed, whitespace kept — visually subordinate to the entry above. */
+/* the collector's self-telemetry attrs (splitAttrs' noise) hide behind a
+   per-line "…" chip; .open (the chip's toggle) reveals them inline. */
+.logline .noise { display: none; }
+.logline .m.open .noise { display: inline; }
+.logline .kv.more {
+  background: none; border: 0; padding: 0 4px; font: inherit; line-height: inherit;
+  color: var(--dim2); cursor: pointer;
+}
+.logline .kv.more:hover { color: var(--text3); }
+.logline .m.open .kv.more { color: var(--text3); }
 .logline.cont { padding-top: 0; padding-bottom: 0; }
 .logline.cont .m { color: var(--dim2); padding-left: 14px; }
 .logline.cont .kv { margin-left: 0; margin-right: 12px; }

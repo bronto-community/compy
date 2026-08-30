@@ -124,6 +124,31 @@ test("parseZapLine recognises zap console lines", () => {
   assert.equal(H.parseZapLine("2026-08-28T09:15:04.000Z\tnotalevel\tmsg"), null);
 });
 
+test("splitAttrs folds the collector's self-telemetry away", () => {
+  // The shape every real zap line carries (captured from otelcol-compy
+  // 0.159.0): the run-constant resource identity plus per-component keys.
+  const res = { "service.instance.id": "b90c447f", "service.name": "otelcol-compy", "service.version": "0.159.0" };
+  const s = H.splitAttrs({
+    resource: res,
+    "otelcol.component.id": "debug", "otelcol.component.kind": "exporter", "otelcol.signal": "logs",
+    "resource logs": 1, "log records": 2,
+  });
+  assert.deepEqual(s.main, { "resource logs": 1, "log records": 2 });
+  assert.deepEqual(s.noise, {
+    resource: res,
+    "otelcol.component.id": "debug", "otelcol.component.kind": "exporter", "otelcol.signal": "logs",
+  });
+
+  // Degrades safely: no boilerplate → everything stays main, noise empty.
+  assert.deepEqual(H.splitAttrs({ endpoint: "127.0.0.1:24318", kind: "receiver" }),
+    { main: { endpoint: "127.0.0.1:24318", kind: "receiver" }, noise: {} });
+
+  // "resource" only counts as boilerplate when it is the identity OBJECT;
+  // a string or array value under that key is somebody's data.
+  assert.deepEqual(H.splitAttrs({ resource: "mine" }), { main: { resource: "mine" }, noise: {} });
+  assert.deepEqual(H.splitAttrs({ resource: [1] }), { main: { resource: [1] }, noise: {} });
+});
+
 test("parseAttrs accepts only JSON objects", () => {
   assert.deepEqual(H.parseAttrs('{"a": 1}'), { a: 1 });
   assert.equal(H.parseAttrs("[1,2]"), null);
