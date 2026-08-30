@@ -1,48 +1,97 @@
-{
-  "name": "custom-endpoints",
-  "description": "Send OTLP to one or more backends over HTTP, wrapped in the recommended local pipeline.",
-  "sections": [
-    {"id": "backends", "label": "Backends"},
-    {"id": "pipeline", "label": "Pipeline options", "collapsed": true}
-  ],
-  "backends": {
-    "min": 1,
-    "max": 8,
-    "fields": [
-      {"name": "name", "type": "slug", "label": "Name",
-       "description": "Short name for this backend; the exporter and its API key variable derive from it"},
-      {"name": "endpoint", "type": "url", "label": "Endpoint",
-       "description": "Base OTLP/HTTP URL, e.g. https://api.honeycomb.io — the collector appends /v1/traces etc."},
-      {"name": "auth_header", "type": "string", "label": "Auth header", "optional": true,
-       "description": "Header that carries the API key, e.g. x-honeycomb-team, api-key, or Authorization; leave empty for no auth header"},
-      {"name": "api_key", "type": "secret", "label": "API key",
-       "description": "Never baked into the config: referenced as ${env:<NAME>_API_KEY} and supplied per preset"},
-      {"name": "auth_scheme", "type": "choice", "label": "Auth scheme prefix",
-       "options": ["none", "Bearer", "Basic", "Api-Token", "ApiKey"], "default": "none", "advanced": true,
-       "description": "Prefix before the key inside the auth header (the observed vendor zoo); none for a bare key"},
-      {"name": "extra_header", "type": "string", "label": "Extra header", "optional": true, "default": "", "advanced": true,
-       "description": "One extra literal header, e.g. a tenant/dataset header like X-Scope-OrgID"},
-      {"name": "extra_value", "type": "string", "label": "Extra header value", "optional": true, "default": "", "advanced": true},
-      {"name": "signals", "type": "multi", "label": "Signals",
-       "options": ["traces", "metrics", "logs"], "default": ["traces", "metrics", "logs"], "advanced": true},
-      {"name": "temporality", "type": "choice", "label": "Metric temporality",
-       "options": ["as-is", "to-delta", "to-cumulative"], "default": "as-is", "advanced": true,
-       "description": "Convert metric temporality for backends that require it (Datadog/Dynatrace/Azure need delta, VictoriaMetrics cumulative)"}
-    ]
-  },
-  "fields": [
-    {"name": "memory_limiter", "type": "toggle", "label": "Memory limiter", "default": true, "section": "pipeline",
-     "description": "Keep the collector from growing unbounded under a burst"},
-    {"name": "batch", "type": "toggle", "label": "Batching", "default": true, "section": "pipeline",
-     "description": "Batch before export, sized under the 1MB payload cap every vendor accepts"},
-    {"name": "resource_detection", "type": "toggle", "label": "Host and env detection", "default": true, "section": "pipeline",
-     "description": "Add host.name and OTEL_RESOURCE_ATTRIBUTES; never overrides what the SDK set"},
-    {"name": "offline_queue", "type": "toggle", "label": "Offline queue", "default": false, "section": "pipeline",
-     "description": "Queue telemetry on disk and retry forever, so closing the lid on a train loses nothing"},
-    {"name": "debug_tee", "type": "toggle", "label": "Local debug tee", "default": false, "section": "pipeline",
-     "description": "Also print everything to the collector log via the debug exporter"}
-  ]
-}
+---
+name: custom-endpoints
+description: Send OTLP to one or more backends over HTTP, wrapped in the recommended local pipeline.
+sections:
+  - id: backends
+    label: Backends
+  - id: pipeline
+    label: Pipeline options
+    collapsed: true
+backends:
+  min: 1
+  max: 8
+  fields:
+    - name: name
+      type: slug
+      label: Name
+      description: Short name for this backend; the exporter and its API key variable derive from it
+    - name: endpoint
+      type: url
+      label: Endpoint
+      description: Base OTLP/HTTP URL, e.g. https://api.honeycomb.io — the collector appends /v1/traces etc.
+    - name: auth_header
+      type: string
+      label: Auth header
+      optional: true
+      description: Header that carries the API key, e.g. x-honeycomb-team, api-key, or Authorization; leave empty for no auth header
+    - name: api_key
+      type: secret
+      label: API key
+      description: "Never baked into the config: referenced as ${env:<NAME>_API_KEY} and supplied per preset"
+    - name: auth_scheme
+      type: choice
+      label: Auth scheme prefix
+      options: [none, Bearer, Basic, Api-Token, ApiKey]
+      default: none
+      advanced: true
+      description: Prefix before the key inside the auth header (the observed vendor zoo); none for a bare key
+    - name: extra_header
+      type: string
+      label: Extra header
+      optional: true
+      default: ""
+      advanced: true
+      description: One extra literal header, e.g. a tenant/dataset header like X-Scope-OrgID
+    - name: extra_value
+      type: string
+      label: Extra header value
+      optional: true
+      default: ""
+      advanced: true
+    - name: signals
+      type: multi
+      label: Signals
+      options: [traces, metrics, logs]
+      default: [traces, metrics, logs]
+      advanced: true
+    - name: temporality
+      type: choice
+      label: Metric temporality
+      options: [as-is, to-delta, to-cumulative]
+      default: as-is
+      advanced: true
+      description: Convert metric temporality for backends that require it (Datadog/Dynatrace/Azure need delta, VictoriaMetrics cumulative)
+fields:
+  - name: memory_limiter
+    type: toggle
+    label: Memory limiter
+    default: true
+    section: pipeline
+    description: Keep the collector from growing unbounded under a burst
+  - name: batch
+    type: toggle
+    label: Batching
+    default: true
+    section: pipeline
+    description: Batch before export, sized under the 1MB payload cap every vendor accepts
+  - name: resource_detection
+    type: toggle
+    label: Host and env detection
+    default: true
+    section: pipeline
+    description: Add host.name and OTEL_RESOURCE_ATTRIBUTES; never overrides what the SDK set
+  - name: offline_queue
+    type: toggle
+    label: Offline queue
+    default: false
+    section: pipeline
+    description: Queue telemetry on disk and retry forever, so closing the lid on a train loses nothing
+  - name: debug_tee
+    type: toggle
+    label: Local debug tee
+    default: false
+    section: pipeline
+    description: Also print everything to the collector log via the debug exporter
 ---
 receivers:
   otlp:
