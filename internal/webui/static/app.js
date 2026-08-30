@@ -513,7 +513,16 @@ function captureScreenScroll() {
 function restoreScreenScroll(ss) {
   if (!ss || ss.screen !== S.screen) return;
   const e = document.querySelector(SCREEN_SCROLLER);
-  if (e) e.scrollTop = ss.top;
+  if (!e) return;
+  e.scrollTop = ss.top;
+  // The tier-3 editor re-attaches its CodeMirror in a microtask queued
+  // DURING the rebuild (screenEditor), so at this point .ed-scroll is still
+  // missing the pane's height and the assignment above clamps — the view
+  // jumped to the top of what little exists. Queued after that microtask,
+  // this retry lands once the pane is back at full height.
+  if (e.scrollTop !== ss.top) {
+    queueMicrotask(() => { if (e.isConnected) e.scrollTop = ss.top; });
+  }
 }
 
 /* The render rule: a state change that affects LAYOUT — rows appearing,
@@ -3227,6 +3236,12 @@ function refreshBlocked() {
 }
 async function refresh() {
   if (refreshBlocked()) return;
+  // The editor screen holds a fully-rendered CodeMirror (viewportMargin
+  // Infinity on tier 3): rebuilding it costs a ~140ms main-thread stall on
+  // a 2000-line source, every 3 seconds, under a reader who saw nothing
+  // change. When the tick brought back an identical snapshot, only the
+  // sidebar re-renders (its own container — the screen DOM is untouched).
+  const before = S.screen === "editor" ? JSON.stringify([S.status, S.configs]) : null;
   try {
     await loadCore();
     if (S.screen === "collector") { if (S.tail) await loadCollector(); }
@@ -3234,6 +3249,10 @@ async function refresh() {
     else if (S.screen === "settings") await Promise.all([loadDistros(), loadSettings()]);
   } catch (e) { return; } // a transient failure should not blank the window
   if (refreshBlocked()) return;
+  if (before !== null && S.screen === "editor" && JSON.stringify([S.status, S.configs]) === before) {
+    renderSidebar();
+    return;
+  }
   render();
 }
 
