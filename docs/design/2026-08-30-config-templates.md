@@ -386,3 +386,56 @@ implementation leakage. Supersedes Amendment 3's knob storage.
   as the switcher. Source pane unchanged.
 - Mental model, one line: **configs describe, presets fill in,
   activation runs.**
+
+---
+
+## Amendment 4 — as shipped (backend round, 2026-08-30)
+
+The backend half of Amendment 4 is live; the editor UI round only
+consumes. Shapes and judged calls:
+
+- **Storage**: `meta.presets[name]` is `map[string]any`. Tier-2 bags hold
+  env strings (the degenerate case); tier-3 bags hold typed schema values
+  keyed by field name (`backends` an array of row objects), secrets
+  included as strings. `meta.knobs` is gone: `cfgstore.EnsurePresets`
+  merges it into every existing preset (preset values win — they are
+  newer) and deletes it, idempotently, at `app.New`. A fresh tier-3
+  config's `default` preset is seeded with the creation values, normalized
+  (defaults filled).
+- **Activation**: `app.Activate` re-renders (source, SELECTED preset's
+  bag) into config.yaml before validating — same path, same plist; a
+  rejected render/validation restores the previous yaml (nothing
+  changed). `restorePrevious` replays the snapshot pair untouched.
+- **Env split** (`catalog.SecretEnv`): a tier-3 activation's environment
+  is ONLY the bag's secret values plus `COMPY_*`. Names derive as the
+  vocabulary derives them: top-level secret F → `UPPER(F)`; row secret F
+  in row named N → `UPPER(N_F)` (dashes → underscores) — so
+  `${env:HONEYCOMB_API_KEY}` and the plist agree by construction (locked
+  by test). `Render` strips secrets from its inputs: a body referencing
+  one fails loudly instead of baking it.
+- **Judged surface**: values travel through the EXISTING preset routes.
+  `PUT /configs/{name}/presets/{preset}` accepts the typed bag and, for
+  tier-3, validates schema-then-collector in a scratch file BEFORE
+  storing (nothing-was-saved without a restore); `?validate=false` skips
+  only the collector's verdict and answers `running_stale`.
+  `PUT /source` keeps only `source` and reconciles EVERY preset's bag
+  with the new schema (prune unknown, fill newly defaulted — lenient per
+  preset; the strict answer lands at that preset's own next write or
+  activation). Sync of a templated remote reconciles the same way, per
+  preset.
+- **Pre-flight**: `cfgstore.MissingRequired` (now root-aware) generalizes
+  — tier 3 answers from the schema (required fields, secrets AND
+  non-secrets, empty in the bag) as field paths (`backends[0].api_key`);
+  tier 2 unchanged.
+- **CLI**: `compy presets set` parses per the schema (toggles from
+  true/false, `multi`/`backends` from JSON literals, string-shaped fields
+  raw); `compy vars` on a tier-3 config prints the schema-field table per
+  preset, secrets only ever as `(set)`/`-`.
+- **Recorded frictions** (accepted): a source edit that adds a
+  required-no-default field can't be saved atomically with its value
+  (save the field with a default first, or set the value after — the
+  source save no longer carries values); the embedded web UI's tier-3
+  form still speaks the knobs shapes until the editor UI round lands
+  (secret cards for tier-3 configs are the interim gap); demotion to
+  plain yaml keeps the typed bag in place (tier-2 env export skips
+  non-string values).

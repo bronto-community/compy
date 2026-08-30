@@ -118,14 +118,22 @@ updating BOTH, or `TestOpenAPIDriftAgainstRoutes` fails.
 ## Configurations
 
 A configuration (`internal/cfgstore`) is a whole collector `config.yaml` +
-`meta.json` (provenance, presets) under `configs/<name>/`. Every config
-keeps at least one preset (creation paths write an empty `default`;
-`cfgstore.EnsurePresets` backfills older state at `app.New`; the last
-preset can't be deleted). Exactly one
-configuration, and one of its presets, is active at a time;
-activating (`app.Activate`) puts that preset's values into the LaunchAgent's
-environment so the collector expands its own `${VAR}` / `${env:VAR:-def}`
-references — no text substitution in compy. Three shipped defaults
+`meta.json` (provenance, presets) under `configs/<name>/`. A preset is one
+typed value bag (`map[string]any`) holding ALL of a config's values
+(Amendment 4: configs describe, presets fill in, activation runs). Every
+config keeps at least one preset (creation paths write a `default` — for a
+templated config seeded with the schema's normalized values;
+`cfgstore.EnsurePresets` backfills older state at `app.New` and merges the
+options-era `knobs` key into every preset; the last preset can't be
+deleted). Exactly one configuration, and one of its presets, is active at
+a time. Activating (`app.Activate`) a plain (tier-2) config puts that
+preset's string values into the LaunchAgent's environment so the collector
+expands its own `${VAR}` / `${env:VAR:-def}` references — no text
+substitution in compy. Activating a templated (tier-3) config RENDERS the
+source with the selected preset's bag first (so switching presets may
+switch pipeline structure), and its environment carries ONLY the bag's
+`type: secret` values (under `catalog.SecretEnv`'s derived names) plus
+`COMPY_*` — everything else is baked into the render. Three shipped defaults
 (`debug`, `otlp`, `bronto`, embedded via `internal/cfgstore/defaults/*.yaml`)
 are materialized into `configs/` on first run. Edit-protection and sync
 share one mechanism: a config's current YAML hash vs. its recorded
@@ -137,16 +145,22 @@ first v2 run, a v1 state dir's rendered effective config becomes a new
 `config/` tree is archived to `legacy-v1/` — one-way, logged to stderr.
 
 A TEMPLATED (tier-3) config additionally keeps its source at
-`configs/<name>/config.tmpl`; `config.yaml` is its rendered output, written
-on every successful save, so everything downstream (collector path, plist,
-vars cards) stays plain. The SOURCE carries the pristine hash (it IS the
-config; remote configs may be templated and sync their source). Tier
-detection is textual (`catalog.IsSource`): front-matter text through the
-yaml write routes to the source pipeline, plain yaml over a templated
-config demotes it (source dropped). The save pipeline
-(`app.WriteConfigSource`) parses, reconciles knobs (removed pruned, new
-defaulted), renders, stores the pair, then collector-validates —
-restoring everything on rejection (nothing-was-saved).
+`configs/<name>/config.tmpl`; `config.yaml` is a DERIVED render of
+(source, active preset's bag), regenerated at activation and at save, so
+everything downstream (collector path, plist) stays plain. The SOURCE
+carries the pristine hash (it IS the config; remote configs may be
+templated and sync their source — sync reconciles every preset's bag with
+the fetched schema). Tier detection is textual (`catalog.IsSource`):
+front-matter text through the yaml write routes to the source pipeline,
+plain yaml over a templated config demotes it (source dropped, preset bags
+kept — never delete a secret). The source save (`app.WriteConfigSource`)
+carries the source ONLY: it parses, reconciles every preset's bag (removed
+fields pruned, newly defaulted filled), renders with the active bag,
+stores, then collector-validates — restoring everything on rejection
+(nothing-was-saved). Values travel through the preset writes
+(`app.ReplacePreset`/`SetVar`), which for tier-3 normalize the bag against
+the schema and prove the render in a scratch file BEFORE storing anything
+(`?validate=false` skips only the collector's verdict).
 
 ## COMPY_HOME
 
