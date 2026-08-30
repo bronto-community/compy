@@ -1,86 +1,110 @@
 package app
 
 import (
+	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/launchd"
 	"github.com/bronto-community/compy/internal/state"
 )
 
-// Templates lists the catalog: names, descriptions, and full schemas (the
-// creation form renders itself from these).
+// Templates lists the catalog: names, descriptions, and full schemas. The
+// entries are STARTERS — creating from one copies its source into the new
+// config, which owns it from then on (Amendment 3: templating is a property
+// of the config source, not a special object).
 func (a *App) Templates() ([]catalog.Template, error) { return catalog.Templates() }
 
-// storageDir is where a rendered offline queue keeps its file_storage
-// state: inside the state directory, next to configs/ and logs/. It bakes
-// into the rendered YAML as a literal — the config stays plain.
-func (a *App) storageDir() string { return filepath.Join(a.Dir, "storage") }
+// SourcePath is a configuration's template source file (tier 3 only).
+func (a *App) SourcePath(name string) string { return cfgstore.SourcePath(a.Dir, name) }
 
-// CreateFromTemplate renders a catalog template ONCE with the given knob
-// values and creates the result as a new configuration. Only secrets
-// survive as ${env:...} references; meta records the template name and the
-// normalized knobs so "change options" can re-render later.
-func (a *App) CreateFromTemplate(name, template string, knobs map[string]any) error {
+// ConfigSource returns a configuration's template source; ok is false for a
+// plain config.
+func (a *App) ConfigSource(name string) (string, bool, error) {
+	return cfgstore.Source(a.Dir, name)
+}
+
+// CreateFromCatalog copies a catalog entry's SOURCE into a new tier-3
+// configuration, rendered with the given knob values (nil = the schema's
+// defaults). The result is immediately user-editable source; nothing
+// remembers the catalog afterward.
+func (a *App) CreateFromCatalog(name, template string, knobs map[string]any) error {
 	t, err := catalog.Get(template)
 	if err != nil {
 		return err
 	}
-	norm, err := t.NormalizeKnobs(knobs)
-	if err != nil {
-		return err
-	}
-	yaml, err := t.Render(norm, a.storageDir())
-	if err != nil {
-		return err
-	}
-	return cfgstore.CreateFromTemplate(a.Dir, name, yaml, template, norm)
+	return cfgstore.CreateWithSource(a.Dir, name, t.Source(), knobs)
 }
 
-// ReRender re-renders a template-born configuration with new knob values,
-// refusing one whose YAML was hand-edited since the last render — the
-// mirror of Sync. Presets are kept; the running configuration is
-// re-applied. nil knobs re-render with the stored ones (e.g. after a
-// template upgrade).
-func (a *App) ReRender(name string, knobs map[string]any) error {
-	return a.reRender(name, knobs, false)
-}
-
-// ReRenderForce re-renders even a hand-edited configuration, discarding the
-// local edits — the mirror of Resync.
-func (a *App) ReRenderForce(name string, knobs map[string]any) error {
-	return a.reRender(name, knobs, true)
-}
-
-func (a *App) reRender(name string, knobs map[string]any, force bool) error {
-	info, _, err := cfgstore.Get(a.Dir, name)
+// WriteConfigSource is the tier-3 save pipeline: parse the schema, apply the
+// knobs (stored ones when knobs is nil; removed fields pruned, new fields
+// defaulted), render, store source + rendered + knobs, then validate the
+// rendered config against the collector — and on rejection put everything
+// back (nothing-was-saved, the same honesty a yaml save's activation gives).
+// An empty src is a knob-only save over the stored source (the form's path);
+// both dirty is one call carrying both — the source applies first, then the
+// knobs. validate=false is the same escape hatch as the yaml route's:
+// nothing is validated, the running collector is never touched, and
+// runningStale reports when the active running collector now runs a stale
+// version.
+func (a *App) WriteConfigSource(name, src string, knobs map[string]any, validate bool) (runningStale bool, err error) {
+	prevSrc, hadSrc, err := cfgstore.Source(a.Dir, name)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if info.Meta.Template == "" {
-		return state.BadRequest(fmt.Errorf("config %q was not created from a template", name))
+	info, prevYAML, err := cfgstore.Get(a.Dir, name)
+	if err != nil {
+		return false, err
 	}
-	if !force && info.Modified {
-		return state.BadRequest(fmt.Errorf("config %q is locally modified; use a forced re-render to discard local edits", name))
+	if src == "" {
+		if !hadSrc {
+			return false, state.BadRequest(fmt.Errorf("config %q has no template source; a knob save needs a templated config", name))
+		}
+		src = prevSrc
+	} else if !catalog.IsSource(src) {
+		return false, state.BadRequest(fmt.Errorf("config source has no schema front matter; write plain configs through the yaml editor"))
+	}
+	t, err := catalog.ParseSource(src)
+	if err != nil {
+		return false, err
 	}
 	if knobs == nil {
 		knobs = info.Meta.Knobs
 	}
-	t, err := catalog.Get(info.Meta.Template)
+	norm, err := t.NormalizeKnobs(t.PruneUnknown(knobs))
 	if err != nil {
-		return err
+		return false, err
 	}
-	norm, err := t.NormalizeKnobs(knobs)
+	rendered, err := t.Render(norm, cfgstore.StorageDir(a.Dir))
 	if err != nil {
-		return err
+		return false, err
 	}
-	yaml, err := t.Render(norm, a.storageDir())
-	if err != nil {
-		return err
+	if err := cfgstore.WriteSource(a.Dir, name, src, rendered, norm); err != nil {
+		return false, err
 	}
-	if err := cfgstore.SetRendered(a.Dir, name, yaml, norm); err != nil {
-		return err
+	if !validate {
+		if a.isActive(name) {
+			if running, _ := launchd.Running(); running {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
-	return a.reactivateIf(name)
+	if verr := a.ValidateConfig(name); verr != nil {
+		// Nothing-was-saved: the collector rejected the render, so the prior
+		// pair (or prior plain yaml, when the source was pasted over a plain
+		// config) goes back exactly as it was.
+		var rerr error
+		if hadSrc {
+			rerr = cfgstore.WriteSource(a.Dir, name, prevSrc, prevYAML, info.Meta.Knobs)
+		} else {
+			rerr = cfgstore.WriteYAML(a.Dir, name, prevYAML)
+		}
+		if rerr != nil {
+			return false, errors.Join(verr, fmt.Errorf("and restoring the previous config failed: %w", rerr))
+		}
+		return false, verr
+	}
+	return false, a.reactivateIf(name)
 }

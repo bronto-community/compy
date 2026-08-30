@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/state"
 	"github.com/bronto-community/compy/internal/vars"
 )
@@ -33,22 +34,28 @@ type Meta struct {
 	PristineSHA256 string                       `json:"pristine_sha256,omitempty"`
 	Presets        map[string]map[string]string `json:"presets"`
 	ActivePreset   string                       `json:"active_preset"`
-	// Template + Knobs mark a template-born configuration: the catalog
-	// template it was rendered from and the normalized knob values (secrets
-	// excluded — they never had values at render time). They exist so
-	// "change options" can re-render; the YAML itself is plain collector
-	// YAML, indistinguishable from a pasted one (the tier invariant).
-	Template string         `json:"template,omitempty"`
-	Knobs    map[string]any `json:"knobs,omitempty"`
+	// Knobs are a tier-3 (templated) configuration's normalized knob values
+	// (secrets excluded — their values live in presets): what the source's
+	// schema was last rendered with, and what the form seeds from. Only
+	// meaningful alongside config.tmpl; EnsurePresets clears strays.
+	Knobs map[string]any `json:"knobs,omitempty"`
+	// Template is a legacy wizard-era marker ("created from this catalog
+	// template"). The corrected model has no such object — a config OWNS its
+	// source — so EnsurePresets strips it (with the wizard's pristine hash
+	// and knobs) on first load; it is never written non-empty again.
+	Template string `json:"template,omitempty"`
 }
 
 // Info describes a configuration for listing/inspection.
 type Info struct {
-	Name       string     `json:"name"`
-	Provenance string     `json:"provenance"` // "shipped" | "remote" | "local" | "template"
-	Modified   bool       `json:"modified"`   // hash != pristine (always false for "local")
-	Meta       Meta       `json:"meta"`
-	Vars       []vars.Var `json:"vars"`
+	Name       string `json:"name"`
+	Provenance string `json:"provenance"` // "shipped" | "remote" | "local"
+	Modified   bool   `json:"modified"`   // hash != pristine (always false for "local")
+	// HasTemplate marks a tier-3 configuration: configs/<name>/config.tmpl
+	// exists — the SOURCE the rendered config.yaml derives from.
+	HasTemplate bool       `json:"has_template,omitempty"`
+	Meta        Meta       `json:"meta"`
+	Vars        []vars.Var `json:"vars"`
 }
 
 // MissingRequired names the variables an activation of this config with
@@ -115,6 +122,30 @@ func yamlPath(root, name string) string {
 	return filepath.Join(configDir(root, name), "config.yaml")
 }
 
+// SourcePath is a tier-3 configuration's template source. config.yaml stays
+// the rendered output — the collector path, the plist, and the vars cards
+// never learn templates exist.
+func SourcePath(root, name string) string {
+	return filepath.Join(configDir(root, name), "config.tmpl")
+}
+
+// StorageDir is where a rendered offline queue keeps its file_storage
+// state: inside the state directory, next to configs/ and logs/. It bakes
+// into rendered YAML as a literal — the config stays plain.
+func StorageDir(root string) string {
+	return filepath.Join(root, "storage")
+}
+
+// readSource returns a configuration's template source, reporting whether
+// one exists (tier 3).
+func readSource(root, name string) (string, bool) {
+	data, err := os.ReadFile(SourcePath(root, name))
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
+}
+
 func metaPath(root, name string) string {
 	return filepath.Join(configDir(root, name), "meta.json")
 }
@@ -125,9 +156,6 @@ func hashOf(content string) string {
 }
 
 func provenanceFor(m Meta) string {
-	if m.Template != "" {
-		return "template"
-	}
 	if m.PristineSHA256 == "" {
 		return "local"
 	}
@@ -247,7 +275,23 @@ func EnsurePresets(root string) error {
 		if err != nil {
 			return err
 		}
-		if ensureDefaultPreset(&m) {
+		changed := ensureDefaultPreset(&m)
+		// Wizard-era template-born configs hold rendered plain YAML — they
+		// simply ARE tier 1/2 configs now. Strip the dead marker (and the
+		// wizard's pristine hash + knobs; nothing re-renders them) so no UI
+		// shows dead affordances. Knobs without a source file are strays
+		// either way: only config.tmpl makes them meaningful.
+		if _, hasSrc := readSource(root, e.Name()); !hasSrc {
+			if m.Template != "" {
+				m.Template, m.PristineSHA256 = "", ""
+				changed = true
+			}
+			if m.Knobs != nil {
+				m.Knobs = nil
+				changed = true
+			}
+		}
+		if changed {
 			if err := writeMeta(root, e.Name(), m); err != nil {
 				return err
 			}
@@ -303,14 +347,36 @@ func buildInfo(root, name string) (Info, string, error) {
 	if err != nil {
 		return Info{}, "", err
 	}
+	// For a tier-3 config the SOURCE is the config: the pristine hash covers
+	// it, so modified means the source diverged from what was shipped/synced.
+	// Vars still parse from the rendered yaml — that is what runs.
+	hashed := yaml
+	src, hasSrc := readSource(root, name)
+	if hasSrc {
+		hashed = src
+	}
 	info := Info{
-		Name:       name,
-		Provenance: provenanceFor(m),
-		Modified:   modifiedFor(m, yaml),
-		Meta:       m,
-		Vars:       vars.Parse(yaml),
+		Name:        name,
+		Provenance:  provenanceFor(m),
+		Modified:    modifiedFor(m, hashed),
+		HasTemplate: hasSrc,
+		Meta:        m,
+		Vars:        vars.Parse(yaml),
 	}
 	return info, yaml, nil
+}
+
+// Source returns a configuration's template source; ok is false for a plain
+// (tier 1/2) config. The error covers only a bad name or a missing config.
+func Source(root, name string) (src string, ok bool, err error) {
+	if err := validateName(name); err != nil {
+		return "", false, err
+	}
+	if !exists(root, name) {
+		return "", false, userErrf("config %q not found", name)
+	}
+	src, ok = readSource(root, name)
+	return src, ok, nil
 }
 
 // List returns all configurations, sorted by name.
@@ -366,60 +432,61 @@ func createDir(root, name string) error {
 	return os.MkdirAll(configDir(root, name), 0o755)
 }
 
-// Create makes a new local configuration with the given YAML content.
-func Create(root, name, yaml string) error {
+// Create makes a new local configuration from the given content. Content
+// that carries template front matter is tier-3 source: it is stored as
+// config.tmpl and rendered (with the schema's defaults) into config.yaml —
+// pasting a source into the yaml box creates a templated config, exactly as
+// pasting ${env:} yaml lights up cards.
+func Create(root, name, content string) error {
+	if catalog.IsSource(content) {
+		return createSource(root, name, content, nil, Meta{})
+	}
 	if err := createDir(root, name); err != nil {
 		return err
 	}
-	if err := writeYAMLFile(root, name, yaml); err != nil {
+	if err := writeYAMLFile(root, name, content); err != nil {
 		return err
 	}
 	return writeMeta(root, name, withDefaultPreset(Meta{}))
 }
 
-// CreateFromTemplate makes a new template-born configuration: rendered
-// plain YAML plus the template name and its normalized knob values in
-// meta.json. The pristine hash serves re-render exactly as it serves sync:
-// matching means unmodified (re-render replaces cleanly), differing means
-// hand-edited (re-render refuses unless forced). Apart from meta the config
-// is indistinguishable from a pasted one.
-func CreateFromTemplate(root, name, yaml, template string, knobs map[string]any) error {
-	if err := createDir(root, name); err != nil {
-		return err
-	}
-	if err := writeYAMLFile(root, name, yaml); err != nil {
-		return err
-	}
-	return writeMeta(root, name, withDefaultPreset(Meta{
-		PristineSHA256: hashOf(yaml),
-		Template:       template,
-		Knobs:          knobs,
-	}))
+// CreateWithSource makes a new local tier-3 configuration from a template
+// source plus knob values (nil = the schema's defaults). This is what
+// creating from a catalog entry does: the source is COPIED in, immediately
+// the user's own — no provenance, nothing special about it afterward.
+func CreateWithSource(root, name, src string, knobs map[string]any) error {
+	return createSource(root, name, src, knobs, Meta{})
 }
 
-// SetRendered replaces a template-born configuration's YAML with a fresh
-// render, updating the pristine hash and the recorded knobs; presets and
-// the rest of meta are untouched. The modified-or-not decision is the
-// caller's (app mirrors Sync/Resync there); this is the write both paths
-// share, refusing only a config that isn't template-born at all.
-func SetRendered(root, name, yaml string, knobs map[string]any) error {
-	if err := validateName(name); err != nil {
-		return err
-	}
-	info, _, err := buildInfo(root, name)
+// createSource parses, normalizes knobs, and renders BEFORE creating any
+// directory, so a bad source or unsatisfiable knobs leave nothing behind.
+// Knobs are strict here (an unknown field is a 400 naming it — they are
+// fresh, a typo deserves an answer); only SAVES over stored knobs prune.
+// m carries provenance (remote URL / pristine hash) from the caller.
+func createSource(root, name, src string, knobs map[string]any, m Meta) error {
+	t, err := catalog.ParseSource(src)
 	if err != nil {
 		return err
 	}
-	if info.Meta.Template == "" {
-		return userErrf("config %q was not created from a template", name)
-	}
-	if err := writeYAMLFile(root, name, yaml); err != nil {
+	norm, err := t.NormalizeKnobs(knobs)
+	if err != nil {
 		return err
 	}
-	m := info.Meta
-	m.PristineSHA256 = hashOf(yaml)
-	m.Knobs = knobs
-	return writeMeta(root, name, m)
+	rendered, err := t.Render(norm, StorageDir(root))
+	if err != nil {
+		return err
+	}
+	if err := createDir(root, name); err != nil {
+		return err
+	}
+	if err := state.WriteFileAtomic(SourcePath(root, name), []byte(src), 0o600); err != nil {
+		return err
+	}
+	if err := writeYAMLFile(root, name, rendered); err != nil {
+		return err
+	}
+	m.Knobs = norm
+	return writeMeta(root, name, withDefaultPreset(m))
 }
 
 // CreateFromURL fetches yaml from url and creates a new remote configuration,
@@ -453,21 +520,30 @@ func CreateFromURL(root, name, url string, fetch Fetch) error {
 	if err != nil {
 		return state.BadRequest(err) // the URL is the user's; a log tail says nothing about it
 	}
-	yaml := string(content)
+	body := string(content)
+	// A remote config may BE tier-3 source: the pristine hash then covers the
+	// SOURCE (it is the config), and sync keeps comparing against it.
+	if catalog.IsSource(body) {
+		return createSource(root, name, body, nil, Meta{
+			RemoteURL:      url,
+			PristineSHA256: hashOf(body),
+		})
+	}
 	if err := createDir(root, name); err != nil {
 		return err
 	}
-	if err := writeYAMLFile(root, name, yaml); err != nil {
+	if err := writeYAMLFile(root, name, body); err != nil {
 		return err
 	}
 	return writeMeta(root, name, withDefaultPreset(Meta{
 		RemoteURL:      url,
-		PristineSHA256: hashOf(yaml),
+		PristineSHA256: hashOf(body),
 	}))
 }
 
-// Copy duplicates src's YAML and presets into a new local
-// configuration dst; provenance (remote URL / pristine hash) is dropped.
+// Copy duplicates src's YAML, template source (with its knobs), and presets
+// into a new local configuration dst; provenance (remote URL / pristine
+// hash) is dropped.
 func Copy(root, src, dst string) error {
 	if err := validateName(src); err != nil {
 		return err
@@ -483,20 +559,27 @@ func Copy(root, src, dst string) error {
 	if err != nil {
 		return err
 	}
+	tmpl, hasTmpl := readSource(root, src)
 	if err := createDir(root, dst); err != nil {
 		return err
 	}
 	if err := writeYAMLFile(root, dst, yaml); err != nil {
 		return err
 	}
-	presets := make(map[string]map[string]string, len(srcMeta.Presets))
-	for name, kv := range srcMeta.Presets {
-		presets[name] = maps.Clone(kv)
-	}
-	return writeMeta(root, dst, withDefaultPreset(Meta{
-		Presets:      presets,
+	m := Meta{
+		Presets:      make(map[string]map[string]string, len(srcMeta.Presets)),
 		ActivePreset: srcMeta.ActivePreset,
-	}))
+	}
+	for name, kv := range srcMeta.Presets {
+		m.Presets[name] = maps.Clone(kv)
+	}
+	if hasTmpl {
+		if err := state.WriteFileAtomic(SourcePath(root, dst), []byte(tmpl), 0o600); err != nil {
+			return err
+		}
+		m.Knobs = srcMeta.Knobs
+	}
+	return writeMeta(root, dst, withDefaultPreset(m))
 }
 
 // Delete removes a configuration entirely.
@@ -510,8 +593,11 @@ func Delete(root, name string) error {
 	return os.RemoveAll(configDir(root, name))
 }
 
-// WriteYAML overwrites a configuration's config.yaml. Modified status is
-// derived from the pristine hash, not tracked separately.
+// WriteYAML overwrites a configuration's config.yaml with plain YAML.
+// Modified status is derived from the pristine hash, not tracked
+// separately. On a tier-3 config this is a demotion — writing plain yaml
+// over a templated config means it IS a plain config now, so the source and
+// its knobs go (editing is editing; no lock-in, per the tier ladder).
 func WriteYAML(root, name, yaml string) error {
 	if err := validateName(name); err != nil {
 		return err
@@ -519,7 +605,75 @@ func WriteYAML(root, name, yaml string) error {
 	if !exists(root, name) {
 		return userErrf("config %q not found", name)
 	}
-	return writeYAMLFile(root, name, yaml)
+	if err := writeYAMLFile(root, name, yaml); err != nil {
+		return err
+	}
+	return clearSource(root, name)
+}
+
+// clearSource removes a configuration's template source and knobs, if any —
+// the tier-3 → plain demotion shared by WriteYAML, Reset, and a sync whose
+// remote turned plain.
+func clearSource(root, name string) error {
+	if err := os.Remove(SourcePath(root, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	m, err := readMeta(root, name)
+	if err != nil {
+		return err
+	}
+	if m.Knobs == nil {
+		return nil
+	}
+	m.Knobs = nil
+	return writeMeta(root, name, m)
+}
+
+// WriteSource stores a tier-3 configuration's pair: the source, the
+// rendered yaml, and the knobs it was rendered with. The caller (app) has
+// already parsed, rendered, and decided about collector validation; this is
+// only the write, with its failure atomicity: each file lands via
+// temp+rename, and a failure after the source landed puts the prior source
+// back — a config never holds a source its rendered yaml doesn't derive
+// from. The pristine hash is untouched (edit detection is sync's, not
+// ours).
+func WriteSource(root, name, src, rendered string, knobs map[string]any) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	if !exists(root, name) {
+		return userErrf("config %q not found", name)
+	}
+	prevSrc, hadSrc := readSource(root, name)
+	prevYAML, err := readYAML(root, name)
+	if err != nil {
+		return err
+	}
+	m, err := readMeta(root, name)
+	if err != nil {
+		return err
+	}
+	restoreSrc := func() {
+		if hadSrc {
+			_ = state.WriteFileAtomic(SourcePath(root, name), []byte(prevSrc), 0o600)
+		} else {
+			_ = os.Remove(SourcePath(root, name))
+		}
+	}
+	if err := state.WriteFileAtomic(SourcePath(root, name), []byte(src), 0o600); err != nil {
+		return err
+	}
+	if err := writeYAMLFile(root, name, rendered); err != nil {
+		restoreSrc()
+		return err
+	}
+	m.Knobs = knobs
+	if err := writeMeta(root, name, m); err != nil {
+		restoreSrc()
+		_ = writeYAMLFile(root, name, prevYAML)
+		return err
+	}
+	return nil
 }
 
 // WriteMeta overwrites a configuration's meta.json.
@@ -545,12 +699,45 @@ func refetch(root, name string, fetch Fetch) error {
 	if err != nil {
 		return state.BadRequest(err) // the URL is the user's; a log tail says nothing about it
 	}
-	yaml := string(content)
-	if err := writeYAMLFile(root, name, yaml); err != nil {
+	body := string(content)
+	// A tier-3 remote syncs its SOURCE: the local knobs are reconciled with
+	// the fetched schema (removed fields pruned, new ones defaulted) and the
+	// pair re-rendered. Render trouble aborts before anything is written.
+	if catalog.IsSource(body) {
+		t, err := catalog.ParseSource(body)
+		if err != nil {
+			return err
+		}
+		norm, err := t.NormalizeKnobs(t.PruneUnknown(m.Knobs))
+		if err != nil {
+			return err
+		}
+		rendered, err := t.Render(norm, StorageDir(root))
+		if err != nil {
+			return err
+		}
+		if err := WriteSource(root, name, body, rendered, norm); err != nil {
+			return err
+		}
+		m, err = readMeta(root, name) // WriteSource rewrote knobs
+		if err != nil {
+			return err
+		}
+		m.PristineSHA256 = hashOf(body)
+		return writeMeta(root, name, m)
+	}
+	if err := writeYAMLFile(root, name, body); err != nil {
 		return err
 	}
-	m.PristineSHA256 = hashOf(yaml)
-	return writeMeta(root, name, m)
+	m.Knobs = nil // the remote turned plain; so does the config
+	m.PristineSHA256 = hashOf(body)
+	if err := writeMeta(root, name, m); err != nil {
+		return err
+	}
+	if err := os.Remove(SourcePath(root, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // Sync refetches a remote configuration's YAML and updates the pristine
@@ -604,7 +791,15 @@ func Reset(root, name string) error {
 	if err := writeYAMLFile(root, name, yaml); err != nil {
 		return err
 	}
-	m := info.Meta
+	// A source pasted over a built-in goes with the reset (shipped defaults
+	// are plain): back to exactly what shipped.
+	if err := clearSource(root, name); err != nil {
+		return err
+	}
+	m, err := readMeta(root, name) // clearSource may have rewritten meta
+	if err != nil {
+		return err
+	}
 	m.PristineSHA256 = hashOf(yaml)
 	return writeMeta(root, name, m)
 }

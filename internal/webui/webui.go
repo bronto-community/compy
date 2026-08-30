@@ -44,17 +44,21 @@ type API struct {
 	Configs       func() (any, error) // configurations, JSON-marshalable
 	CreateConfig  func(name, yaml string) error
 	CreateFromURL func(name, url string) error
-	// Templates lists the config-template catalog: name, description, and
-	// the full schema the creation form renders itself from.
-	Templates          func() (any, error)
-	CreateFromTemplate func(name, template string, knobs map[string]any) error
-	// ReRender re-renders a template-born config with new knob values
-	// (refusing a hand-edited one); ReRenderForce discards the hand edits —
-	// the re-render twins of Sync/Resync. nil knobs = the stored ones.
-	ReRender      func(name string, knobs map[string]any) error
-	ReRenderForce func(name string, knobs map[string]any) error
-	GetConfig     func(name string) (any, error) // {"info":..., "yaml":...}
-	PutConfigYAML func(name, yaml string) error
+	// Templates lists the catalog of starter templates: name, description,
+	// and the full schema. Creating from one COPIES its source into the new
+	// config (tier 3, immediately user-editable).
+	Templates         func() (any, error)
+	CreateFromCatalog func(name, template string, knobs map[string]any) error
+	// PutConfigSource is the tier-3 save: source and/or knobs (empty source
+	// = knob-only save over the stored source; nil knobs = the stored ones;
+	// both = source first, then knobs). Renders, then validates against the
+	// collector with nothing-was-saved semantics on rejection. The
+	// NoValidate twin (?validate=false) skips validation and never touches
+	// the running collector, reporting running_stale like the yaml route's.
+	PutConfigSource           func(name, source string, knobs map[string]any) error
+	PutConfigSourceNoValidate func(name, source string, knobs map[string]any) (bool, error)
+	GetConfig                 func(name string) (any, error) // {"info":..., "yaml":..., "source"?:...}
+	PutConfigYAML             func(name, yaml string) error
 	// PutConfigYAMLNoValidate writes without validating and never touches
 	// the running collector; returns whether the active running collector
 	// is now on a stale (previous) version of this config.
@@ -158,11 +162,10 @@ func routes() []route {
 		{"GET", "/api/configs", handleConfigs},
 		{"POST", "/api/configs", handleCreateConfig},
 		{"POST", "/api/configs/from-url", handleCreateFromURL},
-		{"POST", "/api/configs/from-template", handleCreateFromTemplate},
-		{"POST", "/api/configs/{name}/re-render", handleReRender},
-		{"POST", "/api/configs/{name}/re-render-force", handleReRenderForce},
+		{"POST", "/api/configs/from-catalog", handleCreateFromCatalog},
 		{"GET", "/api/configs/{name}", handleGetConfig},
 		{"PUT", "/api/configs/{name}/yaml", handlePutConfigYAML},
+		{"PUT", "/api/configs/{name}/source", handlePutConfigSource},
 		{"PUT", "/api/configs/{name}/meta", handlePutConfigMeta},
 		{"DELETE", "/api/configs/{name}", handleDeleteConfig},
 		{"POST", "/api/configs/{name}/copy", handleCopyConfig},
@@ -604,7 +607,7 @@ func handleTemplates(api API) http.HandlerFunc {
 	}
 }
 
-func handleCreateFromTemplate(api API) http.HandlerFunc {
+func handleCreateFromCatalog(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Name     string         `json:"name"`
@@ -618,7 +621,7 @@ func handleCreateFromTemplate(api API) http.HandlerFunc {
 		if body.Knobs == nil {
 			body.Knobs = map[string]any{}
 		}
-		if err := api.CreateFromTemplate(body.Name, body.Template, body.Knobs); err != nil {
+		if err := api.CreateFromCatalog(body.Name, body.Template, body.Knobs); err != nil {
 			writeClosureErr(w, err)
 			return
 		}
@@ -626,37 +629,32 @@ func handleCreateFromTemplate(api API) http.HandlerFunc {
 	}
 }
 
-// handleReRender's body is {"knobs"}; an absent "knobs" re-renders with the
-// values stored in meta (nil stays nil — the closure reads them back).
-func handleReRender(api API) http.HandlerFunc {
+// handlePutConfigSource's body is {"source"?, "knobs"?}: an absent source is
+// a knob-only save over the stored source, absent knobs re-render with the
+// stored ones (nil stays nil — the closure reads them back), and both is
+// one save with the source applied first. ?validate=false is the same
+// escape hatch as the yaml route's, with the same running_stale answer.
+func handlePutConfigSource(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Knobs map[string]any `json:"knobs"`
+			Source string         `json:"source"`
+			Knobs  map[string]any `json:"knobs"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeBodyErr(w, err)
 			return
 		}
-		if err := api.ReRender(r.PathValue("name"), body.Knobs); err != nil {
-			writeClosureErr(w, err)
+		name := r.PathValue("name")
+		if r.URL.Query().Get("validate") == "false" {
+			stale, err := api.PutConfigSourceNoValidate(name, body.Source, body.Knobs)
+			if err != nil {
+				writeClosureErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true, "running_stale": stale})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	}
-}
-
-// handleReRenderForce is re-render's discard-local-edits twin, per resync's
-// route shape.
-func handleReRenderForce(api API) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Knobs map[string]any `json:"knobs"`
-		}
-		if err := decodeBody(r, &body); err != nil {
-			writeBodyErr(w, err)
-			return
-		}
-		if err := api.ReRenderForce(r.PathValue("name"), body.Knobs); err != nil {
+		if err := api.PutConfigSource(name, body.Source, body.Knobs); err != nil {
 			writeClosureErr(w, err)
 			return
 		}

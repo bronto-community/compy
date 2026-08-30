@@ -7,13 +7,17 @@ import (
 )
 
 // configDetail is the web UI's view of one configuration: its Info plus
-// YAML.
+// YAML, plus the template source for a tier-3 config.
 func (a *App) configDetail(name string) (any, error) {
 	info, yaml, err := a.Config(name)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"info": info, "yaml": yaml}, nil
+	detail := map[string]any{"info": info, "yaml": yaml}
+	if src, ok, _ := a.ConfigSource(name); ok {
+		detail["source"] = src
+	}
+	return detail, nil
 }
 
 // settingsMap is the web UI's view of Settings.
@@ -83,13 +87,18 @@ func (a *App) WebUIAPI() webui.API {
 		Validate:     a.Validate,
 		FactoryReset: a.FactoryReset,
 
-		Configs:                 func() (any, error) { return a.Configs() },
-		CreateConfig:            a.CreateConfig,
-		CreateFromURL:           a.CreateFromURL,
-		Templates:               func() (any, error) { return a.Templates() },
-		CreateFromTemplate:      a.CreateFromTemplate,
-		ReRender:                a.ReRender,
-		ReRenderForce:           a.ReRenderForce,
+		Configs:           func() (any, error) { return a.Configs() },
+		CreateConfig:      a.CreateConfig,
+		CreateFromURL:     a.CreateFromURL,
+		Templates:         func() (any, error) { return a.Templates() },
+		CreateFromCatalog: a.CreateFromCatalog,
+		PutConfigSource: func(name, source string, knobs map[string]any) error {
+			_, err := a.WriteConfigSource(name, source, knobs, true)
+			return err
+		},
+		PutConfigSourceNoValidate: func(name, source string, knobs map[string]any) (bool, error) {
+			return a.WriteConfigSource(name, source, knobs, false)
+		},
 		GetConfig:               a.configDetail,
 		PutConfigYAML:           a.WriteConfigYAML,
 		PutConfigYAMLNoValidate: a.WriteConfigYAMLNoValidate,

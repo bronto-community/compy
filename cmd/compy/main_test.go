@@ -275,10 +275,11 @@ func TestErrorText(t *testing.T) {
 }
 
 // TestRunTemplates: `compy templates` lists the catalog, and the
-// create/re-render commands drive the full CLI shape — knobs file parsed,
-// validation errors naming the field, --discard-edits mirroring resync.
+// create/source/edit-source commands drive the full CLI shape — knobs file
+// parsed, validation errors naming the field, the source round trip.
 func TestRunTemplates(t *testing.T) {
 	cliSetup(t, "")
+	cliFakeDistro(t)
 
 	out, err := captureStdout(t, func() error { return run([]string{"templates"}) })
 	if err != nil {
@@ -317,31 +318,45 @@ func TestRunTemplates(t *testing.T) {
 		t.Errorf("bad knobs err = %v, want the field named", err)
 	}
 
-	// Re-render without --knobs reuses the stored ones; a hand-edited
-	// config needs --discard-edits, mirroring resync.
-	if _, err := captureStdout(t, func() error { return run([]string{"config", "re-render", "mine"}) }); err != nil {
-		t.Fatalf("re-render: %v", err)
+	// `config source` prints the SOURCE (the config owns it now); a plain
+	// config has none to print.
+	out, err = captureStdout(t, func() error { return run([]string{"config", "source", "mine"}) })
+	if err != nil {
+		t.Fatalf("config source: %v", err)
 	}
-	dir := os.Getenv("COMPY_HOME")
-	yamlPath := filepath.Join(dir, "configs", "mine", "config.yaml")
-	data, err := os.ReadFile(yamlPath)
+	if !strings.Contains(out, `"custom-endpoints"`) || !strings.Contains(out, "\n---\n") {
+		t.Errorf("config source did not print the template source:\n%s", out)
+	}
+	if _, err := captureStdout(t, func() error { return run([]string{"config", "source", "debug"}) }); err == nil {
+		t.Error("config source on a plain config: want error, got nil")
+	}
+
+	// `config edit` refuses a templated config (the yaml is rendered
+	// output; editing it would silently demote) and points at edit-source.
+	t.Setenv("EDITOR", "true")
+	_, err = captureStdout(t, func() error { return run([]string{"config", "edit", "mine"}) })
+	if err == nil || !strings.Contains(err.Error(), "edit-source") {
+		t.Errorf("config edit on templated = %v, want the edit-source pointer", err)
+	}
+
+	// `config edit-source`: a scripted $EDITOR rewrites the template body
+	// (the receiver bind address); the save pipeline re-renders and the
+	// yaml follows.
+	editor := filepath.Join(t.TempDir(), "ed")
+	script := "#!/bin/sh\nsed -i '' 's/127\\.0\\.0\\.1/localhost/' \"$1\"\n"
+	if err := os.WriteFile(editor, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EDITOR", editor)
+	if _, err := captureStdout(t, func() error { return run([]string{"config", "edit-source", "mine"}) }); err != nil {
+		t.Fatalf("config edit-source: %v", err)
+	}
+	out, err = captureStdout(t, func() error { return run([]string{"config", "show", "mine"}) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(yamlPath, append(data, []byte("# edited\n")...), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err = captureStdout(t, func() error { return run([]string{"config", "re-render", "mine"}) })
-	if err == nil || !strings.Contains(err.Error(), "locally modified") {
-		t.Errorf("re-render of edited = %v, want the modified refusal", err)
-	}
-	if _, err := captureStdout(t, func() error {
-		return run([]string{"config", "re-render", "mine", "--discard-edits"})
-	}); err != nil {
-		t.Fatalf("re-render --discard-edits: %v", err)
-	}
-	if data, _ := os.ReadFile(yamlPath); strings.Contains(string(data), "# edited") {
-		t.Error("--discard-edits left the edits in place")
+	if !strings.Contains(out, "localhost:${env:COMPY_GRPC_PORT") {
+		t.Errorf("edit-source save did not re-render the yaml:\n%s", out)
 	}
 
 	// Flag conflicts are refused up front.

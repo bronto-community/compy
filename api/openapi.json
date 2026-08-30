@@ -118,8 +118,9 @@
         "type": "object",
         "properties": {
           "name": { "type": "string" },
-          "provenance": { "type": "string", "enum": ["shipped", "remote", "local", "template"] },
-          "modified": { "type": "boolean" },
+          "provenance": { "type": "string", "enum": ["shipped", "remote", "local"] },
+          "modified": { "type": "boolean", "description": "The config's content hash differs from its pristine hash. For a templated (tier-3) config the SOURCE carries the hash — it IS the config." },
+          "has_template": { "type": "boolean", "description": "True for a tier-3 configuration: a template source (config.tmpl) exists that the yaml is rendered from. GET /api/configs/{name} returns it as \"source\"." },
           "meta": {
             "type": "object",
             "properties": {
@@ -133,13 +134,9 @@
                 }
               },
               "active_preset": { "type": "string" },
-              "template": {
-                "type": "string",
-                "description": "For a template-born configuration: the catalog template it was rendered from. Absent otherwise."
-              },
               "knobs": {
                 "type": "object",
-                "description": "For a template-born configuration: the normalized knob values of the last render (secrets excluded — they never have values at render time). The change-options form seeds itself from these.",
+                "description": "For a templated (tier-3) configuration: the normalized knob values of the last render (secrets excluded — they never have values at render time). The form seeds itself from these.",
                 "additionalProperties": true
               }
             }
@@ -154,7 +151,8 @@
         "type": "object",
         "properties": {
           "info": { "$ref": "#/components/schemas/Info" },
-          "yaml": { "type": "string" }
+          "yaml": { "type": "string" },
+          "source": { "type": "string", "description": "The template source (schema front matter + \"---\" + body), present only when info.has_template is true. The yaml is its rendered output." }
         }
       },
       "Distro": {
@@ -278,7 +276,7 @@
       },
       "Knobs": {
         "type": "object",
-        "description": "Knob values keyed by field name (plus \"backends\": an array of per-row objects when the template has a repeat group). Values: string for slug/url/string/choice, boolean for toggle, array of strings for multi. Omitted fields take their schema default; a field with neither value nor default is a 400 naming the field. Secrets are never knobs (400).",
+        "description": "Knob values keyed by field name (plus \"backends\": an array of per-row objects when the template has a repeat group). Values: string for slug/url/string/choice, boolean for toggle, array of strings for multi. Omitted fields take their schema default; a field with neither value nor default is a 400 naming the field. On create, an unknown field or a secret is a 400; on a source save, fields the schema no longer declares (secrets included) are pruned — that is how stored knobs survive a schema edit.",
         "additionalProperties": true
       },
       "Ok": {
@@ -627,9 +625,9 @@
         }
       }
     },
-    "/api/configs/from-template": {
+    "/api/configs/from-catalog": {
       "post": {
-        "summary": "Create a configuration by rendering a catalog template ONCE with the given knob values. Only secrets survive as ${env:...} references; meta records template + knobs for later re-renders.",
+        "summary": "Create a configuration from a catalog starter: the entry's SOURCE is copied into the new config (tier 3, immediately user-editable) and rendered with the given knob values (defaults where omitted). Only secrets survive as ${env:...} references.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -746,7 +744,7 @@
     },
     "/api/configs/{name}/yaml": {
       "put": {
-        "summary": "Replace a configuration's YAML",
+        "summary": "Replace a configuration's YAML. A body carrying template front matter ('{' + \"---\" separator) is tier-3 SOURCE and routes through the source save pipeline (parse, render, validate-or-restore); plain yaml written over a templated config demotes it to plain (the source is dropped).",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
           {
@@ -967,11 +965,18 @@
         }
       }
     },
-    "/api/configs/{name}/re-render": {
-      "post": {
-        "summary": "Re-render a template-born configuration with new knob values (the change-options action; the sync twin: a hand-edited config is refused). Presets are kept; the running configuration is re-applied.",
+    "/api/configs/{name}/source": {
+      "put": {
+        "summary": "Save a tier-3 configuration's template source and/or knob values. Omitted source = knob-only save over the stored source; omitted knobs = re-render with the stored ones (removed fields pruned, new fields defaulted); both = one save, source applied first. The pipeline parses the schema, renders, stores source + rendered yaml + knobs, then validates the rendered config against the collector — a rejection restores everything (nothing was saved).",
         "parameters": [
-          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          {
+            "name": "validate",
+            "in": "query",
+            "required": false,
+            "description": "Pass \"false\" to store without asking the collector — the same escape hatch as the yaml route's. The running collector is never touched; running_stale reports when the active running collector kept the previous version.",
+            "schema": { "type": "string", "enum": ["false"] }
+          }
         ],
         "requestBody": {
           "content": {
@@ -979,6 +984,7 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "source": { "type": "string", "description": "The full template source (schema front matter + \"---\" + body). Omit for a knob-only save." },
                   "knobs": { "$ref": "#/components/schemas/Knobs" }
                 }
               }
@@ -988,44 +994,25 @@
         "responses": {
           "200": {
             "description": "OK",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
-          },
-          "400": {
-            "description": "Bad request — not a template-born configuration, locally modified (use re-render-force to discard the edits), or invalid knob values (the message names the offending field)",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
-          },
-          "500": {
-            "description": "Error",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
-          }
-        }
-      }
-    },
-    "/api/configs/{name}/re-render-force": {
-      "post": {
-        "summary": "Re-render a template-born configuration, discarding local hand edits (the resync twin). An omitted knobs body re-renders with the stored knob values.",
-        "parameters": [
-          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "knobs": { "$ref": "#/components/schemas/Knobs" }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "running_stale": { "type": "boolean", "description": "Only with validate=false: the active running collector kept the previous version of this config." }
+                  },
+                  "required": ["ok"]
                 }
               }
             }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
           },
           "400": {
-            "description": "Bad request — not a template-born configuration, or invalid knob values (the message names the offending field)",
+            "description": "Bad request — a knob-only save on a config with no template source, a source without front matter, a schema or body that does not parse, invalid knob values (the message names the offending field), or a rendered config the collector rejects (nothing was saved)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "Body too large",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "500": {

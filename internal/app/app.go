@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/cfgstore"
 	"github.com/bronto-community/compy/internal/collector"
 	"github.com/bronto-community/compy/internal/distro"
@@ -561,8 +562,16 @@ func (a *App) DeleteConfig(name string) error {
 }
 
 // WriteConfigYAML replaces a configuration's YAML, re-activating it if it is
-// the running one.
+// the running one. Text carrying template front matter is tier-3 SOURCE, not
+// yaml — pasting it into the yaml editor routes through the source save
+// pipeline (parse, render, validate-or-restore), exactly as pasting ${env:}
+// yaml lights up cards. Conversely, plain yaml written over a templated
+// config demotes it to plain (cfgstore.WriteYAML drops the source).
 func (a *App) WriteConfigYAML(name, yaml string) error {
+	if catalog.IsSource(yaml) {
+		_, err := a.WriteConfigSource(name, yaml, nil, true)
+		return err
+	}
 	if err := cfgstore.WriteYAML(a.Dir, name, yaml); err != nil {
 		return err
 	}
@@ -578,6 +587,9 @@ func (a *App) WriteConfigYAML(name, yaml string) error {
 // but the process keeps its previous config until the user restarts or
 // activates. runningStale reports exactly that case, so callers can say so.
 func (a *App) WriteConfigYAMLNoValidate(name, yaml string) (runningStale bool, err error) {
+	if catalog.IsSource(yaml) {
+		return a.WriteConfigSource(name, yaml, nil, false)
+	}
 	if err := cfgstore.WriteYAML(a.Dir, name, yaml); err != nil {
 		return false, err
 	}

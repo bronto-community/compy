@@ -6,12 +6,13 @@ import (
 	"testing"
 
 	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/cfgstore"
 	"github.com/bronto-community/compy/internal/state"
 )
 
-// templateKnobs is a minimal valid knob set for custom-endpoints.
-func templateKnobs(name string) map[string]any {
+// catalogKnobs is a minimal valid knob set for custom-endpoints.
+func catalogKnobs(name string) map[string]any {
 	return map[string]any{
 		"backends": []any{map[string]any{
 			"name":        name,
@@ -22,37 +23,51 @@ func templateKnobs(name string) map[string]any {
 	}
 }
 
-func createFromTemplate(t *testing.T, a *app.App, name string) {
-	t.Helper()
-	if err := a.CreateFromTemplate(name, "custom-endpoints", templateKnobs("hc")); err != nil {
-		t.Fatal(err)
+// srcWith is a tiny hand-written tier-3 source: a defaulted greeting knob
+// plus whatever extra field JSON is spliced in (empty = none).
+func srcWith(extra, body string) string {
+	fields := `{"name": "greeting", "type": "string", "label": "G", "default": "hello"}`
+	if extra != "" {
+		fields += ", " + extra
 	}
+	return `{"name": "t", "description": "d", "fields": [` + fields + `]}
+---
+` + body + "\n"
 }
 
-// TestCreateFromTemplate: the created config is plain YAML with the secret
-// env references, meta records template + normalized knobs, provenance is
-// "template", and the default preset exists — the tier invariant: apart
-// from meta, indistinguishable from a pasted config.
-func TestCreateFromTemplate(t *testing.T) {
+// TestCreateFromCatalog: creating from a catalog entry COPIES its source
+// into the new config — tier 3, provenance local, nothing special about it
+// afterward — rendered with the given knobs, secrets surviving as env refs.
+func TestCreateFromCatalog(t *testing.T) {
 	setup(t, "")
 	a, err := app.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	createFromTemplate(t, a, "mine")
+	if err := a.CreateFromCatalog("mine", "custom-endpoints", catalogKnobs("hc")); err != nil {
+		t.Fatal(err)
+	}
 
 	info, yaml, err := a.Config("mine")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Provenance != "template" || info.Modified {
-		t.Errorf("provenance %q modified %v, want template/false", info.Provenance, info.Modified)
+	if !info.HasTemplate || info.Provenance != "local" || info.Modified {
+		t.Errorf("info = %+v, want has_template local unmodified", info)
 	}
-	if info.Meta.Template != "custom-endpoints" {
-		t.Errorf("meta.template = %q", info.Meta.Template)
+	src, ok, err := a.ConfigSource("mine")
+	if err != nil || !ok {
+		t.Fatalf("ConfigSource = %v %v", ok, err)
+	}
+	entry, err := catalog.Get("custom-endpoints")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src != entry.Source() {
+		t.Error("created config's source is not a copy of the catalog entry's")
 	}
 	if !strings.Contains(yaml, "Authorization: Bearer ${env:HC_API_KEY}  # hc api key") {
-		t.Errorf("secret reference missing from yaml:\n%s", yaml)
+		t.Errorf("secret reference missing from rendered yaml:\n%s", yaml)
 	}
 	if strings.Contains(yaml, "{{") {
 		t.Errorf("unrendered template syntax leaked:\n%s", yaml)
@@ -68,108 +83,197 @@ func TestCreateFromTemplate(t *testing.T) {
 	if _, ok := info.Meta.Presets[cfgstore.DefaultPreset]; !ok {
 		t.Errorf("no default preset: %v", info.Meta.Presets)
 	}
-	// Byte-indistinguishable from the same YAML pasted (Create).
-	if err := a.CreateConfig("pasted", yaml); err != nil {
-		t.Fatal(err)
-	}
-	_, pastedYAML, err := a.Config("pasted")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pastedYAML != yaml {
-		t.Error("template-born yaml differs from the same yaml pasted")
-	}
 
-	// Caller mistakes are BadRequest: unknown template, taken name, bad knobs.
-	if err := a.CreateFromTemplate("x", "nope", templateKnobs("a")); !state.IsBadRequest(err) {
+	// Caller mistakes are BadRequest: unknown template, taken name, bad
+	// knobs (strict on create — a typo'd field deserves an answer).
+	if err := a.CreateFromCatalog("x", "nope", catalogKnobs("a")); !state.IsBadRequest(err) {
 		t.Errorf("unknown template err = %v, want BadRequest", err)
 	}
-	if err := a.CreateFromTemplate("mine", "custom-endpoints", templateKnobs("a")); !state.IsBadRequest(err) {
+	if err := a.CreateFromCatalog("mine", "custom-endpoints", catalogKnobs("a")); !state.IsBadRequest(err) {
 		t.Errorf("name collision err = %v, want BadRequest", err)
 	}
-	if err := a.CreateFromTemplate("y", "custom-endpoints", map[string]any{}); !state.IsBadRequest(err) {
-		t.Errorf("bad knobs err = %v, want BadRequest", err)
+	err = a.CreateFromCatalog("y", "custom-endpoints", map[string]any{"sampling": true})
+	if !state.IsBadRequest(err) || !strings.Contains(err.Error(), "sampling") {
+		t.Errorf("bad knobs err = %v, want BadRequest naming the field", err)
 	}
 }
 
-// TestReRenderSemantics is the resync-semantics matrix: unmodified
-// re-renders cleanly (yaml replaced, knobs updated, presets kept); modified
-// refuses; forced discards; a non-template config is refused either way.
-func TestReRenderSemantics(t *testing.T) {
+// TestWriteConfigSourcePipeline is the save-pipeline matrix over a
+// hand-written (pasted) tier-3 config: a schema edit re-derives the knobs
+// (removed pruned, new defaulted), a knob-only save re-renders over the
+// stored source, and the entry-path judgments hold (plain yaml refused on
+// the source route, front matter refused... routed on the yaml route).
+func TestWriteConfigSourcePipeline(t *testing.T) {
 	setup(t, "")
+	fakeDistro(t, "exit 0")
 	a, err := app.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	createFromTemplate(t, a, "mine")
-	if err := cfgstore.SetVar(a.Dir, "mine", "prod", "HC_API_KEY", "k"); err != nil {
+	// Born by pasting source into the plain create path (tier detection).
+	if err := a.CreateConfig("tpl", srcWith("", "a: {{.greeting}}")); err != nil {
 		t.Fatal(err)
 	}
+	if info, _, _ := a.Config("tpl"); !info.HasTemplate {
+		t.Fatal("pasted source not detected as tier 3")
+	}
 
-	newKnobs := templateKnobs("hc")
-	newKnobs["debug_tee"] = true
-
-	// Unmodified: replace yaml, update knobs, keep presets.
-	if err := a.ReRender("mine", newKnobs); err != nil {
+	// Knob-only save: empty source, explicit knobs.
+	if _, err := a.WriteConfigSource("tpl", "", map[string]any{"greeting": "hey"}, true); err != nil {
 		t.Fatal(err)
 	}
-	info, yaml, err := a.Config("mine")
+	if _, yaml, _ := a.Config("tpl"); yaml != "a: hey\n" {
+		t.Errorf("knob save render = %q", yaml)
+	}
+
+	// Source edit adds a field: stored knobs carry over, the new field
+	// takes its default.
+	src2 := srcWith(`{"name": "loud", "type": "toggle", "label": "L", "default": false}`,
+		"a: {{.greeting}}{{if .loud}}!{{end}}")
+	if _, err := a.WriteConfigSource("tpl", src2, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err := a.Config("tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(yaml, "debug") {
-		t.Errorf("re-render did not apply the new knob:\n%s", yaml)
+	if yaml != "a: hey\n" {
+		t.Errorf("schema-edit render = %q, want the stored greeting kept", yaml)
 	}
-	if info.Modified {
-		t.Error("fresh re-render reports modified — pristine hash not updated")
-	}
-	if info.Meta.Knobs["debug_tee"] != true {
-		t.Errorf("knobs not updated in meta: %v", info.Meta.Knobs)
-	}
-	if info.Meta.Presets["prod"]["HC_API_KEY"] != "k" {
-		t.Errorf("presets lost across re-render: %v", info.Meta.Presets)
+	if info.Meta.Knobs["loud"] != false {
+		t.Errorf("new field not defaulted into knobs: %v", info.Meta.Knobs)
 	}
 
-	// Hand-edit → tier 2: plain re-render refuses, forced discards.
-	if err := cfgstore.WriteYAML(a.Dir, "mine", yaml+"# edited\n"); err != nil {
+	// Both dirty in one call: source first, then knobs.
+	if _, err := a.WriteConfigSource("tpl", src2, map[string]any{"greeting": "hey", "loud": true}, true); err != nil {
 		t.Fatal(err)
 	}
-	err = a.ReRender("mine", newKnobs)
-	if !state.IsBadRequest(err) || !strings.Contains(err.Error(), "locally modified") {
-		t.Errorf("re-render of modified = %v, want BadRequest naming the edits", err)
-	}
-	if _, y, _ := a.Config("mine"); !strings.Contains(y, "# edited") {
-		t.Error("refused re-render must leave the edits in place")
-	}
-	if err := a.ReRenderForce("mine", newKnobs); err != nil {
-		t.Fatal(err)
-	}
-	if info, y, _ := a.Config("mine"); strings.Contains(y, "# edited") || info.Modified {
-		t.Error("forced re-render must discard the edits and be unmodified")
+	if _, yaml, _ := a.Config("tpl"); yaml != "a: hey!\n" {
+		t.Errorf("both-dirty render = %q", yaml)
 	}
 
-	// nil knobs = re-render with the stored ones (bit-stable).
-	_, before, _ := a.Config("mine")
-	if err := a.ReRender("mine", nil); err != nil {
+	// Source edit removes the field: the stored knob is pruned.
+	src3 := srcWith("", "a: {{.greeting}}")
+	if _, err := a.WriteConfigSource("tpl", src3, nil, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, after, _ := a.Config("mine"); after != before {
-		t.Error("nil-knobs re-render changed the yaml")
+	info, _, err = a.Config("tpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, has := info.Meta.Knobs["loud"]; has {
+		t.Errorf("removed field survived in knobs: %v", info.Meta.Knobs)
 	}
 
-	// Not template-born: refused, forced or not.
-	if err := a.ReRender("debug", nil); !state.IsBadRequest(err) {
-		t.Errorf("re-render of shipped config = %v, want BadRequest", err)
+	// Plain yaml has no business on the source route.
+	if _, err := a.WriteConfigSource("tpl", "plain: true\n", nil, true); !state.IsBadRequest(err) {
+		t.Errorf("plain yaml on the source route = %v, want BadRequest", err)
 	}
-	if err := a.ReRenderForce("debug", nil); !state.IsBadRequest(err) {
-		t.Errorf("forced re-render of shipped config = %v, want BadRequest", err)
+	// A knob save needs a templated config.
+	if err := a.CreateConfig("plain", "a: 1\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteConfigSource("plain", "", map[string]any{"x": true}, true); !state.IsBadRequest(err) {
+		t.Errorf("knob save on plain config = %v, want BadRequest", err)
 	}
 }
 
-// TestReRenderReactivatesWhenActive: re-rendering the active running
-// configuration re-applies it (the shared reactivateIf rule); an inactive
+// TestWriteConfigSourceValidateOrRestore: a rendered config the collector
+// rejects restores BOTH files and the knobs — nothing was saved — and the
+// same promise holds when the failed save was a source pasted over a plain
+// config (it comes back plain).
+func TestWriteConfigSourceValidateOrRestore(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	goodSrc := srcWith("", "a: {{.greeting}}")
+	if err := a.CreateConfig("tpl", goodSrc); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeDistro(t, "exit 1") // the collector now rejects everything
+	src2 := srcWith("", "b: {{.greeting}}")
+	_, err = a.WriteConfigSource("tpl", src2, map[string]any{"greeting": "boom"}, true)
+	if !state.IsBadRequest(err) {
+		t.Fatalf("rejected save = %v, want BadRequest", err)
+	}
+	info, yaml, err := a.Config("tpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, _, _ := a.ConfigSource("tpl")
+	if src != goodSrc {
+		t.Errorf("source not restored: %q", src)
+	}
+	if yaml != "a: hello\n" {
+		t.Errorf("rendered yaml not restored: %q", yaml)
+	}
+	if info.Meta.Knobs["greeting"] != "hello" {
+		t.Errorf("knobs not restored: %v", info.Meta.Knobs)
+	}
+
+	// The skip-validation escape stores anyway (the yaml route's twin).
+	stale, err := a.WriteConfigSource("tpl", src2, map[string]any{"greeting": "boom"}, false)
+	if err != nil || stale {
+		t.Fatalf("skip-validate save = %v stale=%v", err, stale)
+	}
+	if _, yaml, _ := a.Config("tpl"); yaml != "b: boom\n" {
+		t.Errorf("skip-validate render = %q", yaml)
+	}
+
+	// Pasting a bad source over a PLAIN config restores the plain config.
+	if err := a.CreateConfig("plain", "keep: me\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.WriteConfigYAML("plain", goodSrc); !state.IsBadRequest(err) {
+		t.Fatalf("pasted source under a rejecting collector = %v, want BadRequest", err)
+	}
+	info, yaml, err = a.Config("plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HasTemplate || yaml != "keep: me\n" || info.Meta.Knobs != nil {
+		t.Errorf("plain config not restored: %+v yaml=%q", info, yaml)
+	}
+}
+
+// TestPastedSourceRoundTrip: front-matter text through the YAML write is a
+// source write (tier 3 born), and plain yaml written back demotes it.
+func TestPastedSourceRoundTrip(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateConfig("c", "plain: true\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.WriteConfigYAML("c", srcWith("", "a: {{.greeting}}")); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err := a.Config("c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasTemplate || yaml != "a: hello\n" {
+		t.Errorf("pasted source: %+v yaml=%q", info, yaml)
+	}
+	if err := a.WriteConfigYAML("c", "plain: again\n"); err != nil {
+		t.Fatal(err)
+	}
+	if info, _, _ := a.Config("c"); info.HasTemplate {
+		t.Error("plain yaml write did not demote the templated config")
+	}
+}
+
+// TestWriteConfigSourceReactivatesWhenActive: saving the active running
+// config's source re-applies it (the shared reactivateIf rule); an inactive
 // one never touches launchd.
-func TestReRenderReactivatesWhenActive(t *testing.T) {
+func TestWriteConfigSourceReactivatesWhenActive(t *testing.T) {
 	calls := setup(t, "state = running")
 	fakeDistro(t, "exit 0")
 	listenPort(t)
@@ -177,41 +281,51 @@ func TestReRenderReactivatesWhenActive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	createFromTemplate(t, a, "mine")
-
-	*calls = nil
-	if err := a.ReRender("mine", nil); err != nil {
+	if err := a.CreateConfig("tpl", srcWith("", "a: {{.greeting}}")); err != nil {
 		t.Fatal(err)
 	}
-	if len(*calls) != 0 {
-		t.Errorf("re-rendering an inactive config touched launchd: %v", *calls)
+
+	*calls = nil
+	if _, err := a.WriteConfigSource("tpl", "", map[string]any{"greeting": "hey"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if called(*calls, "bootstrap") {
+		t.Errorf("saving an inactive config touched launchd: %v", *calls)
 	}
 
-	if err := a.Activate("mine", ""); err != nil {
+	if err := a.Activate("tpl", ""); err != nil {
 		t.Fatal(err)
 	}
 	*calls = nil
-	if err := a.ReRender("mine", nil); err != nil {
+	if _, err := a.WriteConfigSource("tpl", "", map[string]any{"greeting": "ho"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if !called(*calls, "bootstrap") {
-		t.Errorf("re-rendering the active running config did not re-apply: %v", *calls)
+		t.Errorf("saving the active running config did not re-apply: %v", *calls)
 	}
 }
 
-// TestReRenderKnobsSurviveJSONRoundTrip: knobs read back from meta.json
-// (JSON shapes: []any, not []string) still normalize and render.
-func TestReRenderKnobsSurviveJSONRoundTrip(t *testing.T) {
+// TestKnobsSurviveJSONRoundTrip: knobs read back from meta.json (JSON
+// shapes: []any, not []string) still normalize and render on a nil-knob
+// save from a fresh App.
+func TestKnobsSurviveJSONRoundTrip(t *testing.T) {
 	setup(t, "")
+	fakeDistro(t, "exit 0")
 	a, err := app.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	createFromTemplate(t, a, "mine")
+	if err := a.CreateFromCatalog("mine", "custom-endpoints", catalogKnobs("hc")); err != nil {
+		t.Fatal(err)
+	}
+	_, before, _ := a.Config("mine")
 	// A second App re-reads meta.json from disk — the round trip.
 	b := &app.App{Dir: a.Dir}
-	if err := b.ReRender("mine", nil); err != nil {
-		t.Fatalf("re-render from persisted knobs: %v", err)
+	if _, err := b.WriteConfigSource("mine", "", nil, true); err != nil {
+		t.Fatalf("save from persisted knobs: %v", err)
+	}
+	if _, after, _ := b.Config("mine"); after != before {
+		t.Error("nil-knobs save changed the yaml")
 	}
 }
 

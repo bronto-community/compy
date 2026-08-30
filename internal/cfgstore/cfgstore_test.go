@@ -1083,100 +1083,297 @@ func TestEmptyVarKeyRefused(t *testing.T) {
 	}
 }
 
-// TestTemplateMetaRoundTrip: CreateFromTemplate persists template + knobs
-// through a real meta.json write/read; provenance is "template", edit
-// detection rides the same pristine hash as sync's, and SetRendered updates
-// hash + knobs while keeping presets.
-func TestTemplateMetaRoundTrip(t *testing.T) {
+// testSource is a minimal tier-3 config source: one defaulted string knob.
+const testSource = `{"name": "t", "description": "d",
+ "fields": [{"name": "greeting", "type": "string", "label": "G", "default": "hello"}]}
+---
+a: {{.greeting}}
+`
+
+// TestCreateDetectsSource: content with template front matter creates a
+// tier-3 config — source stored, yaml rendered with defaults, knobs
+// recorded — while plain yaml stays tier 1. Pasting source into the yaml
+// box IS how a templated config is born.
+func TestCreateDetectsSource(t *testing.T) {
 	root := t.TempDir()
-	knobs := map[string]any{
-		"debug_tee": true,
-		"backends":  []any{map[string]any{"name": "hc", "signals": []any{"traces"}}},
-	}
-	if err := CreateFromTemplate(root, "tpl", "yaml: 1\n", "custom-endpoints", knobs); err != nil {
+	if err := Create(root, "tpl", testSource); err != nil {
 		t.Fatal(err)
 	}
 	info, yaml, err := Get(root, "tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if yaml != "yaml: 1\n" {
-		t.Errorf("yaml = %q", yaml)
+	if !info.HasTemplate || info.Provenance != "local" || info.Modified {
+		t.Errorf("info = %+v, want has_template local unmodified", info)
 	}
-	if info.Provenance != "template" || info.Modified {
-		t.Errorf("provenance %q modified %v, want template/false", info.Provenance, info.Modified)
+	if yaml != "a: hello\n" {
+		t.Errorf("rendered yaml = %q", yaml)
 	}
-	if info.Meta.Template != "custom-endpoints" {
-		t.Errorf("template = %q", info.Meta.Template)
+	if info.Meta.Knobs["greeting"] != "hello" {
+		t.Errorf("knobs = %v, want the defaults recorded", info.Meta.Knobs)
 	}
-	row := info.Meta.Knobs["backends"].([]any)[0].(map[string]any)
-	if row["name"] != "hc" {
-		t.Errorf("knobs did not round-trip: %v", info.Meta.Knobs)
-	}
-
-	// Hand edits flip Modified via the shared hash mechanism.
-	if err := WriteYAML(root, "tpl", "yaml: 2\n"); err != nil {
-		t.Fatal(err)
-	}
-	if info, _, _ := Get(root, "tpl"); !info.Modified {
-		t.Error("edited template-born config not reported modified")
+	src, ok, err := Source(root, "tpl")
+	if err != nil || !ok || src != testSource {
+		t.Errorf("Source = %q %v %v, want the stored source", src, ok, err)
 	}
 
-	// SetRendered: new yaml + hash + knobs; presets kept.
-	if err := SetVar(root, "tpl", "prod", "K", "v"); err != nil {
+	if err := Create(root, "plain", "a: 1\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetRendered(root, "tpl", "yaml: 3\n", map[string]any{"debug_tee": false}); err != nil {
+	if info, _, _ := Get(root, "plain"); info.HasTemplate {
+		t.Error("plain yaml misdetected as template source")
+	}
+	if _, ok, _ := Source(root, "plain"); ok {
+		t.Error("plain config claims a source")
+	}
+
+	// A broken source creates nothing (parse/render run before any mkdir).
+	if err := Create(root, "broken", "{\"name\": \"x\"\n---\nbody"); err == nil {
+		t.Fatal("broken source created anyway")
+	}
+	if _, _, err := Get(root, "broken"); err == nil {
+		t.Error("broken source left a config behind")
+	}
+}
+
+// TestWriteYAMLDemotesTier3: plain yaml written over a templated config
+// drops the source and its knobs — editing is editing, no lock-in.
+func TestWriteYAMLDemotesTier3(t *testing.T) {
+	root := t.TempDir()
+	if err := Create(root, "tpl", testSource); err != nil {
 		t.Fatal(err)
 	}
-	info, yaml, err = Get(root, "tpl")
+	if err := WriteYAML(root, "tpl", "b: 2\n"); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err := Get(root, "tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if yaml != "yaml: 3\n" || info.Modified {
-		t.Errorf("SetRendered: yaml %q modified %v", yaml, info.Modified)
+	if info.HasTemplate || yaml != "b: 2\n" {
+		t.Errorf("demote: has_template=%v yaml=%q", info.HasTemplate, yaml)
 	}
-	if info.Meta.Knobs["debug_tee"] != false {
-		t.Errorf("knobs not replaced: %v", info.Meta.Knobs)
+	if info.Meta.Knobs != nil {
+		t.Errorf("knobs survived the demotion: %v", info.Meta.Knobs)
+	}
+	if _, err := os.Stat(SourcePath(root, "tpl")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("config.tmpl survived the demotion: %v", err)
+	}
+}
+
+// TestWriteSourceRestoresOnRenderedWriteFailure: the failure-atomicity
+// promise — when the rendered write fails after the source landed, the
+// prior source is put back, so a config never holds a source its yaml
+// doesn't derive from.
+func TestWriteSourceRestoresOnRenderedWriteFailure(t *testing.T) {
+	root := t.TempDir()
+	if err := Create(root, "tpl", testSource); err != nil {
+		t.Fatal(err)
+	}
+	// Make the rendered write fail: a directory where config.yaml goes —
+	// WriteFileAtomic's rename cannot replace it.
+	if err := os.Remove(yamlPath(root, "tpl")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(yamlPath(root, "tpl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	newSrc := strings.Replace(testSource, "hello", "goodbye", 1)
+	if err := WriteSource(root, "tpl", newSrc, "a: goodbye\n", map[string]any{"greeting": "goodbye"}); err == nil {
+		t.Fatal("WriteSource with unwritable yaml = nil, want error")
+	}
+	if src, _ := readSource(root, "tpl"); src != testSource {
+		t.Errorf("source not restored after rendered-write failure: %q", src)
+	}
+	m, err := readMeta(root, "tpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Knobs["greeting"] != "hello" {
+		t.Errorf("knobs changed despite the failed save: %v", m.Knobs)
+	}
+}
+
+// TestCopyCarriesSourcePair: Copy duplicates the source and its knobs along
+// with yaml and presets; provenance is dropped as ever.
+func TestCopyCarriesSourcePair(t *testing.T) {
+	root := t.TempDir()
+	if err := Create(root, "tpl", testSource); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetVar(root, "tpl", "prod", "K", "v"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Copy(root, "tpl", "dup"); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err := Get(root, "dup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasTemplate || info.Provenance != "local" {
+		t.Errorf("copy info = %+v, want has_template local", info)
+	}
+	if yaml != "a: hello\n" || info.Meta.Knobs["greeting"] != "hello" {
+		t.Errorf("copy pair: yaml=%q knobs=%v", yaml, info.Meta.Knobs)
+	}
+	if src, ok, _ := Source(root, "dup"); !ok || src != testSource {
+		t.Errorf("copy source = %q %v", src, ok)
 	}
 	if info.Meta.Presets["prod"]["K"] != "v" {
 		t.Errorf("presets lost: %v", info.Meta.Presets)
 	}
+}
 
-	// SetRendered refuses a config that isn't template-born.
-	if err := Create(root, "plain", "a: 1\n"); err != nil {
+// TestSyncRemoteTier3 walks the remote-source lifecycle: a fetched body
+// with front matter creates/updates the SOURCE (pristine hash covers it),
+// local knobs survive a schema change (removed pruned, new defaulted), and
+// a remote that turns plain demotes the config.
+func TestSyncRemoteTier3(t *testing.T) {
+	root := t.TempDir()
+	remote := testSource
+	fetch := func(url string) ([]byte, error) { return []byte(remote), nil }
+
+	if err := CreateFromURL(root, "r", "https://example.com/c", fetch); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetRendered(root, "plain", "b: 2\n", nil); err == nil || !state.IsBadRequest(err) {
-		t.Errorf("SetRendered on plain config = %v, want BadRequest", err)
+	info, yaml, err := Get(root, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasTemplate || info.Provenance != "remote" || info.Modified {
+		t.Errorf("info = %+v, want has_template remote unmodified", info)
+	}
+	if yaml != "a: hello\n" {
+		t.Errorf("rendered = %q", yaml)
+	}
+
+	// A local knob change does NOT make it modified: the SOURCE carries the
+	// pristine hash, and knobs are local state a sync must respect.
+	if err := WriteSource(root, "r", testSource, "a: hi\n", map[string]any{"greeting": "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	if info, _, _ := Get(root, "r"); info.Modified {
+		t.Error("knob-only change flagged the source as modified")
+	}
+
+	// The remote's schema evolves: greeting is gone, shout arrives. Sync
+	// prunes the stored greeting knob and defaults the new field.
+	remote = `{"name": "t", "description": "d",
+ "fields": [{"name": "shout", "type": "toggle", "label": "S", "default": true}]}
+---
+b: {{.shout}}
+`
+	if err := Sync(root, "r", fetch); err != nil {
+		t.Fatalf("Sync of tier-3 remote: %v", err)
+	}
+	info, yaml, err = Get(root, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if yaml != "b: true\n" {
+		t.Errorf("synced render = %q", yaml)
+	}
+	if info.Modified {
+		t.Error("fresh sync reports modified — pristine hash not moved to the new source")
+	}
+	if _, has := info.Meta.Knobs["greeting"]; has {
+		t.Errorf("removed field survived the sync: %v", info.Meta.Knobs)
+	}
+	if info.Meta.Knobs["shout"] != true {
+		t.Errorf("new field not defaulted: %v", info.Meta.Knobs)
+	}
+
+	// An edited SOURCE is a modified config: sync refuses, resync discards.
+	edited := strings.Replace(remote, "b: ", "c: ", 1)
+	if err := WriteSource(root, "r", edited, "c: true\n", info.Meta.Knobs); err != nil {
+		t.Fatal(err)
+	}
+	if info, _, _ := Get(root, "r"); !info.Modified {
+		t.Fatal("edited source not reported modified")
+	}
+	if err := Sync(root, "r", fetch); err == nil || !state.IsBadRequest(err) {
+		t.Errorf("Sync of modified source = %v, want BadRequest", err)
+	}
+	if err := Resync(root, "r", fetch); err != nil {
+		t.Fatal(err)
+	}
+	if src, _, _ := Source(root, "r"); src != remote {
+		t.Error("resync did not restore the remote source")
+	}
+
+	// The remote turns plain: the source goes, the config is tier 1 again.
+	remote = "plain: true\n"
+	if err := Sync(root, "r", fetch); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err = Get(root, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HasTemplate || yaml != "plain: true\n" || info.Modified || info.Meta.Knobs != nil {
+		t.Errorf("plain sync: %+v yaml=%q", info, yaml)
 	}
 }
 
-// TestTemplateProvenanceInteractions: the existing lifecycle keeps its
-// promises around the new provenance — Copy demotes to local (a copy is
-// yours), Rename keeps the template identity (re-render doesn't depend on
-// the config name), Reset and Sync refuse.
-func TestTemplateProvenanceInteractions(t *testing.T) {
+// TestSnapshotRestoreTier3: last-good captures the whole pair — source,
+// rendered yaml, knobs — and restore brings all of it back.
+func TestSnapshotRestoreTier3(t *testing.T) {
 	root := t.TempDir()
-	if err := CreateFromTemplate(root, "tpl", "yaml: 1\n", "custom-endpoints", map[string]any{}); err != nil {
+	if err := Create(root, "tpl", testSource); err != nil {
 		t.Fatal(err)
 	}
-	if err := Copy(root, "tpl", "copy"); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(`{"active_config":"tpl"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if info, _, _ := Get(root, "copy"); info.Provenance != "local" || info.Meta.Template != "" {
-		t.Errorf("copy provenance %q template %q, want local/none", info.Provenance, info.Meta.Template)
-	}
-	if err := Rename(root, "tpl", "moved"); err != nil {
+	if err := SnapshotActive(root, "tpl"); err != nil {
 		t.Fatal(err)
 	}
-	if info, _, _ := Get(root, "moved"); info.Provenance != "template" || info.Meta.Template != "custom-endpoints" {
-		t.Errorf("rename lost template identity: %+v", info.Meta)
+	// Wreck it: demote to plain, different yaml.
+	if err := WriteYAML(root, "tpl", "wrecked: true\n"); err != nil {
+		t.Fatal(err)
 	}
-	if err := Reset(root, "moved"); err == nil || !state.IsBadRequest(err) {
-		t.Errorf("Reset of template-born = %v, want BadRequest", err)
+	if err := RestoreActive(root); err != nil {
+		t.Fatal(err)
 	}
-	if err := Sync(root, "moved", nil); err == nil || !state.IsBadRequest(err) {
-		t.Errorf("Sync of template-born = %v, want BadRequest (no remote URL)", err)
+	info, yaml, err := Get(root, "tpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasTemplate || yaml != "a: hello\n" || info.Meta.Knobs["greeting"] != "hello" {
+		t.Errorf("restore lost the pair: %+v yaml=%q", info, yaml)
+	}
+	if src, ok, _ := Source(root, "tpl"); !ok || src != testSource {
+		t.Errorf("restored source = %q %v", src, ok)
+	}
+}
+
+// TestEnsurePresetsStripsWizardMeta: a wizard-era template-born config
+// (meta.template + knobs + pristine hash, plain rendered yaml, no
+// config.tmpl) is simply a tier-1/2 config now — the backfill strips the
+// dead marker so no UI shows dead affordances.
+func TestEnsurePresetsStripsWizardMeta(t *testing.T) {
+	root := t.TempDir()
+	if err := Create(root, "wiz", "a: 1\n"); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"pristine_sha256": "abc", "template": "custom-endpoints",
+ "knobs": {"debug_tee": true},
+ "presets": {"default": {}}, "active_preset": "default"}`
+	if err := os.WriteFile(metaPath(root, "wiz"), []byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePresets(root); err != nil {
+		t.Fatal(err)
+	}
+	info, _, err := Get(root, "wiz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Provenance != "local" || info.Modified || info.HasTemplate {
+		t.Errorf("wizard config after backfill = %+v, want plain local", info)
+	}
+	if info.Meta.Template != "" || info.Meta.Knobs != nil || info.Meta.PristineSHA256 != "" {
+		t.Errorf("wizard meta not stripped: %+v", info.Meta)
 	}
 }

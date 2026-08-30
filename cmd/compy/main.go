@@ -40,11 +40,11 @@ const usage = `compy — local OpenTelemetry Collector manager
   compy templates
   compy config list
   compy config show|edit|delete|sync|resync|reset <name>
+  compy config source|edit-source <name>
   compy config create <name> [--from-url URL]
     (otelbin.io share links import as local configs; quote fragment URLs:
      --from-url 'https://www.otelbin.io/#config=...')
-  compy config create <name> --template <template> --knobs <file.json>
-  compy config re-render <name> [--knobs <file.json>] [--discard-edits]
+  compy config create <name> --template <template> [--knobs <file.json>]
   compy config copy <src> <dst>
   compy config rename <old> <new>
   compy config sync-all
@@ -389,7 +389,7 @@ func cmdConfig(args []string) error {
 		name := rest[0]
 		fs := flag.NewFlagSet("config create", flag.ContinueOnError)
 		fromURL := fs.String("from-url", "", "fetch the configuration from this URL (otelbin.io share links import as local configs)")
-		tmpl := fs.String("template", "", "render this catalog template (see `compy templates`)")
+		tmpl := fs.String("template", "", "start from this catalog template — its source is copied in (see `compy templates`)")
 		knobsFile := fs.String("knobs", "", "JSON file with the template's knob values")
 		if err := fs.Parse(rest[1:]); err != nil {
 			return err
@@ -409,33 +409,9 @@ func cmdConfig(args []string) error {
 				if err != nil {
 					return err
 				}
-				return a.CreateFromTemplate(name, *tmpl, knobs)
+				return a.CreateFromCatalog(name, *tmpl, knobs)
 			}
 			return a.CreateConfig(name, blankConfig)
-		})
-	case "re-render":
-		if len(rest) == 0 {
-			return errors.New("config re-render: need a name")
-		}
-		name := rest[0]
-		fs := flag.NewFlagSet("config re-render", flag.ContinueOnError)
-		knobsFile := fs.String("knobs", "", "JSON file with new knob values (omit to re-render with the stored ones)")
-		discard := fs.Bool("discard-edits", false, "re-render even a hand-edited config, discarding the edits (like resync)")
-		if err := fs.Parse(rest[1:]); err != nil {
-			return err
-		}
-		return withApp(func(a *app.App) error {
-			var knobs map[string]any // nil = the stored knobs
-			if *knobsFile != "" {
-				var err error
-				if knobs, err = readKnobs(*knobsFile); err != nil {
-					return err
-				}
-			}
-			if *discard {
-				return a.ReRenderForce(name, knobs)
-			}
-			return a.ReRender(name, knobs)
 		})
 	case "copy":
 		if len(rest) != 2 {
@@ -458,7 +434,7 @@ func cmdConfig(args []string) error {
 			p = &cleared
 		}
 		return withApp(func(a *app.App) error { return a.UpdateConfigMeta(name, p) })
-	case "show", "edit", "delete", "sync", "resync", "reset":
+	case "show", "edit", "source", "edit-source", "delete", "sync", "resync", "reset":
 		if len(rest) != 1 {
 			return fmt.Errorf("config %s: need exactly one name", sub)
 		}
@@ -472,6 +448,18 @@ func cmdConfig(args []string) error {
 				}
 				fmt.Print(yaml)
 				return nil
+			case "source":
+				src, ok, err := a.ConfigSource(name)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return fmt.Errorf("config %q has no template source (it is plain yaml; see `compy config show`)", name)
+				}
+				fmt.Print(src)
+				return nil
+			case "edit-source":
+				return editSource(a, name)
 			case "delete":
 				return a.DeleteConfig(name)
 			case "sync":
@@ -483,6 +471,11 @@ func cmdConfig(args []string) error {
 			default:
 				if !state.ValidBackendName(name) {
 					return fmt.Errorf("invalid config name %q", name)
+				}
+				if info, _, err := a.Config(name); err == nil && info.HasTemplate {
+					// The yaml is rendered output; hand it to the editor and
+					// the save would silently demote the config to plain.
+					return fmt.Errorf("config %q is templated; edit the source with `compy config edit-source %s`", name, name)
 				}
 				return editThen(a.ConfigPath(name),
 					func(s string) error { return a.WriteConfigYAML(name, s) })
@@ -951,6 +944,37 @@ func cmdUI(args []string) error {
 			_ = exec.Command("open", url).Run()
 		}
 		return webui.ServeListener(ln, a.WebUIAPI())
+	})
+}
+
+// editSource opens a COPY of the template source in $EDITOR, then runs the
+// edited text through the save pipeline (render, validate-or-restore). A
+// copy, not the live file: the pipeline's nothing-was-saved promise means a
+// rejected save leaves the stored source untouched, which editing in place
+// would break before the save even ran.
+func editSource(a *app.App, name string) error {
+	src, ok, err := a.ConfigSource(name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("config %q has no template source to edit (plain yaml: use `compy config edit`)", name)
+	}
+	tmp, err := os.CreateTemp("", "compy-"+name+"-*.tmpl")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(src); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return editThen(tmp.Name(), func(s string) error {
+		_, err := a.WriteConfigSource(name, s, nil, true)
+		return err
 	})
 }
 
