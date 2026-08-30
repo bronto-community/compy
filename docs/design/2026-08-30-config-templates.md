@@ -556,3 +556,51 @@ front matter (it is the reference users copy); its body is
 byte-identical. Existing configs that copied the JSON-fronted source
 own their copies and simply stay JSON — the catalog is a starter,
 nothing upgrades template copies.
+
+---
+
+## Amendment 6 — free vars: tier 3 contains tier 2 (as shipped)
+
+Owner-found gap: a hand-written `${env:ASDF}` in a tier-3 body was dead
+capability — not a schema field so not in the form, and the tier-3 env
+split exported only secrets, so the var could never be set. That broke
+the ladder ruling (tier N contains tier N−1's capability) and the
+Amendment 4 model (presets own ALL of a config's values). Fixed:
+
+- **Discovery** (`catalog.FreeVars(rendered, bag)`): the tier-2 vars
+  parser runs over a preset's RENDER; free vars = the extracted `${env:}`
+  refs minus `COMPY_*`, minus the bag's derived secret env names
+  (`SecretEnv`'s walk, unset secrets included), minus any name colliding
+  with a top-level schema key (**schema wins** — that is the collision
+  rule; field names are conventionally lower_snake and env vars
+  UPPER_SNAKE, so it never bites in practice). Trailing-comment
+  descriptions and `:-defaults` come free from tier-2 machinery.
+  Discovery is per-preset: a ref inside an `{{if}}` that didn't render
+  doesn't exist for that preset.
+- **Bag membership**: a free var is an ordinary STRING in the preset
+  bag, keyed by the var's own name, verbatim. `NormalizeBag` and
+  `PruneUnknown` pass unknown top-level strings through (unknown
+  non-strings still 400/prune — the typo guard survives for structured
+  values). `Reconcile` (source save, sync) additionally prunes a stored
+  free-var value whose name that bag's own render no longer references
+  — the removed-field rule applied to free vars; they are not secrets
+  (secrets are schema fields, always kept), so pruning is safe. An
+  unrenderable bag keeps its free values (lenient, as ever).
+- **Env split becomes** (`catalog.EnvFor`): secrets + free-var values +
+  `COMPY_*` (compy's ports win, added last). The render still never
+  bakes a free var — the ref stays in the yaml and the collector
+  expands it, exactly as tier 2; schema non-secret values still never
+  travel via env (locked by test).
+- **Pre-flight**: `cfgstore.MissingRequired` adds the tier-2 rule over
+  the preset's render — a free var with no `:-default` and no bag value
+  is missing (by var name, next to the schema's field paths). The web
+  client's `missingRequiredT3` mirror does NOT yet know free vars —
+  UI-round work.
+- **Surfaces**: `GET /api/configs/{name}` gains `free_vars`
+  ({preset → [Var]}, the openapi `ConfigDetail` schema documents it);
+  values ride the existing preset routes (`PUT presets/{p}` bags,
+  `compy presets set CFG P ASDF=v` — unknown keys already fell through
+  as strings and now stick). `compy vars` appends free-var rows (type
+  `env`) to the tier-3 table, unioned across presets.
+- **No migration**: free vars are computed at read/activation time from
+  source + bag; existing tier-3 configs light up on their next GET.
