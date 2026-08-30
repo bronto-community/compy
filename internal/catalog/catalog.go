@@ -1,25 +1,31 @@
-// Package catalog holds compy's config templates: embedded catalog/*.tmpl
-// files (front-matter schema + "---" + Go text/template body) that a
-// creation form renders ONCE into plain collector YAML. Only `type: secret`
-// fields survive the render as ${env:NAME} references (with trailing
-// comments, so the vars parser gives them cards for free); everything else
-// bakes as literals. See docs/design/2026-08-30-config-templates.md.
+// Package catalog is compy's config-template engine: it parses tier-3
+// config SOURCES (front-matter schema + "---" + Go text/template body),
+// validates knob values against the schema, and renders the body into plain
+// collector YAML. Only `type: secret` fields survive the render as
+// ${env:NAME} references (with trailing comments, so the vars parser gives
+// them cards for free); everything else bakes as literals. See
+// docs/design/2026-08-30-config-templates.md, Amendment 3: templating is a
+// property of the config source — anyone can WRITE a templated config, and
+// the embedded catalog/*.tmpl entries are just starters whose source is
+// copied into a new config.
 //
-// The front matter is the JSON subset of YAML: templates ship compiled in
-// and compy is stdlib-only, so the schema is decoded with encoding/json —
-// fields are arrays, which preserves declaration order (form order) for
-// free.
+// The front matter is the JSON subset of YAML: compy is stdlib-only, so the
+// schema is decoded with encoding/json — fields are arrays, which preserves
+// declaration order (form order) for free.
 //
-// Boring rule, enforced by construction: template bodies get `if` and
-// `range` only, plus the two helper funcs `upper` and `slug`. Anything
-// needing logic (temporality splits, processor order, exporter lists) is
-// computed here in Go and handed to the body as flat values.
+// Boring rule (authoring guidance for user templates, enforced for shipped
+// ones): template bodies get `if` and `range` only, plus the two helper
+// funcs `upper` and `slug`. Anything needing logic (temporality splits,
+// processor order, exporter lists) is computed here in Go and handed to
+// every render as a flat vocabulary (Backends, MetricsGroups, TracesProcs,
+// …) derived from the recognized knobs.
 package catalog
 
 import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"path"
 	"regexp"
@@ -64,8 +70,8 @@ type Repeat struct {
 	Fields []Field `json:"fields"`
 }
 
-// Template is one catalog entry: the schema (serialized to the UI as-is)
-// plus the parsed body.
+// Template is one parsed config source: the schema (serialized to the UI
+// as-is), the parsed body, and the raw source text it came from.
 type Template struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
@@ -73,7 +79,12 @@ type Template struct {
 	Fields      []Field   `json:"fields,omitempty"`   // config-level
 	Backends    *Repeat   `json:"backends,omitempty"` // repeat group
 	body        *template.Template
+	raw         string
 }
+
+// Source is the raw source text this template was parsed from — what
+// creating a config from a catalog entry copies into configs/<name>/config.tmpl.
+func (t Template) Source() string { return t.raw }
 
 var fieldTypes = map[string]bool{
 	"slug": true, "url": true, "string": true, "choice": true,
@@ -110,9 +121,13 @@ var load = sync.OnceValues(func() ([]Template, error) {
 		if err != nil {
 			return nil, err
 		}
-		t, err := parse(strings.TrimSuffix(e.Name(), path.Ext(e.Name())), string(data))
+		name := strings.TrimSuffix(e.Name(), path.Ext(e.Name()))
+		t, err := ParseSource(string(data))
 		if err != nil {
 			return nil, fmt.Errorf("template %s: %w", e.Name(), err)
+		}
+		if t.Name != name {
+			return nil, fmt.Errorf("template %s: schema name %q does not match filename", e.Name(), t.Name)
 		}
 		ts = append(ts, t)
 	}
@@ -120,31 +135,40 @@ var load = sync.OnceValues(func() ([]Template, error) {
 	return ts, nil
 })
 
-// parse splits front matter from body at the first "---" line and checks
-// the schema's internal consistency.
-func parse(name, content string) (Template, error) {
+// IsSource reports whether content is tier-3 template source rather than
+// plain collector YAML. The rule is textual, like ${env:} detection: the
+// content opens with the JSON front matter (first non-blank byte '{') and
+// carries the "---" separator line. Plain collector YAML starts with a key,
+// a comment, or a document marker — never '{'.
+func IsSource(content string) bool {
+	trimmed := strings.TrimLeft(content, " \t\r\n")
+	return strings.HasPrefix(trimmed, "{") && strings.Contains(content, "\n---\n")
+}
+
+// ParseSource parses a config source: front matter split from body at the
+// first "---" line, schema checked for internal consistency, body compiled.
+// Errors are BadRequest-marked — the source is the user's file.
+func ParseSource(content string) (Template, error) {
 	front, body, found := strings.Cut(content, "\n---\n")
 	if !found {
-		return Template{}, fmt.Errorf(`missing "---" separator between schema and body`)
+		return Template{}, userErrf(`template source: missing "---" separator between schema and body`)
 	}
 	var t Template
 	dec := json.NewDecoder(strings.NewReader(front))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&t); err != nil {
-		return Template{}, fmt.Errorf("schema: %w", err)
-	}
-	if t.Name != name {
-		return Template{}, fmt.Errorf("schema name %q does not match filename %q", t.Name, name)
+		return Template{}, userErrf("template schema: %v", err)
 	}
 	if err := t.checkSchema(); err != nil {
-		return Template{}, err
+		return Template{}, state.BadRequest(err)
 	}
 	body = strings.TrimPrefix(body, "\n")
-	tmpl, err := template.New(name).Funcs(funcs).Option("missingkey=error").Parse(body)
+	tmpl, err := template.New(t.Name).Funcs(funcs).Option("missingkey=error").Parse(body)
 	if err != nil {
-		return Template{}, fmt.Errorf("body: %w", err)
+		return Template{}, userErrf("template body: %v", err)
 	}
 	t.body = tmpl
+	t.raw = content
 	return t, nil
 }
 
@@ -383,21 +407,58 @@ func (t Template) NormalizeKnobs(knobs map[string]any) (map[string]any, error) {
 	return out, nil
 }
 
-// Render validates knobs and executes the template body over the computed
-// data. storageDir is where the offline queue's file_storage extension
+// PruneUnknown drops knob keys the schema does not declare (secrets
+// included — they are never knobs), backend rows' unknown keys too. It is
+// how stored knobs survive a schema edit: removed fields vanish here, new
+// fields pick up their defaults in NormalizeKnobs. A nil map prunes to an
+// empty one.
+func (t Template) PruneUnknown(knobs map[string]any) map[string]any {
+	keep := func(fields []Field, in map[string]any) map[string]any {
+		known := map[string]bool{}
+		for _, f := range fields {
+			known[f.Name] = f.Type != "secret"
+		}
+		out := map[string]any{}
+		for k, v := range in {
+			if known[k] {
+				out[k] = v
+			}
+		}
+		return out
+	}
+	out := keep(t.Fields, knobs)
+	if t.Backends != nil {
+		if rows, ok := knobs["backends"].([]any); ok {
+			var pruned []any
+			for _, r := range rows {
+				if row, ok := r.(map[string]any); ok {
+					pruned = append(pruned, keep(t.Backends.Fields, row))
+				}
+			}
+			out["backends"] = pruned
+		}
+	}
+	return out
+}
+
+// Render validates knobs and executes the template body. The data is the
+// normalized knob map merged with the computed vocabulary (Backends,
+// MetricsGroups, TracesProcs, …) every template body may draw on — user
+// templates included, so a copied catalog source keeps rendering after
+// edits. storageDir is where the offline queue's file_storage extension
 // keeps its state — the caller's state directory; it bakes in as a literal.
+// Execution errors are BadRequest-marked: the body is the user's file.
 func (t Template) Render(knobs map[string]any, storageDir string) (string, error) {
 	norm, err := t.NormalizeKnobs(knobs)
 	if err != nil {
 		return "", err
 	}
-	var data any = norm
-	if t.Name == "custom-endpoints" {
-		data = customEndpointsData(norm, storageDir)
-	}
+	data := map[string]any{}
+	maps.Copy(data, norm)
+	maps.Copy(data, vocabulary(norm, storageDir))
 	var b strings.Builder
 	if err := t.body.Execute(&b, data); err != nil {
-		return "", fmt.Errorf("render %s: %w", t.Name, err)
+		return "", userErrf("render %s: %v", t.Name, err)
 	}
 	return b.String(), nil
 }

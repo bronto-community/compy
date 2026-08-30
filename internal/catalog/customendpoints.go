@@ -2,9 +2,13 @@ package catalog
 
 import "strings"
 
-// This file is the Go half of the custom-endpoints template: everything the
-// boring rule keeps out of the body. The body only ranges over what is
-// computed here.
+// This file is the Go half of the render vocabulary: everything the boring
+// rule keeps out of template bodies. It computes flat values from whichever
+// recognized knobs a schema declares (the custom-endpoints shapes:
+// "backends" rows, the pipeline toggles) — with safe lookups throughout, so
+// a user template that declares only some of them still renders, the rest
+// zero-valued. The shipped custom-endpoints body only ranges over what is
+// computed here; user templates may draw on the same names.
 
 // ceBackend is one backend row, ready to render.
 type ceBackend struct {
@@ -44,17 +48,21 @@ func envVarFor(name string) string {
 	return strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_API_KEY"
 }
 
-// customEndpointsData computes the render data from normalized knobs:
+// vocabulary computes the render data from normalized knobs:
 // needs_delta/needs_cumulative, the temporality-split metrics groups, the
 // canonical processor order, and the per-signal exporter lists (debug tee
-// included).
-func customEndpointsData(norm map[string]any, storageDir string) ceData {
+// included). Every lookup is safe: a schema that doesn't declare a knob gets
+// the zero (or the shipped default, for a backend row's shape fields), so
+// any template — user-authored included — can use as much or as little of
+// the vocabulary as it declares knobs for.
+func vocabulary(norm map[string]any, storageDir string) map[string]any {
+	knob := func(k string) bool { b, _ := norm[k].(bool); return b }
 	d := ceData{
-		MemoryLimiter:     norm["memory_limiter"].(bool),
-		Batch:             norm["batch"].(bool),
-		ResourceDetection: norm["resource_detection"].(bool),
-		OfflineQueue:      norm["offline_queue"].(bool),
-		DebugTee:          norm["debug_tee"].(bool),
+		MemoryLimiter:     knob("memory_limiter"),
+		Batch:             knob("batch"),
+		ResourceDetection: knob("resource_detection"),
+		OfflineQueue:      knob("offline_queue"),
+		DebugTee:          knob("debug_tee"),
 		StorageDir:        storageDir,
 	}
 
@@ -64,13 +72,23 @@ func customEndpointsData(norm map[string]any, storageDir string) ceData {
 		temporality string
 	}
 	var backends []be
-	for _, r := range norm["backends"].([]any) {
-		row := r.(map[string]any)
-		name := row["name"].(string)
-		scheme := row["auth_scheme"].(string)
+	rows, _ := norm["backends"].([]any)
+	for _, r := range rows {
+		row, _ := r.(map[string]any)
+		name, _ := row["name"].(string)
+		endpoint, _ := row["endpoint"].(string)
+		scheme, _ := row["auth_scheme"].(string)
 		prefix := ""
-		if scheme != "none" {
+		if scheme != "" && scheme != "none" {
 			prefix = scheme + " "
+		}
+		temporality, _ := row["temporality"].(string)
+		if temporality == "" {
+			temporality = "as-is"
+		}
+		signals, ok := row["signals"].([]string)
+		if !ok {
+			signals = []string{"traces", "metrics", "logs"}
 		}
 		authHeader, _ := row["auth_header"].(string)
 		extraHeader, _ := row["extra_header"].(string)
@@ -81,7 +99,7 @@ func customEndpointsData(norm map[string]any, storageDir string) ceData {
 		b := be{
 			data: ceBackend{
 				Name:        name,
-				Endpoint:    row["endpoint"].(string),
+				Endpoint:    endpoint,
 				AuthHeader:  authHeader,
 				AuthPrefix:  prefix,
 				EnvVar:      envVarFor(name),
@@ -90,9 +108,9 @@ func customEndpointsData(norm map[string]any, storageDir string) ceData {
 				HasHeaders:  authHeader != "" || extraHeader != "",
 			},
 			signals:     map[string]bool{},
-			temporality: row["temporality"].(string),
+			temporality: temporality,
 		}
-		for _, s := range row["signals"].([]string) {
+		for _, s := range signals {
 			b.signals[s] = true
 		}
 		backends = append(backends, b)
@@ -175,5 +193,23 @@ func customEndpointsData(norm map[string]any, storageDir string) ceData {
 
 	d.AnyProcs = d.MemoryLimiter || d.ResourceDetection || d.Batch ||
 		d.NeedsDelta || d.NeedsCumulative
-	return d
+	return map[string]any{
+		"Backends":          d.Backends,
+		"MemoryLimiter":     d.MemoryLimiter,
+		"Batch":             d.Batch,
+		"ResourceDetection": d.ResourceDetection,
+		"OfflineQueue":      d.OfflineQueue,
+		"DebugTee":          d.DebugTee,
+		"NeedsDelta":        d.NeedsDelta,
+		"NeedsCumulative":   d.NeedsCumulative,
+		"AnyProcs":          d.AnyProcs,
+		"HasTraces":         d.HasTraces,
+		"HasLogs":           d.HasLogs,
+		"TracesProcs":       d.TracesProcs,
+		"TracesExps":        d.TracesExps,
+		"LogsProcs":         d.LogsProcs,
+		"LogsExps":          d.LogsExps,
+		"MetricsGroups":     d.MetricsGroups,
+		"StorageDir":        d.StorageDir,
+	}
 }

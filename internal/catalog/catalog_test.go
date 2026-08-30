@@ -308,3 +308,142 @@ func TestEnvVarFor(t *testing.T) {
 		t.Errorf("envVarFor = %q", got)
 	}
 }
+
+// TestIsSource is the tier-detection rule: JSON front matter + separator is
+// source; plain collector YAML in its usual shapes is not.
+func TestIsSource(t *testing.T) {
+	src := `{"name": "t", "fields": []}
+---
+a: 1
+`
+	for _, tc := range []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"source", src, true},
+		{"source with leading blank lines", "\n\n" + src, true},
+		{"plain yaml", "receivers: {}\n", false},
+		{"yaml doc marker", "---\nreceivers: {}\n", false},
+		{"yaml containing a --- line", "a: |\n  x\n---\nb: 1\n", false},
+		{"front matter without separator", `{"name": "t"}` + "\nbody\n", false},
+		{"empty", "", false},
+	} {
+		if got := IsSource(tc.content); got != tc.want {
+			t.Errorf("%s: IsSource = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestParseSource: user sources need no filename to match, keep their raw
+// text (what a catalog create copies), and every parse failure is a
+// BadRequest naming the trouble.
+func TestParseSource(t *testing.T) {
+	src := `{"name": "whatever", "description": "d",
+ "fields": [{"name": "g", "type": "string", "label": "G", "default": "x"}]}
+---
+a: {{.g}}
+`
+	tmpl, err := ParseSource(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tmpl.Source() != src {
+		t.Error("Source() does not round-trip the raw text")
+	}
+	out, err := tmpl.Render(nil, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "a: x\n" {
+		t.Errorf("render = %q", out)
+	}
+
+	for _, tc := range []struct{ name, content, wantIn string }{
+		{"no separator", `{"name": "t"}` + "\nbody", "---"},
+		{"bad json", "{nope\n---\nbody\n", "schema"},
+		{"unknown schema key", `{"name": "t", "wat": 1}` + "\n---\nbody\n", "wat"},
+		{"bad field type", `{"name": "t", "fields": [{"name": "x", "type": "wat"}]}` + "\n---\nbody\n", "unknown type"},
+		{"bad body", `{"name": "t"}` + "\n---\n{{end}}\n", "body"},
+	} {
+		_, err := ParseSource(tc.content)
+		if err == nil {
+			t.Errorf("%s: parsed, want error", tc.name)
+			continue
+		}
+		if !state.IsBadRequest(err) {
+			t.Errorf("%s: err %v not BadRequest-marked", tc.name, err)
+		}
+		if !strings.Contains(err.Error(), tc.wantIn) {
+			t.Errorf("%s: err %q missing %q", tc.name, err, tc.wantIn)
+		}
+	}
+}
+
+// TestPruneUnknown: fields the schema no longer declares vanish (secrets
+// always do), backend rows included — how stored knobs survive a schema
+// edit — while declared values pass through untouched.
+func TestPruneUnknown(t *testing.T) {
+	tmpl := get(t, "custom-endpoints")
+	knobs := map[string]any{
+		"debug_tee": true,
+		"gone":      "x",
+		"backends": []any{map[string]any{
+			"name": "hc", "endpoint": "https://x.example",
+			"api_key": "shh", "old_field": 1,
+		}},
+	}
+	out := tmpl.PruneUnknown(knobs)
+	if _, has := out["gone"]; has {
+		t.Errorf("unknown field survived: %v", out)
+	}
+	if out["debug_tee"] != true {
+		t.Errorf("declared field lost: %v", out)
+	}
+	row := out["backends"].([]any)[0].(map[string]any)
+	if _, has := row["api_key"]; has {
+		t.Errorf("secret survived the prune: %v", row)
+	}
+	if _, has := row["old_field"]; has {
+		t.Errorf("unknown row field survived: %v", row)
+	}
+	if row["name"] != "hc" || row["endpoint"] != "https://x.example" {
+		t.Errorf("declared row values lost: %v", row)
+	}
+	if got := tmpl.PruneUnknown(nil); len(got) != 0 {
+		t.Errorf("PruneUnknown(nil) = %v, want empty", got)
+	}
+}
+
+// TestVocabularyForUserTemplates: a hand-written template that declares
+// only SOME of the recognized knobs still renders — the vocabulary fills
+// zero values (and shipped row defaults) for the rest instead of panicking.
+func TestVocabularyForUserTemplates(t *testing.T) {
+	src := `{"name": "mini", "description": "d",
+ "backends": {"min": 1, "max": 2, "fields": [
+   {"name": "name", "type": "slug", "label": "N"},
+   {"name": "endpoint", "type": "url", "label": "E"}]}}
+---
+exporters:
+{{range .Backends}}  otlphttp/{{.Name}}:
+    endpoint: {{.Endpoint}}
+{{end}}service:
+  pipelines:
+{{if .HasTraces}}    traces: {exporters: [{{.TracesExps}}]}
+{{end}}`
+	tmpl, err := ParseSource(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := tmpl.Render(map[string]any{
+		"backends": []any{map[string]any{"name": "b", "endpoint": "https://x.example"}},
+	}, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No signals field declared → the row defaults to all signals; no
+	// toggles declared → no processors in the lists.
+	if !strings.Contains(out, "traces: {exporters: [otlphttp/b]}") {
+		t.Errorf("vocabulary defaults missing:\n%s", out)
+	}
+}
