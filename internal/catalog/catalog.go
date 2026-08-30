@@ -9,9 +9,11 @@
 // the embedded catalog/*.tmpl entries are just starters whose source is
 // copied into a new config.
 //
-// The front matter is the JSON subset of YAML: compy is stdlib-only, so the
-// schema is decoded with encoding/json — fields are arrays, which preserves
-// declaration order (form order) for free.
+// The front matter comes in two forms, both first-class forever: JSON
+// (first non-blank byte '{', then a "---" separator line — the original
+// form) and YAML between "---" marker lines (the standard front-matter
+// convention). Both decode into the same schema structs; fields are arrays
+// either way, which preserves declaration order (form order) for free.
 //
 // Boring rule (authoring guidance for user templates, enforced for shipped
 // ones): template bodies get `if` and `range` only, plus the two helper
@@ -33,6 +35,8 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/bronto-community/compy/internal/state"
 )
@@ -135,29 +139,125 @@ var load = sync.OnceValues(func() ([]Template, error) {
 	return ts, nil
 })
 
-// IsSource reports whether content is tier-3 template source rather than
-// plain collector YAML. The rule is textual, like ${env:} detection: the
-// content opens with the JSON front matter (first non-blank byte '{') and
-// carries the "---" separator line. Plain collector YAML starts with a key,
-// a comment, or a document marker — never '{'.
-func IsSource(content string) bool {
+// yamlFront splits a YAML-fronted source — "---" line, schema, "---" line,
+// body — the standard front-matter convention. ok demands only the SHAPE:
+// the first non-blank line is exactly "---" (trailing whitespace allowed)
+// and a closing "---" line exists. front comes back padded with one blank
+// line per consumed line before the schema (leading blanks + the opening
+// marker), so yaml.v3's error line numbers land relative to the FULL source
+// with no arithmetic.
+func yamlFront(content string) (front, body string, ok bool) {
+	marker := func(line string) bool { return strings.TrimRight(line, " \t\r") == "---" }
+	rest := content
+	var b strings.Builder
+	for {
+		line, tail, found := strings.Cut(rest, "\n")
+		if !found {
+			return "", "", false
+		}
+		rest = tail
+		b.WriteByte('\n')
+		if marker(line) {
+			break
+		}
+		if strings.TrimSpace(line) != "" {
+			return "", "", false
+		}
+	}
+	for {
+		line, tail, found := strings.Cut(rest, "\n")
+		if marker(line) {
+			return b.String(), tail, true
+		}
+		if !found {
+			return "", "", false
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+		rest = tail
+	}
+}
+
+// parseYAMLSchema strictly decodes YAML front matter into the schema —
+// KnownFields mirrors the JSON path's DisallowUnknownFields. The struct
+// field names lowercase to exactly the schema's keys, so no yaml tags are
+// needed.
+func parseYAMLSchema(front string) (Template, error) {
+	dec := yaml.NewDecoder(strings.NewReader(front))
+	dec.KnownFields(true)
+	var t Template
+	if err := dec.Decode(&t); err != nil {
+		return Template{}, fmt.Errorf("template schema: %v", err)
+	}
+	return t, nil
+}
+
+// LooksLikeSource reports whether content is textually SHAPED like a tier-3
+// source in either front-matter form, without judging whether the schema
+// parses. The source-save route uses it to decide between "this was never
+// meant as a source" and "this is a source attempt whose schema deserves a
+// loud parse error".
+func LooksLikeSource(content string) bool {
+	if _, _, ok := yamlFront(content); ok {
+		return true
+	}
 	trimmed := strings.TrimLeft(content, " \t\r\n")
 	return strings.HasPrefix(trimmed, "{") && strings.Contains(content, "\n---\n")
 }
 
-// ParseSource parses a config source: front matter split from body at the
-// first "---" line, schema checked for internal consistency, body compiled.
-// Errors are BadRequest-marked — the source is the user's file.
-func ParseSource(content string) (Template, error) {
-	front, body, found := strings.Cut(content, "\n---\n")
-	if !found {
-		return Template{}, userErrf(`template source: missing "---" separator between schema and body`)
+// IsSource reports whether content is tier-3 template source rather than
+// plain collector YAML. Two front-matter forms commit differently:
+//
+//   - JSON (the original): textual, like ${env:} detection — first
+//     non-blank byte '{' plus a "---" separator line. Plain collector YAML
+//     never starts with '{', so text is enough.
+//   - YAML ("---" schema "---" body): a plain collector config may legally
+//     open with "---" (the YAML document marker), so shape alone cannot
+//     commit. The between-text must also strictly decode into the schema
+//     struct AND carry a name — otherwise the content is a plain config
+//     and falls through QUIETLY (the paste/demote path must not error).
+//
+// Once a form commits, broken details (bad field types, a body that will
+// not compile) error loudly in ParseSource, same as JSON always has.
+// KEEP IN LOCKSTEP with isSourceText in webui/static/helpers.js.
+func IsSource(content string) bool {
+	if front, _, ok := yamlFront(content); ok {
+		t, err := parseYAMLSchema(front)
+		return err == nil && t.Name != ""
 	}
+	trimmed := strings.TrimLeft(content, " \t\r\n")
+	return strings.HasPrefix(trimmed, "{") && strings.Contains(content, "\n---\n")
+}
+
+// ParseSource parses a config source: front matter split from body (YAML
+// form: between the "---" marker lines; JSON form: at the first "---"
+// line), schema checked for internal consistency, body compiled. Schema
+// errors carry line numbers relative to the full source (the YAML decoder
+// sees position-preserving padding). Errors are BadRequest-marked — the
+// source is the user's file.
+func ParseSource(content string) (Template, error) {
 	var t Template
-	dec := json.NewDecoder(strings.NewReader(front))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&t); err != nil {
-		return Template{}, userErrf("template schema: %v", err)
+	var body string
+	if front, b, ok := yamlFront(content); ok {
+		var err error
+		if t, err = parseYAMLSchema(front); err != nil {
+			return Template{}, state.BadRequest(err)
+		}
+		if t.Name == "" {
+			return Template{}, userErrf("template schema: name is required")
+		}
+		body = b
+	} else {
+		front, b, found := strings.Cut(content, "\n---\n")
+		if !found {
+			return Template{}, userErrf(`template source: missing "---" separator between schema and body`)
+		}
+		dec := json.NewDecoder(strings.NewReader(front))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&t); err != nil {
+			return Template{}, userErrf("template schema: %v", err)
+		}
+		body = b
 	}
 	if err := t.checkSchema(); err != nil {
 		return Template{}, state.BadRequest(err)

@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	fyne.io/systray v1.12.2
 	github.com/wailsapp/wails/v2 v2.15.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

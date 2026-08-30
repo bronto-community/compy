@@ -323,13 +323,17 @@ func TestEnvVarFor(t *testing.T) {
 	}
 }
 
-// TestIsSource is the tier-detection rule: JSON front matter + separator is
-// source; plain collector YAML in its usual shapes is not.
+// TestIsSource is the tier-detection rule. JSON front matter + separator is
+// source (textual commit); YAML front matter between "---" marker lines
+// commits only when the between-text strictly parses as a schema with a
+// name — plain collector YAML in its usual shapes, the "---" document
+// marker included, is not.
 func TestIsSource(t *testing.T) {
 	src := `{"name": "t", "fields": []}
 ---
 a: 1
 `
+	ysrc := "---\nname: t\nfields: []\n---\na: 1\n"
 	for _, tc := range []struct {
 		name    string
 		content string
@@ -342,9 +346,150 @@ a: 1
 		{"yaml containing a --- line", "a: |\n  x\n---\nb: 1\n", false},
 		{"front matter without separator", `{"name": "t"}` + "\nbody\n", false},
 		{"empty", "", false},
+		{"yaml front matter", ysrc, true},
+		{"yaml front matter with leading blank lines", "\n\n" + ysrc, true},
+		{"yaml front matter, minimal (name only)", "---\nname: t\n---\nbody\n", true},
+		{"yaml front matter, marker trailing whitespace", "--- \nname: t\n--- \nbody\n", true},
+		{"doc marker plus a later --- but no schema", "---\nreceivers: {}\n---\nexporters: {}\n", false},
+		{"yaml front matter, broken yaml between markers", "---\nname: t\nbroken: [\n---\nbody\n", false},
+		{"yaml front matter, unknown schema key", "---\nname: t\nwat: 1\n---\nbody\n", false},
+		{"yaml front matter, no name", "---\ndescription: d\n---\nbody\n", false},
+		{"yaml front matter, comments only", "---\n# nothing\n---\nbody\n", false},
+		{"opening marker without a closing one", "---\nname: t\nbody\n", false},
 	} {
 		if got := IsSource(tc.content); got != tc.want {
 			t.Errorf("%s: IsSource = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestLooksLikeSource: the textual-shape test the source-save route uses to
+// pick between "never meant as a source" (generic 400) and "a source
+// attempt whose schema deserves the loud parse error".
+func TestLooksLikeSource(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"json form", `{"name": "t"}` + "\n---\na: 1\n", true},
+		{"yaml form, valid schema", "---\nname: t\n---\nbody\n", true},
+		{"yaml form, broken schema still looks like one", "---\nname: t\nwat: 1\n---\nbody\n", true},
+		{"doc marker with a closing --- looks like one", "---\nreceivers: {}\n---\nmore: {}\n", true},
+		{"plain yaml", "receivers: {}\n", false},
+		{"doc marker without a closing ---", "---\nreceivers: {}\n", false},
+		{"empty", "", false},
+	} {
+		if got := LooksLikeSource(tc.content); got != tc.want {
+			t.Errorf("%s: LooksLikeSource = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestYAMLFrontMatterTwin: the same schema written as YAML front matter and
+// as JSON front matter parses to the identical schema struct — order,
+// defaults, options, repeat bounds — and renders the identical output.
+func TestYAMLFrontMatterTwin(t *testing.T) {
+	body := "a: {{.g}}\n{{range .backends}}b: {{.name}}\n{{end}}"
+	jsonSrc := `{"name": "twin", "description": "d",
+ "sections": [{"id": "s", "label": "S", "collapsed": true}],
+ "fields": [
+   {"name": "g", "type": "string", "label": "G", "default": "x", "section": "s"},
+   {"name": "on", "type": "toggle", "label": "O", "default": true},
+   {"name": "k", "type": "secret", "label": "K", "description": "a key"}],
+ "backends": {"min": 1, "max": 3, "fields": [
+   {"name": "name", "type": "slug", "label": "N"},
+   {"name": "signals", "type": "multi", "label": "Sig", "options": ["a", "b"], "default": ["a"], "advanced": true}]}}
+---
+` + body
+	yamlSrc := `---
+name: twin
+description: d
+sections:
+  - id: s
+    label: S
+    collapsed: true
+fields:
+  - name: g
+    type: string
+    label: G
+    default: x
+    section: s
+  - name: on
+    type: toggle
+    label: O
+    default: true
+  - name: k
+    type: secret
+    label: K
+    description: a key
+backends:
+  min: 1
+  max: 3
+  fields:
+    - name: name
+      type: slug
+      label: N
+    - name: signals
+      type: multi
+      label: Sig
+      options: [a, b]
+      default: [a]
+      advanced: true
+---
+` + body
+	jt, err := ParseSource(jsonSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yt, err := ParseSource(yamlSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strip := func(t Template) Template { t.body, t.raw = nil, ""; return t }
+	if !reflect.DeepEqual(strip(jt), strip(yt)) {
+		t.Errorf("schemas differ:\njson: %+v\nyaml: %+v", strip(jt), strip(yt))
+	}
+	if yt.Source() != yamlSrc {
+		t.Error("Source() does not round-trip the raw YAML-fronted text")
+	}
+	bag := map[string]any{"backends": []any{map[string]any{"name": "one", "signals": []string{"b"}}}}
+	jout, err := jt.Render(bag, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	yout, err := yt.Render(bag, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jout != yout {
+		t.Errorf("renders differ:\njson: %q\nyaml: %q", jout, yout)
+	}
+}
+
+// TestParseSourceYAMLErrors: schema trouble in YAML front matter errors
+// loudly (BadRequest), names the trouble, and carries line numbers relative
+// to the FULL source (opening marker and leading blanks counted).
+func TestParseSourceYAMLErrors(t *testing.T) {
+	for _, tc := range []struct{ name, content, wantIn string }{
+		{"unknown schema key (KnownFields)", "---\nname: t\nwat: 1\n---\nbody\n", "wat"},
+		{"unknown key line is full-source-relative", "---\nname: t\nwat: 1\n---\nbody\n", "line 3"},
+		{"leading blanks count too", "\n\n---\nname: t\nwat: 1\n---\nbody\n", "line 5"},
+		{"broken yaml", "---\nname: t\nbroken: [\n---\nbody\n", "schema"},
+		{"name required", "---\ndescription: d\n---\nbody\n", "name is required"},
+		{"bad field type", "---\nname: t\nfields:\n  - name: x\n    type: wat\n---\nbody\n", "unknown type"},
+		{"bad body", "---\nname: t\n---\n{{end}}\n", "body"},
+	} {
+		_, err := ParseSource(tc.content)
+		if err == nil {
+			t.Errorf("%s: parsed, want error", tc.name)
+			continue
+		}
+		if !state.IsBadRequest(err) {
+			t.Errorf("%s: err %v not BadRequest-marked", tc.name, err)
+		}
+		if !strings.Contains(err.Error(), tc.wantIn) {
+			t.Errorf("%s: err %q missing %q", tc.name, err, tc.wantIn)
 		}
 	}
 }

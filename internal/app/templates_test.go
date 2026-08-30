@@ -189,6 +189,57 @@ func TestWriteConfigSourcePipeline(t *testing.T) {
 	}
 }
 
+// TestYAMLFrontMatterAsymmetry: the same broken YAML front matter is a
+// QUIET plain config on the paste path (a plain collector config may
+// legally open with "---") but a LOUD schema error on the source-save
+// route of a templated config — and a valid YAML-fronted source promotes
+// through the yaml paste path exactly as the JSON form always has.
+func TestYAMLFrontMatterAsymmetry(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Paste path: a valid YAML-fronted source promotes to tier 3.
+	ysrc := "---\nname: t\ndescription: d\nfields:\n  - name: g\n    type: string\n    label: G\n    default: hello\n---\na: {{.g}}\n"
+	if err := a.CreateConfig("ytpl", ysrc); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err := a.Config("ytpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasTemplate || yaml != "a: hello\n" {
+		t.Fatalf("yaml-fronted source: has_template=%v yaml=%q", info.HasTemplate, yaml)
+	}
+
+	// Paste path: a plain config that merely opens with "---" (even with a
+	// second "---" line later) stays plain, no error.
+	plainish := "---\nreceivers: {}\n---\nexporters: {}\n"
+	if err := a.CreateConfig("plain", plainish); err != nil {
+		t.Fatal(err)
+	}
+	if info, _, _ := a.Config("plain"); info.HasTemplate {
+		t.Error("plain --- config misdetected as tier 3")
+	}
+	if err := a.WriteConfigYAML("plain", "---\nreceivers: {}\n"); err != nil {
+		t.Errorf("plain doc-marker yaml over a plain config = %v, want quiet", err)
+	}
+
+	// Source-save route: broken YAML front matter errors loudly with the
+	// real schema diagnostic, not a demotion and not the generic sentence.
+	_, err = a.WriteConfigSource("ytpl", "---\nname: t\nwat: 1\n---\nbody\n", true)
+	if !state.IsBadRequest(err) || !strings.Contains(err.Error(), "wat") {
+		t.Errorf("broken yaml schema on the source route = %v, want BadRequest naming wat", err)
+	}
+	// The templated pair is untouched by the refused save.
+	if info, yaml, _ := a.Config("ytpl"); !info.HasTemplate || yaml != "a: hello\n" {
+		t.Errorf("refused save disturbed the config: has_template=%v yaml=%q", info.HasTemplate, yaml)
+	}
+}
+
 // TestWriteConfigSourceValidateOrRestore: a rendered config the collector
 // rejects restores BOTH files and the knobs — nothing was saved — and the
 // same promise holds when the failed save was a source pasted over a plain

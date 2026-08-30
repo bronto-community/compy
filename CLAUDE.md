@@ -52,9 +52,11 @@ part of the gates above; run it when the manifest changes.
 ## Dependencies
 
 Stdlib only, except `fyne.io/systray` (tray icon; darwin-only build, stubbed
-out on other GOOS in `internal/tray`) and `github.com/wailsapp/wails/v2`
+out on other GOOS in `internal/tray`), `github.com/wailsapp/wails/v2`
 (native window, used as a library — no wails CLI, wails.json, or node;
-darwin-only build, stubbed out on other GOOS in `internal/window`).
+darwin-only build, stubbed out on other GOOS in `internal/window`), and
+`gopkg.in/yaml.v3` (YAML front matter in tier-3 config sources; owner
+ruling 2026-08-29 — the OTel ecosystem itself runs on it).
 
 ## Module layout (`internal/*`)
 
@@ -69,7 +71,8 @@ darwin-only build, stubbed out on other GOOS in `internal/window`).
   rendered from), CRUD/copy, presets, provenance hashing, shipped defaults,
   remote sync, last-good snapshot/restore.
 - `catalog` — the config-template engine (tier 3): parses template sources
-  (JSON front-matter schema + `---` + Go text/template body), validates
+  (front-matter schema — YAML between `---` marker lines, or the original
+  JSON form — + `---` + Go text/template body), validates
   knob values, renders to plain collector YAML (only `type: secret` fields
   survive as `${env:}` refs). Ships the embedded starter catalog; a config
   created from it COPIES the source and owns it

@@ -81,7 +81,11 @@ func (a *App) WriteConfigSource(name, src string, validate bool) (runningStale b
 	if src == "" {
 		return false, state.BadRequest(fmt.Errorf("no source given; preset values are saved through the preset routes"))
 	}
-	if !catalog.IsSource(src) {
+	// LooksLikeSource, not IsSource: this route only ever receives source
+	// attempts, so text merely SHAPED like front matter (either form) gets
+	// the loud parse error — a broken YAML schema must not masquerade as
+	// "plain yaml" here the way it quietly demotes on the paste path.
+	if !catalog.LooksLikeSource(src) {
 		return false, state.BadRequest(fmt.Errorf("config source has no schema front matter; write plain configs through the yaml editor"))
 	}
 	t, err := catalog.ParseSource(src)
