@@ -569,12 +569,6 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
   background: none; border: 0; padding: 4px 7px; margin-bottom: 2px;
 }
 .ptab-add:hover { color: var(--accent); }
-.padd-solo {
-  position: absolute; top: 8px; right: 8px; display: flex;
-  color: var(--dim); cursor: pointer; background: none; border: 0; padding: 3px;
-}
-.padd-solo:hover { color: var(--accent); }
-.pcard.solo .tf-desc { padding-right: 26px; }
 .pcard .warn { font-size: 11.5px; color: var(--dim); }
 
 .okstrip {
@@ -914,7 +908,7 @@ dialog.ask .row { display: flex; justify-content: flex-end; gap: 10px; }
    focus-visible treatment above; same outline idiom throughout. */
 .preset-sel:focus-visible, .play:focus-visible, .addp:focus-visible,
 .pick:focus-visible, .mini:focus-visible, .menu-add:focus-visible,
-.ptab input:focus-visible, .ptab-add:focus-visible, .padd-solo:focus-visible,
+.ptab input:focus-visible, .ptab-add:focus-visible,
 .reveal:focus-visible,
 .lvl:focus-visible, .tail:focus-visible, .tile .link:focus-visible,
 .seg button:focus-visible {

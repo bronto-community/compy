@@ -1778,7 +1778,7 @@ function tfBackends(f) {
 function editorFormView(info) {
   const f = S.eform;
   if (!f) return null;
-  const wrap = el("div", { class: "tform eform pcard" + (presetsOf(info).length > 1 ? "" : " solo") });
+  const wrap = el("div", { class: "tform eform pcard" });
   // The preset tabs sit on the card's top edge — the selected tab already
   // says whose values the form shows, so there is no separate header.
   for (const n of presetTabs(info, true)) wrap.appendChild(n);
@@ -1859,45 +1859,39 @@ function edSaveSync() {
    surface, the selected tab connected to the card body. The selected tab
    carries the actions (rename input, duplicate, delete — the last preset
    has no delete at all); the RUNNING preset wears the accent dot whichever
-   tab is viewed. One preset → no tabs, just a quiet + in the card's
-   corner ("lots of users will only want one"). */
+   tab is viewed. The strip renders even with ONE preset (owner ruling,
+   2026-08-30: a bare corner + was unreadable — the sole preset shows as
+   the selected tab so the + next to it explains itself). */
 function presetTabs(info, t3) {
   const list = presetsOf(info);
   const running = isRunningCfg(info.name);
   const out = [];
-  if (list.length > 1) {
-    const tabs = el("div", { class: "ptabs" });
-    for (const p of list) {
-      const on = p === S.preset;
-      const isRunningPreset = running && p === S.status.preset;
-      tabs.appendChild(el("span", { class: "ptab" + (on ? " on" : "") }, [
-        isRunningPreset ? el("span", {
-          class: "dot5", title: "running now",
-          attrs: { style: "background: var(--accent)" },
-        }) : null,
-        on ? el("input", {
-          title: "rename this preset",
-          attrs: { spellcheck: "false", size: Math.max(p.length, 4), "data-fk": "chip:" + p, "aria-label": "rename this preset" },
-          props: { value: p },
-          on: { change: (e) => renamePreset(info, p, e.target.value) },
-        }) : el("button", { class: "pick", text: p, on: { click: () => pickPreset(info, p, t3) } }),
-        on ? el("button", { class: "mini", title: "duplicate this preset", on: { click: () => dupPreset(info, p) } }, [icon("copy", 12)]) : null,
-        on ? el("button", {
-          class: "mini del",
-          title: isRunningPreset ? "this preset is running. activate another one first." : "delete " + p,
-          attrs: isRunningPreset ? { disabled: "" } : null,
-          on: { click: () => delPreset(info, p) },
-        }, [icon("trash", 12)]) : null,
-      ]));
-    }
-    tabs.appendChild(el("button", { class: "ptab-add", title: "add a preset", on: { click: () => addPreset(info) } }, [icon("plus", 13)]));
-    out.push(tabs);
-  } else {
-    out.push(el("button", {
-      class: "padd-solo", title: "add a preset — a second set of values for this config",
-      on: { click: () => addPreset(info) },
-    }, [icon("plus", 13)]));
+  const tabs = el("div", { class: "ptabs" });
+  for (const p of list) {
+    const on = p === S.preset;
+    const isRunningPreset = running && p === S.status.preset;
+    tabs.appendChild(el("span", { class: "ptab" + (on ? " on" : "") }, [
+      isRunningPreset ? el("span", {
+        class: "dot5", title: "running now",
+        attrs: { style: "background: var(--accent)" },
+      }) : null,
+      on ? el("input", {
+        title: "rename this preset",
+        attrs: { spellcheck: "false", size: Math.max(p.length, 4), "data-fk": "chip:" + p, "aria-label": "rename this preset" },
+        props: { value: p },
+        on: { change: (e) => renamePreset(info, p, e.target.value) },
+      }) : el("button", { class: "pick", text: p, on: { click: () => pickPreset(info, p, t3) } }),
+      on ? el("button", { class: "mini", title: "duplicate this preset", on: { click: () => dupPreset(info, p) } }, [icon("copy", 12)]) : null,
+      on && list.length > 1 ? el("button", {
+        class: "mini del",
+        title: isRunningPreset ? "this preset is running. activate another one first." : "delete " + p,
+        attrs: isRunningPreset ? { disabled: "" } : null,
+        on: { click: () => delPreset(info, p) },
+      }, [icon("trash", 12)]) : null,
+    ]));
   }
+  tabs.appendChild(el("button", { class: "ptab-add", title: "add a preset", on: { click: () => addPreset(info) } }, [icon("plus", 13)]));
+  out.push(tabs);
   // Field-adjacent: a tab-rename collision answers right under the tabs.
   if (S.presetErr) out.push(el("div", { class: "field-err sans", text: S.presetErr }));
   // A tab pressed while the tier-3 form holds unsaved edits: the switch
@@ -2002,7 +1996,7 @@ function screenEditor() {
      tabs on its top edge (tier 3's form card gets the same tabs inside
      editorFormView, further down). */
   if (!t3) {
-    const card = el("div", { class: "tform pcard ed-vals" + (list.length > 1 ? "" : " solo") });
+    const card = el("div", { class: "tform pcard ed-vals" });
     for (const n of presetTabs(info, false)) card.appendChild(n);
     const values = ((info.meta.presets || {})[S.preset]) || {};
     card.appendChild(valueCards(info, values, (k, v) => queueValue(info, k, v), "ed"));
