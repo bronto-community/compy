@@ -358,3 +358,31 @@ the interim disabled change-options slot are gone.
   stored knobs a plain config doesn't have), because a knob-less
   `PUT /yaml` can't invent values; creating from the catalog first is
   the path that seeds knobs.
+
+---
+
+## Amendment 4 — presets own everything (owner-confirmed final model)
+
+Owner: "the user selects a config + preset and activates it, compy
+renders it and runs it." From the user's perspective render-time vs
+run-time binding does not exist; the options/presets split was
+implementation leakage. Supersedes Amendment 3's knob storage.
+
+- **A preset holds ALL of a config's values** — options, repeat groups,
+  toggles, keys: one typed bag (`meta.presets[name]` becomes
+  map[string]any). Tier-2 presets are the degenerate case (env values
+  only). `meta.knobs` is deleted.
+- **Activation = render(source, selected preset) → validate → run.**
+  The rendered config.yaml is a derived artifact, regenerated at
+  activation and at save (save keeps validate-or-restore +
+  save-anyway). Switching presets may switch structure — activation
+  restarts the collector anyway.
+- **One invisible rule survives**: `type: secret` values travel via the
+  environment, never baked into rendered yaml/snapshots/synced files.
+  Internal rule, not a UI seam.
+- **Editor**: one values surface — the form edits the SELECTED preset's
+  bag (secret fields are real masked inputs in the form); the separate
+  preset card band disappears for tier-3 configs; preset chips remain
+  as the switcher. Source pane unchanged.
+- Mental model, one line: **configs describe, presets fill in,
+  activation runs.**
