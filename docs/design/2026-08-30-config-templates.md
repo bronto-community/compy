@@ -220,3 +220,40 @@ required"). The advanced rule is a Go test
 - The offline queue bakes `file_storage.directory` as a literal path
   under the state dir (`<COMPY_HOME>/storage`, `create_directory:
   true`) — an env ref would surface as a bogus required-var card.
+
+---
+
+## Amendment: UI round (as shipped, 2026-08-30)
+
+The web UI half is live; built generically from the schema (no field name
+from the template appears in app.js — a second catalog entry gets its
+strip button and form for free).
+
+- **Where things live**: the new-config strip lists one button per
+  template (label/tooltip from the schema). Creation renders the form
+  above the configs table; change-options renders the SAME form under its
+  config's row (the inline-under-the-row idiom), seeded from
+  `meta.knobs`. Pure logic (`seedKnobs`, `knobProblems`,
+  `parseFieldErr`, template `originOf`) is in helpers.js under
+  `node --test`.
+- **Controls**: slug/url/string → inputs, choice → select, multi →
+  checkbox row, toggle → the settings switch idiom; collapsed sections
+  and per-row advanced fields use chevron disclosures. Secrets render as
+  dashed, disabled placeholder cards ("collected in the preset after
+  create" / "lives in the preset — unchanged here") — no secret value is
+  ever collected in the form.
+- **Errors**: light client checks and the server's field-naming 400s
+  share one key space (`backends[0].endpoint`) and land field-adjacent;
+  a group-level 400 (`backends: …`) lands on the section head; anything
+  else uses the errbar. A re-render's "locally modified" 400 arms
+  resync's discard confirm; its verb POSTs re-render-force.
+- **Origin**: template rows/editors show lucide's layout-template glyph
+  (vendored as `template`); the sync slot's third occupant is a sliders
+  icon titled "change options and re-render", always live. The editor
+  guards template yaml like shipped/remote (collapsed + unlock-ask with
+  its own copy). A config whose template left the catalog gets a plain
+  errbar sentence; the config keeps working (tier invariant).
+- **One judged deviation**: the form's vendor-tables helper line IS the
+  template's own `description` (which names the research doc's path) —
+  a fixed UI-side sentence would hardcode one template's docs into every
+  template's form.
