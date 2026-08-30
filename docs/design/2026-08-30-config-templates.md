@@ -110,3 +110,113 @@ REST: list templates (schemas included), create-from-template with
 knob values, re-render. CLI: `compy templates`, create `--template`
 with a knobs file, re-render command. UI: the form + change-options.
 openapi + drift test as always.
+
+---
+
+## Amendment: as shipped (backend round, 2026-08-30)
+
+The backend half is live; the UI round only consumes. What shipped, where
+it deviates, and the exact shapes:
+
+### Module placement
+
+`internal/catalog` (new leaf package: schema types, order-preserving
+parse, knob validation, render; imports only `state`). `cfgstore` gained
+the meta fields + two writes (`CreateFromTemplate`, `SetRendered`);
+`app` orchestrates (`Templates`, `CreateFromTemplate`, `ReRender`,
+`ReRenderForce`). Template files: `internal/catalog/catalog/<name>.tmpl`.
+
+### One judged deviation: front matter is the JSON subset of YAML
+
+compy is stdlib-only (no YAML parser exists in the module), so the
+schema front matter is written as JSON — which IS valid YAML — and
+fields are **arrays**, making declaration-order preservation free.
+Everything else is per this note.
+
+### Second deviation, forced by the collector: processor type names
+
+v0.159 names them `resource_detection`, `cumulative_to_delta`,
+`delta_to_cumulative` (verified against the built binary's
+`components`). The note's `resourcedetection`/`cumulativetodelta`
+spellings do not validate. Also: `resourcedetectionprocessor` was
+missing from the manifest entirely — added; **run
+`packaging/collector/build.sh` before the next rollout** (the repo-root
+otelcol-compy predates the manifest change; renders with host/env
+detection off validate against it, the full render was validated
+against a fresh build).
+
+### Surfaces
+
+- REST: `GET /api/templates` (full schemas), `POST
+  /api/configs/from-template` `{name, template, knobs}`, `POST
+  /api/configs/{name}/re-render` `{knobs}` (refuses a hand-edited
+  config, 400 "locally modified"), `POST
+  /api/configs/{name}/re-render-force` (discards edits — resync's
+  sibling-route shape). Omitted `knobs` = re-render with the stored
+  ones. Schemas in api/openapi.json: `Template`, `TemplateField`,
+  `Knobs`.
+- CLI: `compy templates`; `compy config create <name> --template
+  custom-endpoints --knobs file.json`; `compy config re-render <name>
+  [--knobs file.json] [--discard-edits]`. (Resync is a CLI verb of its
+  own; "re-re-render" isn't a word, so the discard flow is a flag.)
+- Knob files are JSON objects (JSON ⊂ YAML).
+
+### Shapes the UI consumes
+
+`GET /api/templates` → array of:
+
+```json
+{"name": "custom-endpoints", "description": "…",
+ "sections": [{"id": "backends", "label": "Backends"},
+              {"id": "pipeline", "label": "Pipeline options", "collapsed": true}],
+ "backends": {"min": 1, "max": 8, "fields": [
+   {"name": "name", "type": "slug", "label": "Name", "description": "…"},
+   {"name": "endpoint", "type": "url", "label": "Endpoint", "description": "…"},
+   {"name": "auth_header", "type": "string", "label": "Auth header", "optional": true},
+   {"name": "api_key", "type": "secret", "label": "API key", "description": "…"},
+   {"name": "auth_scheme", "type": "choice", "options": ["none","Bearer","Basic","Api-Token","ApiKey"], "default": "none", "advanced": true},
+   {"name": "extra_header", "type": "string", "optional": true, "default": "", "advanced": true},
+   {"name": "extra_value", "type": "string", "optional": true, "default": "", "advanced": true},
+   {"name": "signals", "type": "multi", "options": ["traces","metrics","logs"], "default": ["traces","metrics","logs"], "advanced": true},
+   {"name": "temporality", "type": "choice", "options": ["as-is","to-delta","to-cumulative"], "default": "as-is", "advanced": true}]},
+ "fields": [
+   {"name": "memory_limiter", "type": "toggle", "default": true, "section": "pipeline"},
+   {"name": "batch", "type": "toggle", "default": true, "section": "pipeline"},
+   {"name": "resource_detection", "type": "toggle", "default": true, "section": "pipeline"},
+   {"name": "offline_queue", "type": "toggle", "default": false, "section": "pipeline"},
+   {"name": "debug_tee", "type": "toggle", "default": false, "section": "pipeline"}]}
+```
+
+(labels/descriptions elided here; the API carries them in full.)
+
+Knobs (request AND what meta.json's `knobs` stores back, normalized,
+secrets never present — the change-options form seeds from
+`info.meta.knobs` and the config shows `provenance: "template"`):
+
+```json
+{"backends": [{"name": "honeycomb", "endpoint": "https://api.honeycomb.io",
+               "auth_header": "x-honeycomb-team", "auth_scheme": "none",
+               "extra_header": "", "extra_value": "",
+               "signals": ["traces","metrics","logs"], "temporality": "as-is"}],
+ "memory_limiter": true, "batch": true, "resource_detection": true,
+ "offline_queue": false, "debug_tee": false}
+```
+
+Validation errors are 400s naming the field ("backends[0].endpoint:
+required"). The advanced rule is a Go test
+(`catalog.TestAdvancedRuleLint`); the golden render lives at
+`internal/catalog/testdata/custom-endpoints-golden.yaml`.
+
+### Semantics notes
+
+- Provenance gained a fourth value: `"template"`. Copy demotes to
+  local (template+knobs dropped); rename keeps template identity;
+  Reset/Sync refuse template-born configs; hand-editing just flips
+  `modified` (tier 2), exactly as for shipped/remote.
+- meta.json records `pristine_sha256` for template-born configs too —
+  it IS the shared modified-detection mechanism re-render's
+  sync-semantics ride on. The YAML itself is byte-identical to the
+  same YAML pasted (locked by test).
+- The offline queue bakes `file_storage.directory` as a literal path
+  under the state dir (`<COMPY_HOME>/storage`, `create_directory:
+  true`) — an env ref would surface as a bogus required-var card.
