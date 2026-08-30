@@ -391,6 +391,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 /* value cards, fixed 3 per row */
 .vals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.vals-empty { font-size: 11.5px; color: var(--dim); padding: 6px 2px 2px; }
 .val {
   display: flex; flex-direction: column; gap: 3px; padding: 6px 9px;
   border: 1px solid var(--border2); border-radius: 5px; background: var(--panel);

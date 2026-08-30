@@ -1314,7 +1314,13 @@ function valueCards(info, values, onEdit, scope) {
       ]),
     ]));
   }
+  // No vars at all (shipped debug, say): the tab strip still shows whose
+  // bag is selected, but the card needs a line, not an empty void.
+  if (!grid.children.length) return valsEmpty();
   return grid;
+}
+function valsEmpty() {
+  return el("div", { class: "vals-empty sans", text: "nothing to configure — this config has no values to fill in" });
 }
 /* ── configurations: actions ──────────────────────────────────────── */
 /* Every activation on this screen goes through the pre-flight: a config
@@ -1820,6 +1826,9 @@ function editorFormView(info) {
     if (isBackends) wrap.appendChild(tfBackends(f));
     if (secFields.length) wrap.appendChild(tfGrid(f, secFields, f.knobs, ""));
   }
+  // A schema with no fields and no backends group: same quiet empty state
+  // as a tier-2 config without vars.
+  if (!(tpl.fields || []).length && !tpl.backends) wrap.appendChild(valsEmpty());
   return wrap;
 }
 
