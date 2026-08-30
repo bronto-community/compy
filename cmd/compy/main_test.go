@@ -367,7 +367,7 @@ func TestRunTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config source: %v", err)
 	}
-	if !strings.Contains(out, `"custom-endpoints"`) || !strings.Contains(out, "\n---\n") {
+	if !strings.Contains(out, "name: custom-endpoints") || !strings.Contains(out, "\n---\n") {
 		t.Errorf("config source did not print the template source:\n%s", out)
 	}
 	if _, err := captureStdout(t, func() error { return run([]string{"config", "source", "debug"}) }); err == nil {
