@@ -551,7 +551,10 @@ func listConfigs(a *app.App) error {
 // stays plain strings; a tier-3 field whose type is non-string (toggle,
 // multi, the repeat group) takes a JSON literal, and string-shaped fields
 // (slug, url, string, choice, secret) take the raw text. An unknown key
-// falls through as a string — the preset write's own validation names it.
+// falls through as a string — on tier 3 that IS a free var (a hand-written
+// ${env:} ref's value): it lands in the bag under the var's name and is
+// exported at activation. Unknown non-string shapes still get named by the
+// preset write's own validation.
 func typedValue(a *app.App, config, key, raw string) (any, error) {
 	src, ok, err := a.ConfigSource(config)
 	if err != nil {
@@ -611,7 +614,7 @@ func printVars(a *app.App, name string) error {
 	if info.HasTemplate {
 		if src, ok, _ := a.ConfigSource(name); ok {
 			if t, err := catalog.ParseSource(src); err == nil {
-				return printSchemaVars(t, info, presets)
+				return printSchemaVars(t, info, presets, cfgstore.StorageDir(a.Dir))
 			}
 		}
 	}
@@ -643,8 +646,10 @@ func printVars(a *app.App, name string) error {
 
 // printSchemaVars is the tier-3 `compy vars` table: the schema's fields
 // (repeat-group rows expanded per stored entry) with each preset's value —
-// secrets only ever as (set) or -, never the value itself.
-func printSchemaVars(t catalog.Template, info cfgstore.Info, presets []string) error {
+// secrets only ever as (set) or -, never the value itself — plus one row
+// per FREE var (hand-written ${env:} refs in each preset's render, type
+// "env"), the tier-2 capability living inside tier 3.
+func printSchemaVars(t catalog.Template, info cfgstore.Info, presets []string, storageDir string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprint(w, "FIELD\tTYPE")
 	for _, preset := range presets {
@@ -708,6 +713,32 @@ func printSchemaVars(t catalog.Template, info cfgstore.Info, presets []string) e
 				})
 			}
 		}
+	}
+	// Free vars, discovered per preset from that preset's own render (an
+	// unrenderable bag contributes none), unioned into rows.
+	var freeNames []string
+	seen := map[string]bool{}
+	for _, preset := range presets {
+		bag := info.Meta.Presets[preset]
+		rendered, err := t.Render(t.PruneUnknown(bag), storageDir)
+		if err != nil {
+			continue
+		}
+		for _, v := range t.FreeVars(rendered, bag) {
+			if !seen[v.Name] {
+				seen[v.Name] = true
+				freeNames = append(freeNames, v.Name)
+			}
+		}
+	}
+	slices.Sort(freeNames)
+	for _, name := range freeNames {
+		fmt.Fprintf(w, "%s\tenv", name)
+		for _, preset := range presets {
+			val, _ := info.Meta.Presets[preset][name].(string)
+			fmt.Fprintf(w, "\t%s", val)
+		}
+		fmt.Fprintln(w)
 	}
 	return w.Flush()
 }

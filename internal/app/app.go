@@ -193,11 +193,13 @@ func activationEnv(values map[string]any, s state.Settings) map[string]string {
 }
 
 // activationEnvFor computes the LaunchAgent environment for one preset,
-// per the Amendment 4 env split: a tier-3 preset exports ONLY its
-// secret-typed values (everything else is baked into the render) plus
-// compy's ports; a tier-2 preset exports every non-empty value, as always.
-// An unparseable source yields ports-only — activation fails at the render
-// with the real diagnostic before this could matter.
+// per the Amendment 4/6 env split: a tier-3 preset exports its secret-typed
+// values plus its free-var values (bag strings under keys the schema does
+// not own — hand-written ${env:} refs in the body, which the render never
+// bakes) plus compy's ports; schema non-secret values are baked into the
+// render and never exported. A tier-2 preset exports every non-empty
+// value, as always. An unparseable source yields ports-only — activation
+// fails at the render with the real diagnostic before this could matter.
 func (a *App) activationEnvFor(info cfgstore.Info, preset string, s state.Settings) map[string]string {
 	values := info.Meta.Presets[preset]
 	if !info.HasTemplate {
@@ -206,7 +208,7 @@ func (a *App) activationEnvFor(info cfgstore.Info, preset string, s state.Settin
 	env := map[string]string{}
 	if src, ok, _ := cfgstore.Source(a.Dir, info.Name); ok {
 		if t, err := catalog.ParseSource(src); err == nil {
-			env = t.SecretEnv(values)
+			env = t.EnvFor(values)
 		}
 	}
 	env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
@@ -835,7 +837,7 @@ func (a *App) writePresetBag(info cfgstore.Info, preset string, bag map[string]a
 		if err != nil {
 			return false, err
 		}
-		env := t.SecretEnv(norm)
+		env := t.EnvFor(norm)
 		env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
 		env["COMPY_HTTP_PORT"] = strconv.Itoa(s.HTTPPort)
 		tmp, err := os.CreateTemp(a.Dir, "validate-*.yaml")

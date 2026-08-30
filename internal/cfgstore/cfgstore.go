@@ -67,7 +67,9 @@ type Info struct {
 // fallback in the yaml, not compy-injected (COMPY_*), and empty or absent
 // in the preset. Tier 3 (a template source exists): schema-required fields
 // — secrets included, non-secrets too — absent or blank in the preset's
-// bag, named as field paths ("backends[0].api_key"). An empty preset name
+// bag, named as field paths ("backends[0].api_key"), plus this preset's
+// FREE vars (hand-written ${env:} refs in its render) under the tier-2
+// rule, named by var name. An empty preset name
 // resolves to the config's active preset, exactly as Activate does — and
 // every config has one (EnsurePresets). Callers decide what to do with the
 // answer: the window asks before activating, the CLI warns and proceeds.
@@ -81,7 +83,22 @@ func MissingRequired(root string, info Info, preset string) []string {
 		if err != nil {
 			return nil // an unparseable source can't say; activation will
 		}
-		return t.MissingRequired(values)
+		missing := t.MissingRequired(values)
+		// Free vars (tier 2 inside tier 3): a hand-written ${env:VAR} in
+		// this preset's render with no :-default and no bag value is missing
+		// exactly as a tier-2 var is. Lenient on render failure — the
+		// schema's own missing fields above are already the answer.
+		if rendered, rerr := t.Render(t.PruneUnknown(values), StorageDir(root)); rerr == nil {
+			for _, v := range t.FreeVars(rendered, values) {
+				if v.HasDefault {
+					continue
+				}
+				if s, isStr := values[v.Name].(string); values[v.Name] == nil || (isStr && strings.TrimSpace(s) == "") {
+					missing = append(missing, v.Name)
+				}
+			}
+		}
+		return missing
 	}
 	var missing []string
 	for _, v := range info.Vars {
@@ -747,7 +764,7 @@ func refetch(root, name string, fetch Fetch) error {
 		}
 		m = withDefaultPreset(m)
 		for pname, bag := range m.Presets {
-			m.Presets[pname] = t.Reconcile(bag)
+			m.Presets[pname] = t.Reconcile(bag, StorageDir(root))
 		}
 		rendered, err := t.Render(t.PruneUnknown(m.Presets[m.ActivePreset]), StorageDir(root))
 		if err != nil {

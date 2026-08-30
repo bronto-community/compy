@@ -149,7 +149,8 @@
           "info": { "$ref": "#/components/schemas/Info" },
           "yaml": { "type": "string" },
           "source": { "type": "string", "description": "The template source (schema front matter — YAML between \"---\" marker lines, or the original JSON form — + \"---\" + body), present only when info.has_template is true. The yaml is its rendered output." },
-          "template": { "$ref": "#/components/schemas/Template", "description": "The parsed schema of the source, present when the config has a source and it parses — what the editor's form is generated from (the client never parses front matter itself)." }
+          "template": { "$ref": "#/components/schemas/Template", "description": "The parsed schema of the source, present when the config has a source and it parses — what the editor's form is generated from (the client never parses front matter itself)." },
+          "free_vars": { "type": "object", "additionalProperties": { "type": "array", "items": { "$ref": "#/components/schemas/Var" } }, "description": "Tier 3 only (present alongside template): preset name → that preset's FREE variables — hand-written ${env:} references its render carries beyond the schema (schema-secret-derived names and COMPY_* excluded). Same Var shape as info.vars — tier 2's card material. Discovery is per-preset over that preset's own render, so presets may differ; a preset whose bag does not render is absent from the map. Values live in info.meta.presets[preset][NAME] as ordinary strings, are written through the ordinary preset routes, and travel via the activation environment — never baked into the render." }
         }
       },
       "Distro": {

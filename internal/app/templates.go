@@ -95,7 +95,7 @@ func (a *App) WriteConfigSource(name, src string, validate bool) (runningStale b
 	m := info.Meta
 	m.Presets = make(map[string]map[string]any, len(info.Meta.Presets))
 	for pname, bag := range info.Meta.Presets {
-		m.Presets[pname] = t.Reconcile(bag)
+		m.Presets[pname] = t.Reconcile(bag, cfgstore.StorageDir(a.Dir))
 	}
 	rendered, err := t.Render(t.PruneUnknown(m.Presets[m.ActivePreset]), cfgstore.StorageDir(a.Dir))
 	if err != nil {

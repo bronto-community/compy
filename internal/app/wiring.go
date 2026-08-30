@@ -4,15 +4,23 @@ import (
 	"fmt"
 
 	"github.com/bronto-community/compy/internal/catalog"
+	"github.com/bronto-community/compy/internal/cfgstore"
 	"github.com/bronto-community/compy/internal/webui"
 )
 
 // configDetail is the web UI's view of one configuration: its Info plus
-// YAML, plus — for a tier-3 config — the template source AND its parsed
-// schema. The schema rides along so the client never parses front matter
-// itself (the source may be YAML-fronted now); a stored source that fails
-// to parse (hand-edited on disk) just omits it, and the editor's form
-// steps aside.
+// YAML, plus — for a tier-3 config — the template source, its parsed
+// schema, and the discovered free vars per preset. The schema rides along
+// so the client never parses front matter itself (the source may be
+// YAML-fronted now); a stored source that fails to parse (hand-edited on
+// disk) just omits it, and the editor's form steps aside.
+//
+// free_vars maps preset name → the ${env:} refs THAT preset's render
+// carries beyond the schema (name, default, description — vars.Var shape,
+// the same as info.vars entries); values live in info.meta.presets as
+// ordinary bag strings keyed by var name. A preset whose bag does not
+// render (schema trouble) is absent from the map — no claim over a render
+// that doesn't exist.
 func (a *App) configDetail(name string) (any, error) {
 	info, yaml, err := a.Config(name)
 	if err != nil {
@@ -23,6 +31,13 @@ func (a *App) configDetail(name string) (any, error) {
 		detail["source"] = src
 		if t, err := catalog.ParseSource(src); err == nil {
 			detail["template"] = t
+			free := map[string]any{}
+			for pname, bag := range info.Meta.Presets {
+				if rendered, rerr := t.Render(t.PruneUnknown(bag), cfgstore.StorageDir(a.Dir)); rerr == nil {
+					free[pname] = t.FreeVars(rendered, bag)
+				}
+			}
+			detail["free_vars"] = free
 		}
 	}
 	return detail, nil

@@ -197,6 +197,19 @@ func TestNormalizeBag(t *testing.T) {
 	if row["api_key"] != "shh" {
 		t.Errorf("secret dropped from normalized bag: %v", row)
 	}
+
+	// A free var — an unknown top-level STRING — rides through untouched
+	// (tier 3 contains tier 2; the "unknown config field" case above locks
+	// that non-strings still 400).
+	withFree := be(ok)
+	withFree["ASDF"] = "v"
+	norm, err = tmpl.NormalizeBag(withFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if norm["ASDF"] != "v" {
+		t.Errorf("free var dropped by normalization: %v", norm)
+	}
 }
 
 // TestRenderGolden locks the exact rendered YAML — comments included — for
@@ -542,12 +555,15 @@ a: {{.g}}
 // TestPruneUnknown: fields the schema no longer declares vanish, backend
 // rows included — how stored bags survive a schema edit — while declared
 // values, secrets among them (they are declared fields, and pruning a
-// secret would delete a key), pass through untouched.
+// secret would delete a key), pass through untouched. Unknown top-level
+// STRINGS are free vars and survive this pass (only Reconcile, render in
+// hand, prunes those); unknown non-strings still vanish.
 func TestPruneUnknown(t *testing.T) {
 	tmpl := get(t, "custom-endpoints")
 	knobs := map[string]any{
 		"debug_tee": true,
-		"gone":      "x",
+		"gone":      7,
+		"ASDF":      "free-value",
 		"backends": []any{map[string]any{
 			"name": "hc", "endpoint": "https://x.example",
 			"api_key": "shh", "old_field": 1,
@@ -555,7 +571,10 @@ func TestPruneUnknown(t *testing.T) {
 	}
 	out := tmpl.PruneUnknown(knobs)
 	if _, has := out["gone"]; has {
-		t.Errorf("unknown field survived: %v", out)
+		t.Errorf("unknown non-string field survived: %v", out)
+	}
+	if out["ASDF"] != "free-value" {
+		t.Errorf("free var (unknown string) did not survive the prune: %v", out)
 	}
 	if out["debug_tee"] != true {
 		t.Errorf("declared field lost: %v", out)
@@ -604,6 +623,24 @@ func TestRenderNeverBakesSecrets(t *testing.T) {
 	if out != without {
 		t.Error("secret presence changed the render")
 	}
+
+	// Free vars share the rule: a bag value for a hand-written ${env:} ref
+	// never bakes — the ref stays in the render and the collector expands
+	// it from the environment (that is the point of a free var).
+	free, err := ParseSource(freeSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err = free.Render(map[string]any{"ASDF": "10.0.0.5"}, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "10.0.0.5") {
+		t.Fatalf("free-var value baked into the render:\n%s", out)
+	}
+	if !strings.Contains(out, "${env:ASDF:-fallback}") {
+		t.Errorf("free-var env reference missing:\n%s", out)
+	}
 }
 
 // TestSecretEnv: the env split's mapping — a row secret becomes
@@ -651,17 +688,23 @@ func TestSecretEnv(t *testing.T) {
 
 // TestReconcile is the per-preset schema-edit rule: unknown pruned, newly
 // defaulted filled, required-without-default left absent (lenient — the
-// strict answer belongs to that preset's next write or activation).
+// strict answer belongs to that preset's next write or activation). An
+// unrenderable bag (missing endpoint here) keeps its free-var values —
+// pruning free vars needs a render to judge against.
 func TestReconcile(t *testing.T) {
 	tmpl := get(t, "custom-endpoints")
 	bag := tmpl.Reconcile(map[string]any{
 		"gone": 1,
+		"ASDF": "kept",
 		"backends": []any{map[string]any{
 			"name": "hc", "api_key": "shh", "old": true,
 		}},
-	})
+	}, "/s")
 	if _, has := bag["gone"]; has {
 		t.Errorf("unknown survived: %v", bag)
+	}
+	if bag["ASDF"] != "kept" {
+		t.Errorf("unrenderable bag lost its free var: %v", bag)
 	}
 	if bag["memory_limiter"] != true || bag["offline_queue"] != false {
 		t.Errorf("defaults not filled: %v", bag)
@@ -672,6 +715,112 @@ func TestReconcile(t *testing.T) {
 	}
 	if _, has := row["endpoint"]; has {
 		t.Errorf("reconcile invented a required value: %v", row)
+	}
+}
+
+// freeSrc is a mini tier-3 source whose body hand-writes ${env:} refs
+// beyond the schema: one with a default, one gated by a toggle, one
+// colliding with a schema field name, plus the derived secret ref and a
+// COMPY_* ref. The free-vars test bed.
+const freeSrc = `{"name": "free", "fields": [
+  {"name": "greeting", "type": "string", "label": "G", "default": "hello"},
+  {"name": "token", "type": "secret", "label": "T", "description": "the key"},
+  {"name": "tee", "type": "toggle", "label": "D", "default": false}
+]}
+---
+a: {{.greeting}}
+key: ${env:TOKEN}  # the key
+host: ${env:ASDF:-fallback}  # target host
+collide: ${env:greeting}
+port: ${env:COMPY_HTTP_PORT:-14318}
+{{if .tee}}extra: ${env:ONLY_TEE}{{end}}
+`
+
+// TestFreeVars: discovery = the render's ${env:} refs minus secret-derived
+// names, minus COMPY_*, minus schema-field collisions (schema wins) — with
+// tier 2's comment descriptions and defaults riding along, per preset
+// (a ref an {{if}} kept out of THIS render doesn't exist for it).
+func TestFreeVars(t *testing.T) {
+	tmpl, err := ParseSource(freeSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bag := map[string]any{}
+	rendered, err := tmpl.Render(bag, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	free := tmpl.FreeVars(rendered, bag)
+	if len(free) != 1 || free[0].Name != "ASDF" {
+		t.Fatalf("FreeVars = %+v, want exactly ASDF", free)
+	}
+	if !free[0].HasDefault || free[0].Default != "fallback" || free[0].Description != "target host" {
+		t.Errorf("tier-2 machinery lost: %+v", free[0])
+	}
+
+	// The toggle flips the render, and discovery follows it: per-preset
+	// structure is real.
+	teeBag := map[string]any{"tee": true}
+	rendered, err = tmpl.Render(teeBag, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, v := range tmpl.FreeVars(rendered, teeBag) {
+		names = append(names, v.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"ASDF", "ONLY_TEE"}) {
+		t.Errorf("FreeVars with tee = %v, want [ASDF ONLY_TEE]", names)
+	}
+}
+
+// TestEnvFor: the tier-3 activation env = secret values under derived
+// names + free-var values verbatim; schema non-secrets and blanks never
+// travel (they are baked / not values).
+func TestEnvFor(t *testing.T) {
+	tmpl, err := ParseSource(freeSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := tmpl.EnvFor(map[string]any{
+		"greeting": "hi", "tee": true, "token": "shh",
+		"ASDF": "10.0.0.5", "BLANK": "   ",
+	})
+	want := map[string]string{"TOKEN": "shh", "ASDF": "10.0.0.5"}
+	if !reflect.DeepEqual(env, want) {
+		t.Errorf("EnvFor = %v, want %v", env, want)
+	}
+}
+
+// TestReconcilePrunesStaleFreeVars: a free var the bag's own render no
+// longer references gets the removed-field treatment at reconcile — while
+// a referenced one survives. Free vars are not secrets; pruning is safe.
+func TestReconcilePrunesStaleFreeVars(t *testing.T) {
+	tmpl, err := ParseSource(freeSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bag := tmpl.Reconcile(map[string]any{
+		"ASDF": "kept", "STALE": "dropped", "token": "shh",
+	}, "/s")
+	if bag["ASDF"] != "kept" {
+		t.Errorf("referenced free var pruned: %v", bag)
+	}
+	if _, has := bag["STALE"]; has {
+		t.Errorf("stale free var survived reconcile: %v", bag)
+	}
+	if bag["token"] != "shh" {
+		t.Errorf("secret did not survive reconcile: %v", bag)
+	}
+	// ONLY_TEE is gated off (tee defaults false): a value for it is stale
+	// FOR THIS PRESET and goes too — discovery is per-preset.
+	bag = tmpl.Reconcile(map[string]any{"ONLY_TEE": "x"}, "/s")
+	if _, has := bag["ONLY_TEE"]; has {
+		t.Errorf("free var outside this preset's render survived: %v", bag)
+	}
+	bag = tmpl.Reconcile(map[string]any{"ONLY_TEE": "x", "tee": true}, "/s")
+	if bag["ONLY_TEE"] != "x" {
+		t.Errorf("free var inside this preset's render pruned: %v", bag)
 	}
 }
 

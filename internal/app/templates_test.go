@@ -10,6 +10,7 @@ import (
 	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/cfgstore"
 	"github.com/bronto-community/compy/internal/state"
+	cfgvars "github.com/bronto-community/compy/internal/vars"
 )
 
 // catalogKnobs is a minimal valid knob set for custom-endpoints.
@@ -501,6 +502,139 @@ func TestActivationEnvSplitTier3(t *testing.T) {
 	}
 	// The tier-2 rule is untouched: TestActivateHappyPath locks the full
 	// export for plain configs.
+}
+
+// TestActivationEnvFreeVarsTier3 is Amendment 6's half of the env split: a
+// hand-written ${env:} ref in the body is tier-2 capability inside tier 3 —
+// its bag value exports at activation (never baked into the render), no bag
+// value means the ref's own :-default holds (nothing exported), and schema
+// non-secret values STILL never travel via env.
+func TestActivationEnvFreeVarsTier3(t *testing.T) {
+	setup(t, "state = running")
+	fakeDistro(t, "exit 0")
+	listenPort(t)
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := srcWith("", "a: {{.greeting}}\nhost: ${env:ASDF:-fallback}  # target host")
+	if err := a.CreateConfig("freeform", src); err != nil {
+		t.Fatal(err)
+	}
+
+	// No bag value: the render keeps the ref, the env exports nothing for
+	// it — the collector's own :-fallback holds.
+	if err := a.Activate("freeform", ""); err != nil {
+		t.Fatal(err)
+	}
+	if plist := readPlist(t); strings.Contains(plist, "ASDF") {
+		t.Errorf("unset free var exported:\n%s", plist)
+	}
+	_, yaml, _ := a.Config("freeform")
+	if !strings.Contains(yaml, "${env:ASDF:-fallback}") {
+		t.Errorf("free-var ref missing from the render:\n%s", yaml)
+	}
+
+	// With a bag value (via the ordinary preset write — free vars are
+	// ordinary bag members): the value travels via env, never the yaml.
+	if err := a.SetVar("freeform", "default", "ASDF", "10.0.0.5"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Activate("freeform", ""); err != nil {
+		t.Fatal(err)
+	}
+	plist := readPlist(t)
+	if !strings.Contains(plist, "<key>ASDF</key><string>10.0.0.5</string>") {
+		t.Errorf("free var missing from the plist env:\n%s", plist)
+	}
+	if strings.Contains(plist, "greeting") || strings.Contains(plist, "hello") {
+		t.Errorf("schema non-secret leaked into the env:\n%s", plist)
+	}
+	if _, yaml, _ = a.Config("freeform"); strings.Contains(yaml, "10.0.0.5") {
+		t.Errorf("free-var value baked into the render:\n%s", yaml)
+	}
+
+	// Pre-flight speaks the tier-2 rule for free vars: a no-default ref
+	// with no bag value is missing; the defaulted ASDF never is.
+	if err := a.WriteConfigYAML("freeform", srcWith("",
+		"a: {{.greeting}}\nhost: ${env:ASDF:-fallback}\nneed: ${env:NEEDED}  # required thing")); err != nil {
+		t.Fatal(err)
+	}
+	info, _, err := a.Config("freeform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := cfgstore.MissingRequired(a.Dir, info, "")
+	if !reflect.DeepEqual(missing, []string{"NEEDED"}) {
+		t.Errorf("MissingRequired = %v, want [NEEDED]", missing)
+	}
+	if err := a.SetVar("freeform", "default", "NEEDED", "x"); err != nil {
+		t.Fatal(err)
+	}
+	info, _, _ = a.Config("freeform")
+	if missing := cfgstore.MissingRequired(a.Dir, info, ""); len(missing) != 0 {
+		t.Errorf("MissingRequired after set = %v, want none", missing)
+	}
+
+	// And a source edit that drops the ref prunes the stored value — the
+	// removed-field reconcile, applied to free vars (they are not secrets).
+	if err := a.WriteConfigYAML("freeform", srcWith("", "a: {{.greeting}}")); err != nil {
+		t.Fatal(err)
+	}
+	info, _, _ = a.Config("freeform")
+	bag := info.Meta.Presets["default"]
+	if _, has := bag["ASDF"]; has {
+		t.Errorf("free var survived losing its ref: %v", bag)
+	}
+	if bag["greeting"] != "hello" {
+		t.Errorf("schema value lost in reconcile: %v", bag)
+	}
+}
+
+// TestConfigDetailFreeVars: GET /api/configs/{name}'s payload carries the
+// discovered free vars PER PRESET (vars.Var shape — name, default,
+// description), so the UI round can render cards; values stay in
+// info.meta.presets. Presets whose renders differ report different vars.
+func TestConfigDetailFreeVars(t *testing.T) {
+	setup(t, "")
+	fakeDistro(t, "exit 0")
+	a, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := srcWith(`{"name": "tee", "type": "toggle", "label": "T", "default": false}`,
+		"a: {{.greeting}}\nhost: ${env:ASDF:-fallback}  # target host\n{{if .tee}}extra: ${env:ONLY_TEE}{{end}}")
+	if err := a.CreateConfig("detail", src); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ReplacePreset("detail", "teed", map[string]any{"tee": true, "ONLY_TEE": "v"}, true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.WebUIAPI().GetConfig("detail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	free, ok := got.(map[string]any)["free_vars"].(map[string]any)
+	if !ok {
+		t.Fatalf("no free_vars in config detail: %v", got)
+	}
+	names := func(preset string) []string {
+		var out []string
+		for _, v := range free[preset].([]cfgvars.Var) {
+			out = append(out, v.Name)
+		}
+		return out
+	}
+	if !reflect.DeepEqual(names("default"), []string{"ASDF"}) {
+		t.Errorf("default preset free vars = %v, want [ASDF]", names("default"))
+	}
+	if !reflect.DeepEqual(names("teed"), []string{"ASDF", "ONLY_TEE"}) {
+		t.Errorf("teed preset free vars = %v, want [ASDF ONLY_TEE]", names("teed"))
+	}
+	v := free["default"].([]cfgvars.Var)[0]
+	if !v.HasDefault || v.Default != "fallback" || v.Description != "target host" {
+		t.Errorf("free var lost its tier-2 card material: %+v", v)
+	}
 }
 
 // TestTemplatesList: the catalog reaches the app surface.

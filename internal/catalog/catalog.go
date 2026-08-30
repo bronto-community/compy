@@ -39,6 +39,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bronto-community/compy/internal/state"
+	"github.com/bronto-community/compy/internal/vars"
 )
 
 //go:embed catalog
@@ -454,15 +455,27 @@ func normalizeFields(where string, fields []Field, bag map[string]any) (map[stri
 // NormalizeBag validates a preset's value bag against the template's schema
 // and returns a defaults-filled copy — what a preset write stores and what
 // the render draws on. Secret values ride along as strings; every other
-// missing required field errors. All errors are BadRequest-marked and name
-// the offending field.
+// missing required field errors. Unknown top-level keys holding a STRING
+// pass through untouched: they are free-var material (hand-written ${env:}
+// refs in the body — tier 3 contains tier 2), stored in the bag under the
+// var's own name and exported at activation. A key naming a schema field is
+// always the schema's (schema wins the collision by construction: it never
+// reaches this pass-through), and an unknown key holding anything but a
+// string is still the caller's typo. All errors are BadRequest-marked and
+// name the offending field.
 func (t Template) NormalizeBag(bag map[string]any) (map[string]any, error) {
+	known := t.knownTop()
 	rest := map[string]any{}
+	free := map[string]any{}
 	var backends any
 	hasBackends := false
 	for k, v := range bag {
 		if k == "backends" && t.Backends != nil {
 			backends, hasBackends = v, true
+			continue
+		}
+		if s, isStr := v.(string); isStr && !known[k] {
+			free[k] = s
 			continue
 		}
 		rest[k] = v
@@ -471,6 +484,7 @@ func (t Template) NormalizeBag(bag map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	maps.Copy(out, free)
 	if t.Backends != nil {
 		var rows []any
 		if hasBackends {
@@ -513,10 +527,27 @@ func (t Template) NormalizeBag(bag map[string]any) (map[string]any, error) {
 	return out, nil
 }
 
+// knownTop is the set of top-level bag keys the schema owns: field names
+// plus the repeat group's key. Any other top-level key holding a string is
+// free-var material.
+func (t Template) knownTop() map[string]bool {
+	known := map[string]bool{}
+	for _, f := range t.Fields {
+		known[f.Name] = true
+	}
+	if t.Backends != nil {
+		known["backends"] = true
+	}
+	return known
+}
+
 // PruneUnknown drops bag keys the schema does not declare (secrets are
-// declared fields and stay), backend rows' unknown keys too. It is how
-// stored bags survive a schema edit: removed fields vanish here, new fields
-// pick up their defaults in NormalizeBag. A nil map prunes to an empty one.
+// declared fields and stay), backend rows' unknown keys too — EXCEPT
+// unknown top-level string values, which are free vars (tier 2 inside tier
+// 3) and must survive a schema pass; only Reconcile, with a render in hand,
+// may prune those. It is how stored bags survive a schema edit: removed
+// fields vanish here, new fields pick up their defaults in NormalizeBag. A
+// nil map prunes to an empty one.
 func (t Template) PruneUnknown(bag map[string]any) map[string]any {
 	keep := func(fields []Field, in map[string]any) map[string]any {
 		known := map[string]bool{}
@@ -532,6 +563,12 @@ func (t Template) PruneUnknown(bag map[string]any) map[string]any {
 		return out
 	}
 	out := keep(t.Fields, bag)
+	known := t.knownTop()
+	for k, v := range bag {
+		if s, isStr := v.(string); isStr && !known[k] {
+			out[k] = s
+		}
+	}
 	if t.Backends != nil {
 		if rows, ok := bag["backends"].([]any); ok {
 			var pruned []any
@@ -548,11 +585,18 @@ func (t Template) PruneUnknown(bag map[string]any) map[string]any {
 
 // Reconcile adapts a stored preset bag to this (possibly newer) schema:
 // unknown fields are pruned, fields the schema defaults are filled in —
-// per preset, at every source save and sync. Lenient by design: a required
-// field with no default stays absent (that preset's next write or
-// activation answers strictly); reconciliation must never invent values or
-// fail over a preset that isn't the one running.
-func (t Template) Reconcile(bag map[string]any) map[string]any {
+// per preset, at every source save and sync. Free vars get the same
+// removed-field treatment, judged against this bag's OWN render (per-preset
+// structure is real: an ${env:} ref inside an {{if}} that didn't render
+// doesn't exist for this bag): a stored free-var value whose name the
+// render no longer references is dropped. Free vars are not secrets
+// (secrets are schema fields, kept above), so pruning them is safe.
+// Lenient by design: a required field with no default stays absent, and a
+// bag that cannot render keeps its free-var values (that preset's next
+// write or activation answers strictly); reconciliation must never invent
+// values or fail over a preset that isn't the one running. storageDir is
+// Render's — the caller's state directory.
+func (t Template) Reconcile(bag map[string]any, storageDir string) map[string]any {
 	fill := func(fields []Field, in map[string]any) {
 		for _, f := range fields {
 			if _, ok := in[f.Name]; !ok && f.Default != nil {
@@ -571,6 +615,18 @@ func (t Template) Reconcile(bag map[string]any) map[string]any {
 			}
 		}
 	}
+	if rendered, err := t.Render(out, storageDir); err == nil {
+		live := map[string]bool{}
+		for _, v := range t.FreeVars(rendered, out) {
+			live[v.Name] = true
+		}
+		known := t.knownTop()
+		for k := range out {
+			if !known[k] && !live[k] {
+				delete(out, k)
+			}
+		}
+	}
 	return out
 }
 
@@ -583,22 +639,13 @@ func secretEnvName(parts ...string) string {
 	return strings.ToUpper(strings.ReplaceAll(strings.Join(parts, "_"), "-", "_"))
 }
 
-// SecretEnv extracts a bag's secret values as environment variables — the
-// one invisible rule: `type: secret` values travel via the environment,
-// never baked into rendered yaml. A top-level secret field F maps to
-// UPPER(F); a repeat-row secret field F in the row named N maps to
-// UPPER(N_F). Empty and whitespace-only values are omitted, per the
-// activation-env rule (set-but-empty defeats the yaml's own fallbacks).
-func (t Template) SecretEnv(bag map[string]any) map[string]string {
-	env := map[string]string{}
-	add := func(name string, v any) {
-		if s, _ := v.(string); strings.TrimSpace(s) != "" {
-			env[name] = s
-		}
-	}
+// secretWalk visits every secret field's derived env name with the bag's
+// value for it (possibly nil/blank — the walk covers unset secrets too, so
+// FreeVars can subtract the NAMES regardless of value).
+func (t Template) secretWalk(bag map[string]any, fn func(name string, v any)) {
 	for _, f := range t.Fields {
 		if f.Type == "secret" {
-			add(secretEnvName(f.Name), bag[f.Name])
+			fn(secretEnvName(f.Name), bag[f.Name])
 		}
 	}
 	if t.Backends != nil {
@@ -611,9 +658,67 @@ func (t Template) SecretEnv(bag map[string]any) map[string]string {
 			}
 			for _, f := range t.Backends.Fields {
 				if f.Type == "secret" {
-					add(secretEnvName(n, f.Name), row[f.Name])
+					fn(secretEnvName(n, f.Name), row[f.Name])
 				}
 			}
+		}
+	}
+}
+
+// SecretEnv extracts a bag's secret values as environment variables — the
+// one invisible rule: `type: secret` values travel via the environment,
+// never baked into rendered yaml. A top-level secret field F maps to
+// UPPER(F); a repeat-row secret field F in the row named N maps to
+// UPPER(N_F). Empty and whitespace-only values are omitted, per the
+// activation-env rule (set-but-empty defeats the yaml's own fallbacks).
+func (t Template) SecretEnv(bag map[string]any) map[string]string {
+	env := map[string]string{}
+	t.secretWalk(bag, func(name string, v any) {
+		if s, _ := v.(string); strings.TrimSpace(s) != "" {
+			env[name] = s
+		}
+	})
+	return env
+}
+
+// FreeVars is tier 2 living inside tier 3: the ${env:} references a
+// preset's RENDER carries that the schema does not own — hand-written env
+// refs in the template body. Extracted by the tier-2 vars parser (so
+// trailing-comment descriptions and :-defaults come for free), minus
+// COMPY_* (compy injects those), minus the bag's derived secret env names
+// (schema fields in disguise), minus any name colliding with a top-level
+// schema key (schema wins: such a name stays a form field, never a free
+// var). Discovery is per-preset — the caller renders THIS bag first; a ref
+// inside an {{if}} that didn't render doesn't exist for this preset.
+func (t Template) FreeVars(rendered string, bag map[string]any) []vars.Var {
+	skip := t.knownTop()
+	t.secretWalk(bag, func(name string, _ any) { skip[name] = true })
+	out := []vars.Var{}
+	for _, v := range vars.Parse(rendered) {
+		if strings.HasPrefix(v.Name, "COMPY_") || skip[v.Name] {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// EnvFor composes a tier-3 activation environment from one preset's bag:
+// the secret values (SecretEnv's rule) plus every free-var value — the
+// bag's non-empty string values under keys the schema does not own,
+// exported verbatim so the render's hand-written ${env:} refs resolve.
+// The render never bakes free vars; the collector expands them, exactly as
+// in tier 2. Schema non-secret values still never travel via env (they are
+// baked). COMPY_* is the caller's to add (and it wins, added after).
+func (t Template) EnvFor(bag map[string]any) map[string]string {
+	env := t.SecretEnv(bag)
+	known := t.knownTop()
+	for k, v := range bag {
+		if known[k] {
+			continue
+		}
+		if s, _ := v.(string); strings.TrimSpace(s) != "" {
+			env[k] = s
 		}
 	}
 	return env
