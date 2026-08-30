@@ -35,7 +35,11 @@ trap 'rm -rf "$builder_dir"' EXIT
 GOBIN="$builder_dir" GOOS= GOARCH= go install go.opentelemetry.io/collector/cmd/builder@v"$version"
 "$builder_dir/builder" --config manifest.yaml
 
-cp "$here/_build/otelcol-compy" "$out/otelcol-compy"
+# Install atomically via rename: overwriting the file in place while a
+# running collector executes it taints the inode — macOS then SIGKILLs
+# every fresh exec of the path ("file changed while mapped").
+cp "$here/_build/otelcol-compy" "$out/otelcol-compy.tmp"
+mv "$out/otelcol-compy.tmp" "$out/otelcol-compy"
 printf '%s\n' "$version" > "$out/otelcol-compy.version"
 # The generated builder sources would trip the repo's `gofmt -l .` gate.
 rm -rf "$here/_build"
