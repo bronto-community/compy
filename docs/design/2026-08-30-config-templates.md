@@ -300,3 +300,61 @@ template source; the form is a second view of the same file.
   dual-dirty save rule.
 - Existing template-born configs from the wizard era hold rendered
   plain YAML — they simply ARE tier 1/2 configs; no migration.
+
+---
+
+## Amendment: tier-3 editor UI round (as shipped, 2026-08-30)
+
+The web UI half of Amendment 3 is live; the wizard-era creation form and
+the interim disabled change-options slot are gone.
+
+- **The editor**: a has_template config shows both views, always — the
+  form (generated client-side from the CONFIG'S OWN front matter via
+  `parseSourceSchema`, values from `meta.knobs` through `seedKnobs`)
+  above, the source in the surviving CodeMirror pane below, sharing one
+  scroller (`.ed-scroll`; the pane grows with its text). No collapse, no
+  unlock-ask, whatever the provenance. The pane is the plain-yaml pane's
+  same slot, relabeled "config source"; yaml highlighting serves the
+  source in v1 (the schema is the JSON subset, the body yaml-shaped) — a
+  dedicated mode is future polish, not a gap.
+- **One save**: either view dirty → the header button goes amber; the
+  save routes by pane CONTENT exactly as the backend does
+  (`isSourceText` mirrors `catalog.IsSource`): plain yaml → the yaml
+  flow (a demotion when the config was templated — and a REJECTED
+  demotion restores the source pair via `PUT …/source?validate=false`,
+  since plain prev-yaml would have demoted it anyway); source and/or
+  knobs → one `PUT …/source` (`source` only when the pane is dirty,
+  `knobs` only when the form is — source-first is the server's order).
+  After every successful save the config is reloaded and the form
+  re-derived from the new schema; promotion and demotion are just what
+  the reload shows.
+- **Failures**: a 400 naming a form field lands field-adjacent (gated by
+  `knownKnobPath` so a collector diagnostic that merely looks
+  field-shaped stays in the panel). The panel's headline says WHO
+  rejected: "the template source doesn't parse" (engine) vs "the
+  rendered config was rejected" (render/collector). When the diagnostic
+  names a line, the panel shows ±3 lines of the RENDERED yaml, labeled
+  "in the rendered config" — from the stored render, since the server
+  restored it (nothing-was-saved), so line numbers can drift by exactly
+  the failed edit; rendered→source mapping stays deferred. The
+  ?validate=false escape is offered whenever the source parses; it still
+  parses/renders server-side, only the collector's verdict is skipped.
+- **A schema that fails the loose client parse** quietly steps the form
+  aside ("the schema doesn't parse — fix the front matter in the source
+  below"); saving is never blocked on the client parse.
+- **Creation**: the new-config strip's per-template buttons are name +
+  create (`POST /api/configs/from-catalog`), disabled until the name is
+  valid. The backend refuses knobs that leave required fields empty, so
+  the client sends the schema's defaults plus neutral TYPE-derived
+  placeholders (`placeholderKnobs`: required slug → "backend", url →
+  "https://api.example.com", multi → all options) — no template field
+  name appears in app.js; the user reshapes everything in the editor.
+- **Rows**: the template glyph stays; the sync slot needs nothing for a
+  local tier-3 config ("yours from the start") — remote+templated has
+  remote provenance and syncs as any remote.
+- Recorded frictions (accepted): the excerpt's line drift above; pasting
+  a source whose schema has required repeat-group fields into a plain
+  config 400s honestly ("backends: need 1 to 8 entries, got 0" — the
+  stored knobs a plain config doesn't have), because a knob-less
+  `PUT /yaml` can't invent values; creating from the catalog first is
+  the path that seeds knobs.
