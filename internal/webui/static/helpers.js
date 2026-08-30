@@ -9,9 +9,13 @@
 
 function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
 function originOf(info) {
+  // has_template marks a tier-3 config (its yaml is rendered from a
+  // template source it owns); templating is orthogonal to provenance, but
+  // remote/shipped identity wins the glyph — the source syncs like any
+  // remote content.
   if (info.provenance === "remote") return "url";
   if (info.provenance === "shipped") return "builtin";
-  if (info.provenance === "template") return "tmpl";
+  if (info.has_template) return "tmpl";
   return "user";
 }
 function hostOf(info) {

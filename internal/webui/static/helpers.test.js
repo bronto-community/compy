@@ -55,7 +55,8 @@ test("originOf and hostOf", () => {
   assert.equal(H.originOf({ provenance: "remote" }), "url");
   assert.equal(H.originOf({ provenance: "shipped" }), "builtin");
   assert.equal(H.originOf({ provenance: "local" }), "user");
-  assert.equal(H.originOf({ provenance: "template" }), "tmpl");
+  assert.equal(H.originOf({ provenance: "local", has_template: true }), "tmpl");
+  assert.equal(H.originOf({ provenance: "remote", has_template: true }), "url");
   assert.equal(H.hostOf({ meta: { remote_url: "https://otel.acme.dev/c.yaml" } }), "otel.acme.dev");
   // An unparseable URL falls back to the raw string; no meta means "".
   assert.equal(H.hostOf({ meta: { remote_url: "not a url" } }), "not a url");

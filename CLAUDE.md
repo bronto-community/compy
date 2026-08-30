@@ -64,9 +64,16 @@ darwin-only build, stubbed out on other GOOS in `internal/window`).
 - `collector` — runs and probes a local OpenTelemetry Collector binary
   (validate, health probe, log tail); starting it is `launchd`'s job, via
   `app.Apply`.
-- `cfgstore` — configurations: `configs/<name>/` (config.yaml + meta.json),
-  CRUD/copy, presets, provenance hashing, shipped defaults, remote
-  sync, last-good snapshot/restore.
+- `cfgstore` — configurations: `configs/<name>/` (config.yaml + meta.json,
+  plus config.tmpl for templated tier-3 configs — the SOURCE the yaml is
+  rendered from), CRUD/copy, presets, provenance hashing, shipped defaults,
+  remote sync, last-good snapshot/restore.
+- `catalog` — the config-template engine (tier 3): parses template sources
+  (JSON front-matter schema + `---` + Go text/template body), validates
+  knob values, renders to plain collector YAML (only `type: secret` fields
+  survive as `${env:}` refs). Ships the embedded starter catalog; a config
+  created from it COPIES the source and owns it
+  (docs/design/2026-08-30-config-templates.md, Amendment 3).
 - `vars` — extracts `${VAR}` / `${env:VAR:-default}` references (and their
   trailing-comment descriptions) from collector YAML.
 - `distro` — pinned collector-distribution definitions, checksum-verified
@@ -128,6 +135,18 @@ place, remote configs may `sync`), differing means "locally modified"
 first v2 run, a v1 state dir's rendered effective config becomes a new
 `migrated` configuration (activated if anything was enabled) and the old
 `config/` tree is archived to `legacy-v1/` — one-way, logged to stderr.
+
+A TEMPLATED (tier-3) config additionally keeps its source at
+`configs/<name>/config.tmpl`; `config.yaml` is its rendered output, written
+on every successful save, so everything downstream (collector path, plist,
+vars cards) stays plain. The SOURCE carries the pristine hash (it IS the
+config; remote configs may be templated and sync their source). Tier
+detection is textual (`catalog.IsSource`): front-matter text through the
+yaml write routes to the source pipeline, plain yaml over a templated
+config demotes it (source dropped). The save pipeline
+(`app.WriteConfigSource`) parses, reconciles knobs (removed pruned, new
+defaulted), renders, stores the pair, then collector-validates —
+restoring everything on rejection (nothing-was-saved).
 
 ## COMPY_HOME
 

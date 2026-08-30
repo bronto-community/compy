@@ -1055,13 +1055,13 @@ function configRow(info) {
 }
 
 function syncAction(info, origin, host) {
-  // Template-born: the sync slot's third occupant. Always live — changing
-  // options is the point even when nothing is modified; a hand-edited
-  // config gets the discard confirm at submit time (the 400 arms it).
+  // Templated (tier-3): the options form is being rebuilt against the
+  // source model (the config OWNS its template now); until it lands, the
+  // slot points at the source.
   if (origin === "tmpl") {
     return {
-      on: true, title: "change options and re-render",
-      run: () => openChangeOptions(info),
+      on: false, title: "templated config — edit its source (compy config edit-source) until the reworked options form lands",
+      run: () => {},
     };
   }
   if (origin === "builtin") {
@@ -1745,14 +1745,14 @@ async function submitTemplateForm(force) {
   render();
   try {
     if (f.forName) {
-      await apiJSON(cfgURL(f.forName) + (force ? "/re-render-force" : "/re-render"), "POST", { knobs: f.knobs });
+      await apiJSON(cfgURL(f.forName) + "/source", "PUT", { knobs: f.knobs });
       const name = f.forName;
       S.tform = null;
       await loadCore();
       note(name + " re-rendered with the new options" + (force ? " — your edits were discarded" : ""), 4200);
     } else {
       const name = slug(f.name);
-      await apiJSON("/api/configs/from-template", "POST", { name, template: f.tpl.name, knobs: f.knobs });
+      await apiJSON("/api/configs/from-catalog", "POST", { name, template: f.tpl.name, knobs: f.knobs });
       S.tform = null; S.newName = "";
       await loadCore();
       go("#/configs/" + enc(name)); // the editor: rendered yaml + the secret cards
@@ -1815,7 +1815,7 @@ function screenEditor() {
     iconWrap("ed-type", { builtin: "package", user: "user", url: "link", tmpl: "template" }[origin], 14, false,
       origin === "url" ? "fetched from " + host
         : origin === "builtin" ? "built in to compy. updates with it until you edit."
-          : origin === "tmpl" ? "from a template. change its options from the configurations screen."
+          : origin === "tmpl" ? "templated. the yaml shown is rendered from its source."
             : "yours"),
     el("input", {
       class: "ed-name",
@@ -1937,7 +1937,7 @@ function screenEditor() {
       el("span", {
         class: "why sans",
         text: origin === "url" ? "kept in sync with " + host
-          : origin === "tmpl" ? "rendered from your options. most people change options instead of the yaml."
+          : origin === "tmpl" ? "rendered from this config\u2019s template source. edit the source, not the render."
             : "ships with compy. most people never open it.",
       }),
       el("span", { class: "grow" }),
@@ -1960,7 +1960,7 @@ function screenEditor() {
       origin === "url"
         ? "editing disconnects this from " + host + ". it stops re-syncing."
         : origin === "tmpl"
-          ? "editing makes this yours by hand. changing options later asks before overwriting your edits."
+          ? "saving plain yaml here makes this a plain config: its template source and options go away."
           : "your version stays through compy updates.",
       "make it mine", "accent",
       () => { S.unlockAsk = false; S.unlocked = true; render(); },
