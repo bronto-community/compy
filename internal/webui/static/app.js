@@ -223,6 +223,9 @@ function activeName() {
   return S.status.config;
 }
 function isSecret(key) { return /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH/i.test(key); }
+// The one origin→glyph map — the configs list and the editor header MUST
+// show the same icon for the same config (icon = origin, nothing else).
+const ORIGIN_ICON = { builtin: "package", user: "user", url: "link" };
 /* Ports honesty: only ports the collector process is ACTUALLY listening on
    (detected OS-side via lsof, /api/status "listening") are ever claimed —
    never a guess from settings or YAML. Nothing detected, nothing shown. */
@@ -944,10 +947,9 @@ function configRow(info) {
   const many = list.length > 1;
   const host = hostOf(info);
 
-  const typeIcon = { builtin: "package", user: "user", url: "link", tmpl: "template" }[origin];
+  const typeIcon = ORIGIN_ICON[origin];
   const typeTitle = origin === "url" ? "fetched from " + host
-    : origin === "builtin" ? "built in to compy"
-      : origin === "tmpl" ? "from a template" : "yours";
+    : origin === "builtin" ? "built in to compy" : "yours";
 
   // The whole row opens the config editor (same action as the name) so the
   // dead space between columns is clickable; interactive children are
@@ -1918,7 +1920,6 @@ function screenEditor() {
   if (!info) return el("div", { class: "screen" });
   const origin = originOf(info);
   const host = hostOf(info);
-  const running = isRunningCfg(info.name);
   // Tier 3: the config owns template source — the form and the source pane
   // are two views of one file, both always visible and editable (no
   // collapse, no unlock-ask, whatever the provenance).
@@ -1931,16 +1932,17 @@ function screenEditor() {
   const wrap = el("div", { class: "screen" });
 
   /* header, one line — the origin lives on the type icon, the URL field and
-     the reset button; there is no second line and no origin strip. */
+     the reset button; there is no second line and no origin strip. Exactly
+     ONE icon, the same origin glyph the configs list shows for this config
+     (owner ruling, 2026-08-30: icon = origin, nothing else — no run dot,
+     no template marker). */
   const showReset = origin === "url" || (origin === "builtin" && info.modified);
   const resetLabel = origin === "builtin" ? "reset to shipped" : info.modified ? "discard edits & re-sync" : "re-sync";
   wrap.appendChild(el("div", { class: "ed-head" }, [
-    running ? iconWrap("ed-run", "dot", 13, false, "running now") : null,
-    iconWrap("ed-type", { builtin: "package", user: "user", url: "link", tmpl: "template" }[origin], 14, false,
+    iconWrap("ed-type", ORIGIN_ICON[origin], 14, false,
       origin === "url" ? "fetched from " + host
         : origin === "builtin" ? "built in to compy. updates with it until you edit."
-          : origin === "tmpl" ? "templated — the form and the source below are two views of this config."
-            : "yours"),
+          : "yours"),
     el("input", {
       class: "ed-name",
       attrs: { spellcheck: "false", "data-fk": "ed-name", "aria-label": "configuration name" },

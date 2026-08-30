@@ -389,9 +389,9 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .inline .hint { font-size: 11.5px; color: var(--dim); }
 
 /* value cards, fixed 3 per row */
-.vals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.vals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .val {
-  display: flex; flex-direction: column; gap: 5px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 3px; padding: 6px 9px;
   border: 1px solid var(--border2); border-radius: 5px; background: var(--panel);
 }
 .val .k { display: flex; align-items: baseline; gap: 8px; }
@@ -446,15 +446,19 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
    The newcfg panel's look, grown a body: field cards reuse the value-card
    idiom (.val) plus a muted helper line; sections use the collapsed
    disclosure feel of yaml-collapsed; backend rows are bordered sub-cards. */
+/* Density (2026-08-30): the editor grew tall — paddings, gaps and helper
+   type pulled in across the card, tabs, field blocks and repeat groups;
+   nothing hidden, the two-column grid and every affordance stay. NOTE:
+   .ptabs' negative margin mirrors this padding — change them together. */
 .tform {
-  margin: 12px 0 16px; padding: 16px; border: 1px solid var(--border3);
+  margin: 10px 0 14px; padding: 12px; border: 1px solid var(--border3);
   border-radius: 6px; background: var(--panel);
-  display: flex; flex-direction: column; gap: 14px;
+  display: flex; flex-direction: column; gap: 9px;
 }
 /* under a config row (change options), the inline-under-the-row idiom */
 .cfg-row-wrap .tform { margin: 0 0 12px; border-color: var(--border2); background: var(--raise); }
 .tform .tf-head { display: flex; align-items: center; gap: 14px; }
-.tform .tf-desc { font-size: 12px; color: var(--muted); line-height: 1.55; margin-top: -6px; }
+.tform .tf-desc { font-size: 11.5px; color: var(--muted); line-height: 1.45; margin-top: -2px; }
 .tform .fieldset.tf-name { display: flex; flex-direction: column; gap: 6px; width: 300px; }
 .tform .fieldset.tf-name .lbl {
   font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
@@ -464,7 +468,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .tf-grid { grid-template-columns: repeat(2, 1fr); }
 .tf-field { background: var(--window); }
 .tf-field .k .name { text-transform: lowercase; }
-.tf-field .d { font-size: 11px; color: var(--dim); line-height: 1.5; }
+.tf-field .d { font-size: 10.5px; color: var(--dim); line-height: 1.4; }
 .tf-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .tf-check {
   display: flex; align-items: center; gap: 6px; font-size: 12px;
@@ -482,10 +486,10 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 .tf-sechead .caret.closed svg { transform: rotate(-90deg); }
 .tf-sechead .why { font-size: 11.5px; color: var(--dim); text-transform: none; letter-spacing: 0; }
 .tf-sechead:not([disabled]):hover .colhead { color: var(--muted); }
-.tf-rows { display: flex; flex-direction: column; gap: 10px; }
+.tf-rows { display: flex; flex-direction: column; gap: 8px; }
 .tf-brow {
-  border: 1px solid var(--border2); border-radius: 5px; padding: 10px 12px;
-  display: flex; flex-direction: column; gap: 10px;
+  border: 1px solid var(--border2); border-radius: 5px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 7px;
 }
 .tf-browhead { display: flex; align-items: center; gap: 10px; }
 .tf-browhead .x { font-size: 11px; color: var(--dim); }
@@ -496,7 +500,7 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 
 /* ── editor ───────────────────────────────────────────────────────── */
 .ed-head {
-  padding: 16px 24px 14px; border-bottom: 1px solid var(--border);
+  padding: 11px 24px 9px; border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 14px;
 }
 .ed-name {
@@ -520,7 +524,6 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 .ed-hint { font-size: 11px; color: var(--dim2); }
 .ed-hint.busy-word { animation: compyPulse 1.1s ease-in-out infinite; }
 .ed-type { display: flex; color: var(--dim2); }
-.ed-run { display: flex; color: var(--accent); }
 .btn.withicon { display: flex; align-items: center; gap: 7px; color: var(--muted); }
 
 /* ── preset tabs, on the values card ──────────────────────────────────
@@ -530,16 +533,16 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
    the body (its own bottom border paints over the strip's inset line).
    One preset → no strip; a quiet + sits in the card's corner instead. */
 .pcard { position: relative; }
-.ed-vals { margin: 12px 24px 14px; flex: none; }
+.ed-vals { margin: 10px 24px 12px; flex: none; }
 .ptabs {
   display: flex; align-items: stretch; gap: 3px;
-  margin: -16px -16px 0; padding: 6px 10px 0;
+  margin: -12px -12px 0; padding: 5px 8px 0; /* -margin mirrors .tform padding */
   border-radius: 5px 5px 0 0; background: var(--raise);
   box-shadow: inset 0 -1px 0 var(--border2); overflow-x: auto;
 }
 .ptab {
   display: flex; align-items: center; gap: 7px; font-size: 12px;
-  padding: 5px 11px; white-space: nowrap; color: var(--muted);
+  padding: 4px 10px; white-space: nowrap; color: var(--muted);
   border: 1px solid transparent; border-radius: 5px 5px 0 0;
 }
 .ptab:hover { color: var(--text); }
@@ -600,7 +603,7 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
    its text (CodeMirror height:auto + full render, viewportMargin
    Infinity). */
 .ed-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
-.ed-scroll .tform.eform { margin: 14px 24px 6px; }
+.ed-scroll .tform.eform { margin: 10px 24px 4px; }
 .ed-scroll .yaml-pane { flex: none; }
 .ed-scroll .cm-host { flex: none; min-height: 0; overflow: visible; }
 .ed-scroll .cm-host .CodeMirror { height: auto; }
@@ -618,7 +621,7 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 .yaml-collapsed .why { font-size: 12px; color: var(--dim); }
 .yaml-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .yaml-bar {
-  display: flex; align-items: center; gap: 12px; padding: 9px 16px;
+  display: flex; align-items: center; gap: 12px; padding: 6px 16px;
   border-bottom: 1px solid var(--divider);
 }
 .yaml-bar .ro { display: flex; align-items: center; gap: 12px; font-size: 11.5px; }
@@ -638,9 +641,9 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
    render illustrates. */
 .cm-host .CodeMirror {
   height: 100%; background: var(--window); color: var(--text2);
-  font-family: inherit; font-size: 12.5px; line-height: 1.85;
+  font-family: inherit; font-size: 12.5px; line-height: 1.65;
 }
-.cm-host .CodeMirror-lines { padding: 14px 0 20px; }
+.cm-host .CodeMirror-lines { padding: 10px 0 14px; }
 .cm-host .CodeMirror-gutters { background: var(--window); border-right: none; }
 .cm-host .CodeMirror-linenumber { color: var(--border3); padding-right: 10px; }
 .cm-host .CodeMirror-cursor { border-left: 2px solid var(--accent); }
