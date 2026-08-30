@@ -210,29 +210,29 @@ function knownKnobPath(tpl, path) {
 }
 
 /* ── tier-3 config sources (schema front matter + "---" + template body) ─
-   isSourceText mirrors internal/catalog's IsSource rule exactly: the text
-   opens with the JSON front matter (first non-blank byte '{') and carries
-   the "---" separator line. Plain collector yaml never starts with '{'.
-   KEEP IN LOCKSTEP with catalog.IsSource. */
+   isSourceText mirrors internal/catalog's IsSource rule, two forms:
+   - JSON (exact mirror): first non-blank byte '{' plus a "\n---\n"
+     separator. Plain collector yaml never starts with '{'.
+   - YAML front matter (approximate mirror): first non-blank line is a
+     "---" marker, a closing "---" line follows, and a top-level "name:"
+     line sits between them. Go PARSES the between-text (strict decode +
+     name) — JS has no yaml parser, so this cheap sniff only has to be
+     consistent enough for UI routing: a false positive routes to the
+     source save, where the server answers with the real schema error; a
+     false negative routes to the yaml save, where server-side tier
+     detection re-judges the text anyway. The parsed schema itself always
+     comes from the server (config detail's "template").
+   KEEP IN LOCKSTEP with catalog.IsSource / catalog.LooksLikeSource. */
 function isSourceText(s) {
   const t = (s || "").replace(/^[ \t\r\n]+/, "");
-  return t.charAt(0) === "{" && (s || "").indexOf("\n---\n") > -1;
-}
-/* The client-side schema parse the editor's form derives from — the front
-   matter is the JSON subset of YAML, so JSON.parse after slicing at the
-   first "---" line. Deliberately loose: the server (catalog.ParseSource)
-   is the authority, and null just means "no form right now — the source
-   pane is the recovery path". Shape-checks only what the form renderer
-   would trip over. */
-function parseSourceSchema(src) {
-  if (!isSourceText(src)) return null;
-  let t;
-  try { t = JSON.parse(src.slice(0, src.indexOf("\n---\n"))); } catch (e) { return null; }
-  if (!t || typeof t !== "object" || Array.isArray(t)) return null;
-  const objs = (a) => a == null || (Array.isArray(a) && a.every((x) => x && typeof x === "object" && !Array.isArray(x)));
-  if (!objs(t.fields) || !objs(t.sections)) return null;
-  if (t.backends != null && (typeof t.backends !== "object" || Array.isArray(t.backends) || !objs(t.backends.fields))) return null;
-  return t;
+  if (t.charAt(0) === "{") return (s || "").indexOf("\n---\n") > -1;
+  const lines = t.split("\n");
+  if (lines[0].replace(/[ \t\r]+$/, "") !== "---") return false;
+  let close = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].replace(/[ \t\r]+$/, "") === "---") { close = i; break; }
+  }
+  return close > 1 && lines.slice(1, close).some((l) => /^name\s*:/.test(l));
 }
 /* Creation from the catalog is name + create — the editor is the form now —
    but the backend refuses knobs that leave required fields empty. So the
@@ -452,7 +452,7 @@ if (typeof module !== "undefined") {
     compyVersionLine,
     fieldDefault, seedRow, seedKnobs, missingRequiredT3, prettyMissing,
     fieldProblem, knobProblems, parseFieldErr,
-    knownKnobPath, isSourceText, parseSourceSchema, placeholderKnobs,
+    knownKnobPath, isSourceText, placeholderKnobs,
     errLineOf, excerptAround,
     portsCompact, yamlLineOf, fmtCount, parseZapLine, parseAttrs,
     atLogBottom, logDiff, sameShown,

@@ -148,7 +148,8 @@
         "properties": {
           "info": { "$ref": "#/components/schemas/Info" },
           "yaml": { "type": "string" },
-          "source": { "type": "string", "description": "The template source (schema front matter + \"---\" + body), present only when info.has_template is true. The yaml is its rendered output." }
+          "source": { "type": "string", "description": "The template source (schema front matter — YAML between \"---\" marker lines, or the original JSON form — + \"---\" + body), present only when info.has_template is true. The yaml is its rendered output." },
+          "template": { "$ref": "#/components/schemas/Template", "description": "The parsed schema of the source, present when the config has a source and it parses — what the editor's form is generated from (the client never parses front matter itself)." }
         }
       },
       "Distro": {
@@ -740,7 +741,7 @@
     },
     "/api/configs/{name}/yaml": {
       "put": {
-        "summary": "Replace a configuration's YAML. A body carrying template front matter ('{' + \"---\" separator) is tier-3 SOURCE and routes through the source save pipeline (parse, render, validate-or-restore); plain yaml written over a templated config demotes it to plain (the source is dropped).",
+        "summary": "Replace a configuration's YAML. A body carrying template front matter (JSON: '{' + \"---\" separator; or YAML between \"---\" marker lines whose content parses as a schema — a plain config merely opening with the \"---\" document marker stays plain) is tier-3 SOURCE and routes through the source save pipeline (parse, render, validate-or-restore); plain yaml written over a templated config demotes it to plain (the source is dropped).",
         "parameters": [
           { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
           {

@@ -3,11 +3,16 @@ package app
 import (
 	"fmt"
 
+	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/webui"
 )
 
 // configDetail is the web UI's view of one configuration: its Info plus
-// YAML, plus the template source for a tier-3 config.
+// YAML, plus — for a tier-3 config — the template source AND its parsed
+// schema. The schema rides along so the client never parses front matter
+// itself (the source may be YAML-fronted now); a stored source that fails
+// to parse (hand-edited on disk) just omits it, and the editor's form
+// steps aside.
 func (a *App) configDetail(name string) (any, error) {
 	info, yaml, err := a.Config(name)
 	if err != nil {
@@ -16,6 +21,9 @@ func (a *App) configDetail(name string) (any, error) {
 	detail := map[string]any{"info": info, "yaml": yaml}
 	if src, ok, _ := a.ConfigSource(name); ok {
 		detail["source"] = src
+		if t, err := catalog.ParseSource(src); err == nil {
+			detail["template"] = t
+		}
 	}
 	return detail, nil
 }

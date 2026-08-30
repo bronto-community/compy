@@ -378,6 +378,7 @@ async function loadYAML(name) {
   const d = await api(cfgURL(name));
   S.yaml = d.yaml || "";
   S.source = d.source != null ? d.source : null; // tier 3 carries its source
+  S.tpl = d.template || null; // …and its server-parsed schema (either front-matter form)
   S.yamlOf = name;
 }
 
@@ -1347,7 +1348,7 @@ async function preflightActivate(name, preset) {
     // and the server stays the authority.
     try {
       const d = await api(cfgURL(name));
-      const tpl = parseSourceSchema(d.source || "");
+      const tpl = d.template || null; // server-parsed; either front-matter form
       if (tpl) {
         const bag = ((info.meta && info.meta.presets) || {})[preset || (info.meta && info.meta.active_preset)] || {};
         missing = prettyMissing(bag, missingRequiredT3(tpl, bag), tpl);
@@ -1615,18 +1616,20 @@ async function createFromCatalog(tpl) {
 
 /* The editor's form view, rebuilt whenever the stored source OR the
    selected preset changes (route entry, every successful save, a tab
-   switch): schema from the CONFIG'S OWN front matter (parsed client-side —
-   loosely, the server is the authority), values from the SELECTED preset's
-   bag seeded through the schema's defaults — the form IS that preset's
-   values surface, secrets included (Amendment 4). parseErr means the form
-   quietly steps aside ("the schema doesn't parse") and the source pane is
-   the recovery path — saving is never blocked on the client parse. Open
+   switch): schema from the CONFIG'S OWN front matter, parsed by the SERVER
+   (config detail's "template" — the front matter may be YAML now, and the
+   client owns no yaml parser; the form was only ever rebuilt from stored
+   source, so nothing live-typed is lost), values from the SELECTED
+   preset's bag seeded through the schema's defaults — the form IS that
+   preset's values surface, secrets included (Amendment 4). parseErr means
+   the form quietly steps aside ("the schema doesn't parse") and the
+   source pane is the recovery path — saving is never blocked on it. Open
    disclosures survive the rebuild. */
 function buildEditorForm(info) {
   const prev = S.eform && !S.eform.parseErr ? S.eform : null;
   S.eform = null;
   if (S.source == null) return;
-  const tpl = parseSourceSchema(S.source);
+  const tpl = S.tpl;
   if (!tpl) { S.eform = { parseErr: true }; return; }
   let knobs;
   try {

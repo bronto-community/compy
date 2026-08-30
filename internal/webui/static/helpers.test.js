@@ -319,8 +319,9 @@ test("knownKnobPath admits only paths the form can show", () => {
   assert.equal(H.knownKnobPath(noRepeat, "backends"), false, "no repeat group, no group error");
 });
 
-/* Tier-3 sources: detection mirrors catalog.IsSource, the client schema
-   parse is deliberately loose (the server is the authority), and creation
+/* Tier-3 sources: detection mirrors catalog.IsSource (JSON exactly, YAML
+   fronts by the documented cheap sniff — the server parses; the schema
+   the form uses comes from config detail's "template"), and creation
    placeholders are type-derived only. */
 const SRC = JSON.stringify(TPL) + "\n---\nreceivers: {}\n";
 
@@ -333,16 +334,14 @@ test("isSourceText mirrors catalog.IsSource", () => {
   assert.equal(H.isSourceText(""), false);
 });
 
-test("parseSourceSchema parses the front matter, loosely", () => {
-  const t = H.parseSourceSchema(SRC);
-  assert.equal(t.name, "custom-endpoints");
-  assert.equal(t.backends.min, 1);
-  // Broken front matter (mid-edit) is null — the form steps aside.
-  assert.equal(H.parseSourceSchema('{"name": broken\n---\nbody'), null);
-  assert.equal(H.parseSourceSchema("plain: yaml"), null);
-  assert.equal(H.parseSourceSchema('[1,2]\n---\nbody'), null, "front matter must be an object");
-  assert.equal(H.parseSourceSchema('{"fields": "nope"}\n---\nbody'), null, "fields must be objects in an array");
-  assert.equal(H.parseSourceSchema('{"backends": [1]}\n---\nbody'), null, "backends must be an object");
+test("isSourceText recognizes yaml front matter by the cheap sniff", () => {
+  assert.equal(H.isSourceText("---\nname: t\nfields: []\n---\nbody\n"), true);
+  assert.equal(H.isSourceText("\n\n---\nname: t\n---\nbody\n"), true, "leading blanks ignored");
+  assert.equal(H.isSourceText("--- \nname: t\n--- \nbody\n"), true, "marker trailing whitespace allowed");
+  assert.equal(H.isSourceText("---\nreceivers: {}\n"), false, "plain doc marker, no closing ---");
+  assert.equal(H.isSourceText("---\nreceivers: {}\n---\nexporters: {}\n"), false, "no name: line between the markers");
+  assert.equal(H.isSourceText("---\nname: t\nbody\n"), false, "opening marker without a closing one");
+  assert.equal(H.isSourceText("---\n---\nbody\n"), false, "empty front matter");
 });
 
 test("placeholderKnobs makes a creatable draft with no field names of its own", () => {

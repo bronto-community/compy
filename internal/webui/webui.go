@@ -59,7 +59,7 @@ type API struct {
 	// reporting running_stale like the yaml route's.
 	PutConfigSource           func(name, source string) error
 	PutConfigSourceNoValidate func(name, source string) (bool, error)
-	GetConfig                 func(name string) (any, error) // {"info":..., "yaml":..., "source"?:...}
+	GetConfig                 func(name string) (any, error) // {"info":..., "yaml":..., "source"?:..., "template"?:...}
 	PutConfigYAML             func(name, yaml string) error
 	// PutConfigYAMLNoValidate writes without validating and never touches
 	// the running collector; returns whether the active running collector
