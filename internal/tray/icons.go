@@ -55,8 +55,8 @@ func (s iconState) data() []byte {
 
 // Per-menu-item indicator icons (icons/item-*.svg, same family as the
 // menu-bar glyph: black-on-transparent template images, 16 + 16@2x). These
-// replaced the native checkmark as the state carrier on config rows and
-// preset items: three states — active (filled dot), going down (down
+// replaced the native checkmark as the state carrier on the (config,
+// preset) rows: three states — active (filled dot), going down (down
 // chevron), going up (up chevron) — plus a fully transparent blank, because
 // systray has no way to clear an item's icon once set (and a uniform blank
 // keeps every row's title aligned with the iconed ones).
@@ -73,7 +73,7 @@ var itemUpICNS []byte
 //go:embed icons/item-blank.icns
 var itemBlankICNS []byte
 
-// itemState is one config row's or preset item's indicator: what is running
+// itemState is one row's indicator: what is running
 // (itemActive), what a click is taking down or bringing up while the apply
 // is in flight (itemDown/itemUp), or nothing (itemNone — the blank icon).
 type itemState int

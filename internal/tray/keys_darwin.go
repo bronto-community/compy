@@ -107,26 +107,14 @@ func keyEquivalents(toggle, restart, open, quit *systray.MenuItem) []keyEquiv {
 	}
 }
 
-// digitEquivalents assigns digits 1–9 to the first nine inline config
-// slots, submenu rows included: digit d always means "activate the d-th
-// row's config with its current preset". On a preset-submenu parent the
-// digit fires the parent's action during tracking (measured 2026-08-29 on
-// macOS 26.5.2 with a throwaway status-item app) — systray delivers that as
-// a slot click, and handleSlotClicks resolves the preset at click time, so
-// the digit does on a multi-preset row exactly what a mouse click does on a
-// single-preset one. It does NOT open the submenu (AppKit fires the action
-// and closes the menu; no public API opens a submenu from a key), and
-// AppKit draws no glyph on submenu rows (the chevron takes the slot — no
-// overlap, the digit is just invisible there; positional numbering keeps it
-// guessable). Presets inside submenus deliberately carry NO digits: a
-// closed submenu's equivalents fire from the parent level in depth-first
-// menu order — a preset "3" inside row 2 would steal digit 3 from the
-// visible row 3 — and once a submenu is open, keyboard navigation swallows
-// plain keys entirely, so preset digits would misfire when closed and be
-// dead when open (same empirics). Applied once at build: slots sit at
-// fixed menu positions and hidden slots keep their NSMenuItem, so digits
-// never need re-applying; a resort retargets for free because handlers
-// resolve slotNames[i] at click time (TestDigitsRetargetOnResort).
+// digitEquivalents assigns digits 1–9 to the first nine inline slots: digit
+// d always means "activate the d-th row's (config, preset)". Every row is a
+// plain item (flat menu, owner ruling 2026-08-30), so AppKit renders every
+// digit visibly; the preset-submenu era's key-equivalent pathologies live in
+// commit 19dd219's message for the archaeology. Applied once at build: slots
+// sit at fixed menu positions and hidden slots keep their NSMenuItem, so
+// digits never need re-applying; a resort retargets for free because
+// handlers resolve slotTargets[i] at click time (TestDigitsRetargetOnResort).
 func digitEquivalents(slots []*systray.MenuItem) []keyEquiv {
 	var out []keyEquiv
 	for i, slot := range slots {

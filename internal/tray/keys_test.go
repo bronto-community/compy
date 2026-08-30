@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"fyne.io/systray"
+
+	"github.com/bronto-community/compy/internal/cfgstore"
 )
 
 // TestKeyEquivalents pins the static half: plain s/r/o on
@@ -26,14 +28,10 @@ func TestKeyEquivalents(t *testing.T) {
 	}
 }
 
-// TestDigitEquivalents pins the 2026-08-29 measured design: every one of
-// the first nine slots carries its positional digit, preset-submenu rows
-// INCLUDED — the digit fires the parent's action during menu tracking
-// (empirics, macOS 26.5.2), which handleSlotClicks turns into "activate
-// this config with its current preset". Only slots 1–9 carry digits, and
-// presets inside submenus never do (their equivalents would fire from the
-// parent level in depth-first order, stealing later rows' digits — see
-// digitEquivalents' doc comment).
+// TestDigitEquivalents pins the flat-menu digits: every one of the first
+// nine slots carries its positional digit — all rows are plain items now
+// (owner ruling 2026-08-30), so every digit renders visibly and fires
+// "activate this row's (config, preset)". Only slots 1–9 carry digits.
 func TestDigitEquivalents(t *testing.T) {
 	slots := make([]*systray.MenuItem, maxInline)
 	for i := range slots {
@@ -51,11 +49,11 @@ func TestDigitEquivalents(t *testing.T) {
 }
 
 // TestDigitsRetargetOnResort documents why the digits need no re-binding
-// when the config list reorders: digit d is bound to slot d-1, a FIXED menu
-// position, and sync() assigns the d-th alphabetical config to exactly that
-// slot — so after any create/delete/rename, digit d fires whatever config
-// is the d-th visible row now (the click handler resolves slotNames at
-// click time, same as a mouse click on the row).
+// when the flat list reorders: digit d is bound to slot d-1, a FIXED menu
+// position, and sync() assigns the d-th flat row to exactly that slot — so
+// after any create/delete/rename or preset change, digit d fires whatever
+// (config, preset) is the d-th visible row now (the click handler resolves
+// slotTargets at click time, same as a mouse click on the row).
 func TestDigitsRetargetOnResort(t *testing.T) {
 	slots := make([]*systray.MenuItem, maxInline)
 	for i := range slots {
@@ -63,35 +61,49 @@ func TestDigitsRetargetOnResort(t *testing.T) {
 	}
 	eqs := digitEquivalents(slots)
 
-	// digitTarget mirrors the sync()+click path: what config does digit d
-	// activate for this set of names?
-	digitTarget := func(names []string, d int) string {
-		inline, _ := splitInline(alphabetical(names), maxInline)
+	info := func(name string, presets ...string) cfgstore.Info {
+		i := cfgstore.Info{Name: name, Meta: cfgstore.Meta{Presets: map[string]map[string]string{}}}
+		for _, p := range presets {
+			i.Meta.Presets[p] = map[string]string{}
+		}
+		return i
+	}
+
+	// digitTarget mirrors the sync()+click path: what (config, preset) does
+	// digit d activate for this configs snapshot?
+	digitTarget := func(configs []cfgstore.Info, d int) presetTarget {
+		inline, _ := splitInline(flatRows(configs), maxInline)
 		for _, e := range eqs {
 			if e.key != strconv.Itoa(d) {
 				continue
 			}
 			for i, slot := range slots {
 				if slot == e.item && i < len(inline) {
-					return inline[i] // slotNames[i], resolved at click time
+					return inline[i].target // slotTargets[i], resolved at click time
 				}
 			}
 		}
-		return ""
+		return presetTarget{}
 	}
 
-	before := []string{"debug", "otlp", "bronto"}
-	if got := digitTarget(before, 2); got != "debug" {
-		t.Fatalf("digit 2 before resort = %q, want debug (bronto, debug, otlp)", got)
+	// bronto{default,staging} fans out to two rows, so the flat list is
+	// bronto·default, bronto·staging, debug, otlp — digits land on preset
+	// rows exactly like on single-preset ones.
+	before := []cfgstore.Info{info("debug", "default"), info("otlp", "default"), info("bronto", "staging", "default")}
+	if got, want := digitTarget(before, 2), (presetTarget{config: "bronto", preset: "staging"}); got != want {
+		t.Fatalf("digit 2 before resort = %+v, want %+v", got, want)
+	}
+	if got, want := digitTarget(before, 3), (presetTarget{config: "debug", preset: "default"}); got != want {
+		t.Fatalf("digit 3 before resort = %+v, want %+v", got, want)
 	}
 	// A new config sorting first shifts every row down one: digit 2 must now
-	// fire the new 2nd row, not follow debug to position 3.
-	after := append(before, "aaa-new")
-	if got := digitTarget(after, 2); got != "bronto" {
-		t.Errorf("digit 2 after resort = %q, want bronto (aaa-new, bronto, debug, otlp)", got)
+	// fire the new 2nd row, not follow bronto·staging to position 3.
+	after := append(before, info("aaa-new", "default"))
+	if got, want := digitTarget(after, 2), (presetTarget{config: "bronto", preset: "default"}); got != want {
+		t.Errorf("digit 2 after resort = %+v, want %+v", got, want)
 	}
-	if got := digitTarget(after, 4); got != "otlp" {
-		t.Errorf("digit 4 after resort = %q, want otlp", got)
+	if got, want := digitTarget(after, 5), (presetTarget{config: "otlp", preset: "default"}); got != want {
+		t.Errorf("digit 5 after resort = %+v, want %+v", got, want)
 	}
 }
 

@@ -132,59 +132,57 @@ func alphabetical(names []string) []string {
 	return out
 }
 
-// splitInline divides the alphabetically ordered name list into up to n
-// inline rows and the "More…" remainder, which simply continues the same
-// alphabetical order (2026-08-26 amendment).
-func splitInline(ordered []string, n int) (inline, overflow []string) {
+// splitInline divides the ordered flat rows into up to n inline slots and
+// the "More…" remainder, which simply continues the same order (2026-08-26
+// amendment).
+func splitInline[T any](ordered []T, n int) (inline, overflow []T) {
 	if len(ordered) <= n {
 		return ordered, nil
 	}
 	return ordered[:n], ordered[n:]
 }
 
-// checkedConfig is the one configuration whose row (and running preset)
-// carries the active indicator icon (it carried the native checkmark before
-// the three-state icons replaced it): the active config while the collector
-// is RUNNING, nobody when it is stopped. The indicator means "this is what
-// is running" — the same honesty rule that keeps it parked during a pending
-// activation — and with the collector stopped, nothing is running (the
-// active config is still named in the status block).
-func checkedConfig(st app.Status) string {
-	if st.Running {
-		return st.Config
-	}
-	return ""
+// flatRow is one activation row of the flat menu: the exact (config, preset)
+// a click activates, and the title it shows.
+type flatRow struct {
+	target presetTarget
+	title  string
 }
 
-// presetChoices reports a configuration's presets (sorted) and whether it
-// gets a submenu at all: two or more presets do (a single-preset config —
-// the guaranteed minimum — activates directly on click, clickPreset).
-// Picking a preset in the submenu is the activation.
-func presetChoices(info cfgstore.Info) (names []string, submenu bool) {
-	if len(info.Meta.Presets) == 0 {
-		return nil, false
+// flatRows builds the flat activation list from a configs snapshot (owner
+// ruling 2026-08-30: no preset submenus). A config with one preset is one
+// row titled by the config name alone (its click still activates that exact
+// preset, whatever its name); N>1 presets are N rows titled "name · preset".
+// Configs order alphabetically (case-insensitive, the 2026-08-26 ruling),
+// presets alphabetically within their config. A preset-less config — below
+// cfgstore's default-preset invariant, so tests and broken state only —
+// still gets a row; its "" preset means "keep the config's own active one".
+func flatRows(configs []cfgstore.Info) []flatRow {
+	byName := make(map[string]cfgstore.Info, len(configs))
+	names := make([]string, 0, len(configs))
+	for _, c := range configs {
+		byName[c.Name] = c
+		names = append(names, c.Name)
 	}
-	names = make([]string, 0, len(info.Meta.Presets))
-	for n := range info.Meta.Presets {
-		names = append(names, n)
-	}
-	slices.Sort(names)
-	// A single preset needs no picker: clicking the config activates it
-	// directly (clickPreset), whatever its name.
-	return names, len(names) >= 2
-}
-
-// clickPreset is the preset a plain click on the config row activates: the
-// config's only preset when it has exactly one — even if it was never the
-// active one — and "" otherwise ("" keeps the config's own active preset;
-// multi-preset configs activate through their submenu instead).
-func clickPreset(info cfgstore.Info) string {
-	if len(info.Meta.Presets) == 1 {
-		for n := range info.Meta.Presets {
-			return n
+	var out []flatRow
+	for _, name := range alphabetical(names) {
+		presets := make([]string, 0, len(byName[name].Meta.Presets))
+		for p := range byName[name].Meta.Presets {
+			presets = append(presets, p)
+		}
+		slices.Sort(presets)
+		switch len(presets) {
+		case 0:
+			out = append(out, flatRow{presetTarget{config: name}, name})
+		case 1:
+			out = append(out, flatRow{presetTarget{name, presets[0]}, name})
+		default:
+			for _, p := range presets {
+				out = append(out, flatRow{presetTarget{name, p}, name + " · " + p})
+			}
 		}
 	}
-	return ""
+	return out
 }
 
 // toggleTitle is the Stop/Start menu item's label for the collector's
@@ -205,97 +203,62 @@ func toggleBusyLine(running bool) string {
 	return "Starting…"
 }
 
-// rowState is a config row's steady-state indicator: the active icon on the
-// one configuration that is RUNNING (checkedConfig's rule, inherited from
-// the checkmark it replaced), no icon otherwise — so a stopped collector
-// shows no icons anywhere.
-func rowState(name string, st app.Status) itemState {
-	if name == checkedConfig(st) {
+// rowState is a flat row's steady-state indicator: the active icon on the
+// exact (config, preset) that is RUNNING — the honesty rule the checkmark
+// carried, at (config, preset) precision now that every row is one target —
+// no icon otherwise, so a stopped collector shows no icons anywhere. A
+// preset-less row's "" preset matches an equally unresolved status preset.
+func rowState(t presetTarget, st app.Status) itemState {
+	if st.Running && t.config == st.Config && t.preset == st.Preset {
 		return itemActive
 	}
 	return itemNone
 }
 
-// presetState is a preset submenu item's steady-state indicator: active only
-// when its config is the running one AND it is that config's running preset.
-func presetState(config, preset string, st app.Status) itemState {
-	if config == checkedConfig(st) && preset == st.Preset {
-		return itemActive
-	}
-	return itemNone
-}
-
-// swapMarks is what an in-flight action paints at click time: the config row
-// and preset item going down (the running ones being deactivated) and the
-// ones going up (the target). "" / the zero presetTarget mean "mark
-// nothing". The end-of-action sync repaints launchd truth over these —
-// success or failure alike.
+// swapMarks is what an in-flight action paints at click time: the row going
+// down (the running target being deactivated) and the row going up (the
+// target being brought up). The zero presetTarget means "mark nothing". The
+// end-of-action sync repaints launchd truth over these — success or failure
+// alike.
 type swapMarks struct {
-	rowDown, rowUp       string
-	presetDown, presetUp presetTarget
+	down, up presetTarget
 }
 
 // activateMarks is the transition an activation click paints, given the last
-// synced status: the still-running config row and its running preset go
-// down, the clicked target row and preset go up. From stopped, nothing is
-// going down — up only. A same-config preset swap marks only the presets
-// (old down, new up); the row itself stays on the active icon, since that
-// configuration keeps running. Re-clicking the running preset paints it
-// going up (it is re-applied), never both directions at once.
+// synced status: the running row goes down, the clicked row goes up. From
+// stopped, nothing is going down — up only. Re-clicking the running row
+// paints it going up (it is re-applied), never both directions at once.
 func activateMarks(st app.Status, target presetTarget) swapMarks {
-	m := swapMarks{}
-	if target.preset != "" {
-		m.presetUp = target
-	}
+	m := swapMarks{up: target}
 	if !st.Running {
-		m.rowUp = target.config
 		return m
 	}
-	if st.Config != target.config {
-		m.rowDown = st.Config
-		m.rowUp = target.config
-	}
-	if st.Preset != "" {
-		down := presetTarget{config: st.Config, preset: st.Preset}
-		if down != m.presetUp {
-			m.presetDown = down
-		}
+	if down := (presetTarget{config: st.Config, preset: st.Preset}); down != target {
+		m.down = down
 	}
 	return m
 }
 
 // toggleMarks is the Stop/Start transition: stopping marks the running row
-// (and its running preset) going down; starting marks the active config
-// going up — the one Start will bring back.
+// going down; starting marks the active one going up — the row Start will
+// bring back.
 func toggleMarks(st app.Status) swapMarks {
-	m := swapMarks{}
+	t := presetTarget{config: st.Config, preset: st.Preset}
 	if st.Running {
-		m.rowDown = st.Config
-		if st.Preset != "" {
-			m.presetDown = presetTarget{config: st.Config, preset: st.Preset}
-		}
-		return m
+		return swapMarks{down: t}
 	}
-	m.rowUp = st.Config
-	if st.Preset != "" {
-		m.presetUp = presetTarget{config: st.Config, preset: st.Preset}
-	}
-	return m
+	return swapMarks{up: t}
 }
 
-// restartMarks is the Restart transition: going up on the running config row
-// and preset — the collector comes straight back, and a single paint can't
-// show down-then-up, so up (the end state being worked toward) carries it.
-// Restart is disabled while stopped, so a stopped status marks nothing.
+// restartMarks is the Restart transition: going up on the running row — the
+// collector comes straight back, and a single paint can't show down-then-up,
+// so up (the end state being worked toward) carries it. Restart is disabled
+// while stopped, so a stopped status marks nothing.
 func restartMarks(st app.Status) swapMarks {
 	if !st.Running {
 		return swapMarks{}
 	}
-	m := swapMarks{rowUp: st.Config}
-	if st.Preset != "" {
-		m.presetUp = presetTarget{config: st.Config, preset: st.Preset}
-	}
-	return m
+	return swapMarks{up: presetTarget{config: st.Config, preset: st.Preset}}
 }
 
 // activatingLine is the status block's first line while an activation is in
