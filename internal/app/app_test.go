@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -2764,6 +2765,9 @@ func stubEnvExec(t *testing.T) *[]string {
 // TestReapplyOSEnv: launchctl setenv does not survive a reboot, so the tray
 // re-applies at login — but only when the setting is on.
 func TestReapplyOSEnv(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the launchctl OS env is darwin-only")
+	}
 	setup(t, "")
 	a, err := app.New()
 	if err != nil {
@@ -2793,6 +2797,9 @@ func TestReapplyOSEnv(t *testing.T) {
 // TestPutSettingsRefreshesOSEnv: with the OS env on, a port change must
 // update the injected endpoint rather than leave the old one behind.
 func TestPutSettingsRefreshesOSEnv(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the launchctl OS env is darwin-only")
+	}
 	setup(t, "")
 	a, err := app.New()
 	if err != nil {
@@ -2844,6 +2851,9 @@ func setenvKeys(calls []string) map[string]bool {
 // no stale key (no OTEL_EXPORTER_OTLP_INSECURE, no key set under grpc that
 // the http refresh doesn't overwrite).
 func TestPutSettingsProtocolSwitchOSEnv(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the launchctl OS env is darwin-only")
+	}
 	setup(t, "")
 	a, err := app.New()
 	if err != nil {

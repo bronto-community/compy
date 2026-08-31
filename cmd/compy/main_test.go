@@ -381,7 +381,9 @@ func TestRunTemplates(t *testing.T) {
 	// (the receiver bind address); the save pipeline re-renders and the
 	// yaml follows.
 	editor := filepath.Join(t.TempDir(), "ed")
-	script := "#!/bin/sh\nsed -i '' 's/127\\.0\\.0\\.1/localhost/' \"$1\"\n"
+	// sed -i is not portable (BSD wants a suffix arg, GNU refuses one):
+	// rewrite via a temp file so the editor works on both.
+	script := "#!/bin/sh\nsed 's/127\\.0\\.0\\.1/localhost/' \"$1\" > \"$1.n\" && mv \"$1.n\" \"$1\"\n"
 	if err := os.WriteFile(editor, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

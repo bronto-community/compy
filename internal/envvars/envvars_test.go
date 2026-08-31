@@ -3,6 +3,7 @@ package envvars
 import (
 	"os/exec"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -90,6 +91,9 @@ func TestEnvScriptSignalExporters(t *testing.T) {
 // TestSetUnsetOSAllVars: SetOS/UnsetOS over Vars() must cover the full
 // five-key set — toggling OS-env off has to unset everything set-os set.
 func TestSetUnsetOSAllVars(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the launchctl OS env is darwin-only")
+	}
 	orig := Exec
 	defer func() { Exec = orig }()
 
@@ -269,6 +273,9 @@ func TestRunExitCode(t *testing.T) {
 }
 
 func TestSetOSCallsLaunchctl(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the launchctl OS env is darwin-only")
+	}
 	orig := Exec
 	defer func() { Exec = orig }()
 
