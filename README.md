@@ -31,23 +31,20 @@ handled best-effort through
 brew install bronto-community/tap/compy
 ```
 
-The formula installs compy together with its bundled collector
-distribution (`otelcol-compy`) and the `compy.app` identity for the native
-window. On first use of a third-party tap, Homebrew may ask you to trust
-it once — that prompt is expected.
-
-To put compy in your menu bar (registered as a login item):
-
-```sh
-compy tray install
-```
+The install puts compy in your menu bar (its main interface, registered
+as a login item) together with its bundled collector distribution
+(`otelcol-compy`) and the `compy.app` identity for the native window. On
+first use of a third-party tap, Homebrew may ask you to trust it once —
+that prompt is expected. To take the icon out again, use "Remove from
+Menu Bar" in its menu.
 
 Building from source instead is covered in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+[CONTRIBUTING.md](CONTRIBUTING.md); there, `compy tray install` puts the
+icon in the menu bar.
 
 ## Getting started
 
-After `compy tray install`, the compy icon sits in your menu bar. Click
+After installing, the compy icon sits in your menu bar. Click
 it and activate the shipped `debug` configuration — the collector starts
 (supervised by launchd) on compy's standard ports, 14318 HTTP and 14317
 gRPC, and prints everything it receives to the collector log. "Open
