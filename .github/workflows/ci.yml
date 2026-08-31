@@ -37,11 +37,7 @@ jobs:
       - name: linux cross-build (CGO off)
         run: GOOS=linux CGO_ENABLED=0 go build -o /dev/null ./cmd/compy
 
-  # macOS minutes cost 10x on private repos, so this job skips PRs and only
-  # runs on push to main and manual dispatch. Widen it to pull_request when
-  # the repo goes public (public-repo minutes are free).
   macos:
-    if: github.event_name != 'pull_request'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
