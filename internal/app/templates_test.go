@@ -13,14 +13,13 @@ import (
 	cfgvars "github.com/bronto-community/compy/internal/vars"
 )
 
-// catalogKnobs is a minimal valid knob set for custom-endpoints.
+// catalogKnobs is a minimal valid knob set for otlp-forward.
 func catalogKnobs(name string) map[string]any {
 	return map[string]any{
 		"backends": []any{map[string]any{
 			"name":        name,
 			"endpoint":    "https://" + name + ".example",
 			"auth_header": "Authorization",
-			"auth_scheme": "Bearer",
 		}},
 	}
 }
@@ -46,7 +45,7 @@ func TestCreateFromCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.CreateFromCatalog("mine", "custom-endpoints", catalogKnobs("hc")); err != nil {
+	if err := a.CreateFromCatalog("mine", "otlp-forward", catalogKnobs("hc")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,14 +60,14 @@ func TestCreateFromCatalog(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("ConfigSource = %v %v", ok, err)
 	}
-	entry, err := catalog.Get("custom-endpoints")
+	entry, err := catalog.Get("otlp-forward")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if src != entry.Source() {
 		t.Error("created config's source is not a copy of the catalog entry's")
 	}
-	if !strings.Contains(yaml, "Authorization: Bearer ${env:HC_API_KEY}  # hc api key") {
+	if !strings.Contains(yaml, "Authorization: ${env:HC_API_KEY}  # hc auth value") {
 		t.Errorf("secret reference missing from rendered yaml:\n%s", yaml)
 	}
 	if strings.Contains(yaml, "{{") {
@@ -79,13 +78,22 @@ func TestCreateFromCatalog(t *testing.T) {
 	if info.Meta.Knobs != nil {
 		t.Errorf("options-era knobs written: %v", info.Meta.Knobs)
 	}
-	bag, ok := info.Meta.Presets[cfgstore.DefaultPreset]
-	if !ok {
+	if _, ok := info.Meta.Presets[cfgstore.DefaultPreset]; !ok {
 		t.Fatalf("no default preset: %v", info.Meta.Presets)
 	}
-	row := bag["backends"].([]any)[0].(map[string]any)
-	if row["temporality"] != "as-is" {
-		t.Errorf("defaults not normalized into the preset bag: %v", row)
+	// Defaults normalize into the bag: bronto's region choice fills in.
+	if err := a.CreateFromCatalog("bron", "bronto", map[string]any{
+		"backends": []any{map[string]any{"name": "b1"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	binfo, _, err := a.Config("bron")
+	if err != nil {
+		t.Fatal(err)
+	}
+	brow := binfo.Meta.Presets[cfgstore.DefaultPreset]["backends"].([]any)[0].(map[string]any)
+	if brow["region"] != "eu" {
+		t.Errorf("defaults not normalized into the preset bag: %v", brow)
 	}
 
 	// Caller mistakes are BadRequest: unknown template, taken name, bad
@@ -93,10 +101,10 @@ func TestCreateFromCatalog(t *testing.T) {
 	if err := a.CreateFromCatalog("x", "nope", catalogKnobs("a")); !state.IsBadRequest(err) {
 		t.Errorf("unknown template err = %v, want BadRequest", err)
 	}
-	if err := a.CreateFromCatalog("mine", "custom-endpoints", catalogKnobs("a")); !state.IsBadRequest(err) {
+	if err := a.CreateFromCatalog("mine", "otlp-forward", catalogKnobs("a")); !state.IsBadRequest(err) {
 		t.Errorf("name collision err = %v, want BadRequest", err)
 	}
-	err = a.CreateFromCatalog("y", "custom-endpoints", map[string]any{"sampling": true})
+	err = a.CreateFromCatalog("y", "otlp-forward", map[string]any{"sampling": true})
 	if !state.IsBadRequest(err) || !strings.Contains(err.Error(), "sampling") {
 		t.Errorf("bad knobs err = %v, want BadRequest naming the field", err)
 	}
@@ -394,7 +402,7 @@ func TestBagsSurviveJSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.CreateFromCatalog("mine", "custom-endpoints", catalogKnobs("hc")); err != nil {
+	if err := a.CreateFromCatalog("mine", "otlp-forward", catalogKnobs("hc")); err != nil {
 		t.Fatal(err)
 	}
 	_, before, _ := a.Config("mine")
@@ -424,14 +432,14 @@ func TestActivateRendersSelectedPreset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.CreateFromCatalog("mine", "custom-endpoints", catalogKnobs("hc")); err != nil {
+	if err := a.CreateFromCatalog("mine", "otlp-forward", catalogKnobs("hc")); err != nil {
 		t.Fatal(err)
 	}
 	two := map[string]any{"backends": []any{
 		map[string]any{"name": "hc", "endpoint": "https://hc.example",
-			"auth_header": "Authorization", "auth_scheme": "Bearer"},
-		map[string]any{"name": "bronto", "endpoint": "https://in.bronto.example",
-			"auth_header": "x-bronto-api-key", "temporality": "to-delta"},
+			"auth_header": "Authorization"},
+		map[string]any{"name": "second", "endpoint": "https://in.second.example",
+			"auth_header": "x-second-api-key"},
 	}}
 	if _, err := a.ReplacePreset("mine", "two", two, true); err != nil {
 		t.Fatal(err)
@@ -441,7 +449,7 @@ func TestActivateRendersSelectedPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, yaml, _ := a.Config("mine")
-	if !strings.Contains(yaml, "otlphttp/hc") || strings.Contains(yaml, "otlphttp/bronto") {
+	if !strings.Contains(yaml, "otlphttp/hc") || strings.Contains(yaml, "otlphttp/second") {
 		t.Errorf("default-preset render wrong:\n%s", yaml)
 	}
 
@@ -449,7 +457,7 @@ func TestActivateRendersSelectedPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, yaml, _ = a.Config("mine")
-	if !strings.Contains(yaml, "otlphttp/bronto") || !strings.Contains(yaml, "metrics/delta") {
+	if !strings.Contains(yaml, "otlphttp/second") {
 		t.Errorf("two-preset render did not switch structure:\n%s", yaml)
 	}
 
@@ -457,7 +465,7 @@ func TestActivateRendersSelectedPreset(t *testing.T) {
 	if err := a.Activate("mine", "default"); err != nil {
 		t.Fatal(err)
 	}
-	if _, yaml, _ = a.Config("mine"); strings.Contains(yaml, "otlphttp/bronto") {
+	if _, yaml, _ = a.Config("mine"); strings.Contains(yaml, "otlphttp/second") {
 		t.Errorf("switching back kept the other preset's structure:\n%s", yaml)
 	}
 }
@@ -476,8 +484,7 @@ func TestActivationEnvSplitTier3(t *testing.T) {
 	}
 	values := catalogKnobs("hc")
 	values["backends"].([]any)[0].(map[string]any)["api_key"] = "s3cret-key"
-	values["debug_tee"] = true
-	if err := a.CreateFromCatalog("mine", "custom-endpoints", values); err != nil {
+	if err := a.CreateFromCatalog("mine", "otlp-forward", values); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.Activate("mine", ""); err != nil {
@@ -652,7 +659,7 @@ func TestTemplatesList(t *testing.T) {
 	for _, tm := range ts {
 		names = append(names, tm.Name)
 	}
-	if !reflect.DeepEqual(names, []string{"custom-endpoints"}) {
+	if !reflect.DeepEqual(names, []string{"bronto", "debug", "otlp-forward"}) {
 		t.Errorf("templates = %v", names)
 	}
 }

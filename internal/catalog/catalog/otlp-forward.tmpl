@@ -1,0 +1,52 @@
+---
+name: otlp-forward
+description: Forward OTLP to one or more backends over HTTP.
+backends:
+  min: 1
+  max: 8
+  fields:
+    - name: name
+      type: slug
+      label: Name
+      default: local
+      description: Short name for this backend; the exporter and its auth variable derive from it
+    - name: endpoint
+      type: url
+      label: Endpoint
+      default: http://127.0.0.1:4318
+      description: Base OTLP/HTTP URL, e.g. https://api.honeycomb.io. The collector appends /v1/traces etc.
+    - name: auth_header
+      type: string
+      label: Auth header
+      optional: true
+      description: Header that carries the auth value, e.g. x-honeycomb-team or Authorization; leave empty for no auth
+    - name: api_key
+      type: secret
+      label: Auth value
+      description: Stored in the preset, referenced as ${env:<NAME>_API_KEY}
+---
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}  # compy's local gRPC port
+      http:
+        endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
+
+exporters:
+{{range .Backends}}  otlphttp/{{.Name}}:
+    endpoint: {{.Endpoint}}
+{{if .AuthHeader}}    headers:
+      {{.AuthHeader}}: ${env:{{.EnvVar}}}  # {{.Name}} auth value
+{{end}}{{end}}
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [{{.TracesExps}}]
+{{range .MetricsGroups}}    {{.Pipeline}}:
+      receivers: [otlp]
+      exporters: [{{.Exps}}]
+{{end}}    logs:
+      receivers: [otlp]
+      exporters: [{{.LogsExps}}]

@@ -20,6 +20,11 @@ type ceBackend struct {
 	ExtraHeader,
 	ExtraValue string
 	HasHeaders bool
+	// Row is the raw normalized row (secrets stripped): the generic escape
+	// hatch for per-row fields the flat vocabulary doesn't model, so a
+	// template can declare its own row fields ({{.Row.region}}) without any
+	// vendor-specific Go.
+	Row map[string]any
 }
 
 // ceMetricsGroup is one temporality-split metrics pipeline.
@@ -108,6 +113,7 @@ func vocabulary(norm map[string]any, storageDir string) map[string]any {
 				ExtraHeader: extraHeader,
 				ExtraValue:  extraValue,
 				HasHeaders:  authHeader != "" || extraHeader != "",
+				Row:         row,
 			},
 			signals:     map[string]bool{},
 			temporality: temporality,

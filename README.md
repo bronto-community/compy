@@ -69,8 +69,9 @@ the preset's values into the collector's environment and restarts it; the
 collector expands its own variables, compy never rewrites the YAML. If the new configuration fails to start,
 compy restores the one that was running.
 
-**Shipped, remote, and your own configs.** Three configurations ship with
-compy (`debug`, `otlp`, `bronto`). `compy config create --from-url` pulls
+**Shipped, remote, and your own configs.** Four configurations ship with
+compy (`debug`, `otlp-basic`, `otlp-forward`, `bronto`). `compy config
+create --from-url` pulls
 one from a URL and can later `sync` to its source. Edit any config
 (`compy config edit`, or the editor in the UI) and it becomes "locally
 modified": upgrades and `sync` leave it alone, `resync` discards your

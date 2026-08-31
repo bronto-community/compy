@@ -543,11 +543,11 @@ func TestResetReactivatesWhenActive(t *testing.T) {
 	}
 
 	// A modified builtin that is NOT active resets without touching launchd.
-	if err := a.WriteConfigYAML("otlp", "receivers: {}\n# edited\n"); err != nil {
+	if err := a.WriteConfigYAML("otlp-basic", "receivers: {}\n# edited\n"); err != nil {
 		t.Fatal(err)
 	}
 	*calls = nil
-	if err := a.Reset("otlp"); err != nil {
+	if err := a.Reset("otlp-basic"); err != nil {
 		t.Fatalf("Reset inactive builtin: %v", err)
 	}
 	if len(*calls) != 0 {
@@ -2238,7 +2238,7 @@ func TestRecencyFollowsActivations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"debug", "otlp", "bronto", "debug"} {
+	for _, name := range []string{"debug", "otlp-basic", "bronto", "debug"} {
 		if err := a.Activate(name, ""); err != nil {
 			t.Fatalf("Activate(%s): %v", name, err)
 		}
@@ -2248,7 +2248,7 @@ func TestRecencyFollowsActivations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"debug", "bronto", "otlp"}
+	want := []string{"debug", "bronto", "otlp-basic"}
 	if !slices.Equal(st.Recent, want) {
 		t.Errorf("Recent = %v, want %v (most recent first, each config once)", st.Recent, want)
 	}
@@ -2420,9 +2420,9 @@ func TestWriteConfigYAMLNoValidateNeverTouchesTheCollector(t *testing.T) {
 	// A config that is not the active one: written, not stale, still no
 	// collector involvement.
 	*calls = nil
-	stale, err = a.WriteConfigYAMLNoValidate("otlp", "poked: true\n")
+	stale, err = a.WriteConfigYAMLNoValidate("otlp-basic", "poked: true\n")
 	if err != nil {
-		t.Fatalf("WriteConfigYAMLNoValidate(otlp): %v", err)
+		t.Fatalf("WriteConfigYAMLNoValidate(otlp-basic): %v", err)
 	}
 	if stale {
 		t.Error("runningStale = true for a non-active config, want false")
@@ -2657,7 +2657,7 @@ func TestFactoryReset(t *testing.T) {
 	if err := a.CreateConfig("mine", "receivers: {}\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.SetVar("bronto", "prod", "BRONTO_API_KEY", "s3cret"); err != nil {
+	if err := a.SetVar("otlp-basic", "prod", "OTLP_ENDPOINT", "10.0.0.5:4317"); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.WriteConfigYAML("debug", "poked: true\n"); err != nil {
@@ -2702,12 +2702,16 @@ func TestFactoryReset(t *testing.T) {
 		if info.Provenance != "shipped" || info.Modified {
 			t.Errorf("config %s: provenance=%s modified=%v, want pristine shipped", info.Name, info.Provenance, info.Modified)
 		}
-		// Fresh configs start with exactly the empty default preset.
-		if len(info.Meta.Presets) != 1 || len(info.Meta.Presets["default"]) != 0 || info.Meta.ActivePreset != "default" {
-			t.Errorf("config %s presets = %+v active=%q, want just an empty default", info.Name, info.Meta.Presets, info.Meta.ActivePreset)
+		// Fresh configs start with exactly one default preset — empty for a
+		// plain config, the schema's seeded defaults for a templated one.
+		if len(info.Meta.Presets) != 1 || info.Meta.ActivePreset != "default" {
+			t.Errorf("config %s presets = %+v active=%q, want just the default preset", info.Name, info.Meta.Presets, info.Meta.ActivePreset)
+		}
+		if !info.HasTemplate && len(info.Meta.Presets["default"]) != 0 {
+			t.Errorf("plain config %s default preset = %+v, want empty", info.Name, info.Meta.Presets["default"])
 		}
 	}
-	if want := []string{"bronto", "debug", "otlp"}; !slices.Equal(names, want) {
+	if want := []string{"bronto", "debug", "otlp-basic", "otlp-forward"}; !slices.Equal(names, want) {
 		t.Errorf("configs after reset = %v, want %v", names, want)
 	}
 

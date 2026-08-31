@@ -1,3 +1,14 @@
+---
+name: debug
+description: Print all telemetry to the collector log.
+fields:
+  - name: verbosity
+    type: choice
+    label: Verbosity
+    options: [basic, normal, detailed]
+    default: normal
+    description: Detail level of the logged output
+---
 receivers:
   otlp:
     protocols:
@@ -5,9 +16,11 @@ receivers:
         endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}  # compy's local gRPC port
       http:
         endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
+
 exporters:
   debug:
-    verbosity: ${env:DEBUG_VERBOSITY:-normal}  # basic | normal | detailed
+    verbosity: {{.verbosity}}
+
 service:
   pipelines:
     traces: {receivers: [otlp], exporters: [debug]}

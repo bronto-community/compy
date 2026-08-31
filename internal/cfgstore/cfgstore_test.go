@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/state"
 	"github.com/bronto-community/compy/internal/vars"
 )
@@ -342,13 +343,13 @@ func TestWriteSetCreatesAndReplaces(t *testing.T) {
 func TestMaterializeDefaultsUpgradeRules(t *testing.T) {
 	root := t.TempDir()
 
-	// Fresh root: materializing creates the shipped debug config.
+	// Fresh root: materializing creates the shipped otlp-basic config.
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatalf("MaterializeDefaults: %v", err)
 	}
-	info, yaml, err := Get(root, "debug")
+	info, yaml, err := Get(root, "otlp-basic")
 	if err != nil {
-		t.Fatalf("Get debug: %v", err)
+		t.Fatalf("Get otlp-basic: %v", err)
 	}
 	if info.Provenance != "shipped" {
 		t.Fatalf("provenance = %q, want shipped", info.Provenance)
@@ -363,21 +364,21 @@ func TestMaterializeDefaultsUpgradeRules(t *testing.T) {
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatalf("MaterializeDefaults (2nd): %v", err)
 	}
-	info2, yaml2, err := Get(root, "debug")
+	info2, yaml2, err := Get(root, "otlp-basic")
 	if err != nil {
-		t.Fatalf("Get debug: %v", err)
+		t.Fatalf("Get otlp-basic: %v", err)
 	}
 	if yaml2 != original || info2.Meta.PristineSHA256 != info.Meta.PristineSHA256 {
 		t.Fatalf("unchanged re-materialize altered config: %+v", info2)
 	}
 
 	// Locally modify the config: hash no longer matches pristine.
-	if err := WriteYAML(root, "debug", original+"# local edit\n"); err != nil {
+	if err := WriteYAML(root, "otlp-basic", original+"# local edit\n"); err != nil {
 		t.Fatalf("WriteYAML: %v", err)
 	}
-	modInfo, modYAML, err := Get(root, "debug")
+	modInfo, modYAML, err := Get(root, "otlp-basic")
 	if err != nil {
-		t.Fatalf("Get debug: %v", err)
+		t.Fatalf("Get otlp-basic: %v", err)
 	}
 	if !modInfo.Modified {
 		t.Fatalf("expected Modified=true after local edit")
@@ -388,9 +389,9 @@ func TestMaterializeDefaultsUpgradeRules(t *testing.T) {
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatalf("MaterializeDefaults (3rd): %v", err)
 	}
-	afterInfo, afterYAML, err := Get(root, "debug")
+	afterInfo, afterYAML, err := Get(root, "otlp-basic")
 	if err != nil {
-		t.Fatalf("Get debug: %v", err)
+		t.Fatalf("Get otlp-basic: %v", err)
 	}
 	if afterYAML != modYAML {
 		t.Fatalf("modified config was overwritten by MaterializeDefaults")
@@ -405,7 +406,7 @@ func TestGetParsesVars(t *testing.T) {
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatalf("MaterializeDefaults: %v", err)
 	}
-	info, _, err := Get(root, "debug")
+	info, _, err := Get(root, "otlp-basic")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -417,7 +418,7 @@ func TestGetParsesVars(t *testing.T) {
 	want := map[string]string{
 		"COMPY_GRPC_PORT": "compy's local gRPC port",
 		"COMPY_HTTP_PORT": "compy's local HTTP port",
-		"DEBUG_VERBOSITY": "basic | normal | detailed",
+		"OTLP_ENDPOINT":   "where to send (host:port)",
 	}
 	for name, desc := range want {
 		got, ok := byName[name]
@@ -609,24 +610,24 @@ func TestResetRestoresShippedYAML(t *testing.T) {
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatal(err)
 	}
-	_, shipped, err := Get(root, "debug")
+	_, shipped, err := Get(root, "otlp-basic")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := SetVar(root, "debug", "prod", "K", "V"); err != nil {
+	if err := SetVar(root, "otlp-basic", "prod", "K", "V"); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteYAML(root, "debug", "edited: true\n"); err != nil {
+	if err := WriteYAML(root, "otlp-basic", "edited: true\n"); err != nil {
 		t.Fatal(err)
 	}
-	if info, _, _ := Get(root, "debug"); !info.Modified {
-		t.Fatal("setup: debug should be modified after WriteYAML")
+	if info, _, _ := Get(root, "otlp-basic"); !info.Modified {
+		t.Fatal("setup: otlp-basic should be modified after WriteYAML")
 	}
 
-	if err := Reset(root, "debug"); err != nil {
+	if err := Reset(root, "otlp-basic"); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	info, yaml, err := Get(root, "debug")
+	info, yaml, err := Get(root, "otlp-basic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -768,17 +769,17 @@ func TestMaterializeDefaultsLeavesNonShippedOnBuiltinName(t *testing.T) {
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatal(err)
 	}
-	if err := Delete(root, "otlp"); err != nil {
+	if err := Delete(root, "otlp-basic"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Create(root, "otlp", "receivers: {}\n# mine\n"); err != nil {
+	if err := Create(root, "otlp-basic", "receivers: {}\n# mine\n"); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatal(err)
 	}
-	info, yaml, err := Get(root, "otlp")
+	info, yaml, err := Get(root, "otlp-basic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -949,7 +950,7 @@ func TestCreationPathsWriteDefaultPreset(t *testing.T) {
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"debug", "otlp", "bronto"} {
+	for _, name := range []string{"debug", "otlp-basic", "otlp-forward", "bronto"} {
 		wantDefault(t, root, name)
 	}
 }
@@ -1459,5 +1460,204 @@ func TestEnsurePresetsMigratesKnobs(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(metaPath(root, "tpl")); string(after) != string(before) {
 		t.Errorf("second run rewrote meta:\n%s", after)
+	}
+}
+
+// plantShipped writes a config exactly as an older compy's plain
+// materialization did: yaml + a pristine hash over it, provenance shipped.
+func plantShipped(t *testing.T, root, name, yaml string, presets map[string]map[string]any) {
+	t.Helper()
+	if err := createDir(root, name); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeYAMLFile(root, name, yaml); err != nil {
+		t.Fatal(err)
+	}
+	m := withDefaultPreset(Meta{PristineSHA256: hashOf(yaml), Presets: presets})
+	if err := writeMeta(root, name, m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMaterializeTemplatedDefaults: a shipped catalog template materializes
+// as a shipped TEMPLATED config — source copied in, default preset seeded
+// with the schema's normalized defaults, config.yaml a render of them,
+// pristine hash on the SOURCE. Idempotent.
+func TestMaterializeTemplatedDefaults(t *testing.T) {
+	root := t.TempDir()
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err := Get(root, "bronto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasTemplate || info.Provenance != "shipped" || info.Modified {
+		t.Fatalf("bronto = %+v, want an unmodified shipped templated config", info)
+	}
+	entry, err := catalog.Get("bronto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src, ok := readSource(root, "bronto"); !ok || src != entry.Source() {
+		t.Error("source is not a copy of the embedded template")
+	}
+	bag := info.Meta.Presets[DefaultPreset]
+	rows, _ := bag["backends"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("default preset backends = %v, want the one seeded row", bag)
+	}
+	row, _ := rows[0].(map[string]any)
+	if row["name"] != "bronto" || row["region"] != "eu" {
+		t.Errorf("seeded row = %v, want the schema defaults", row)
+	}
+	for _, want := range []string{"https://ingestion.eu.bronto.io", "${env:BRONTO_API_KEY}", "file_storage"} {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("rendered yaml missing %q:\n%s", want, yaml)
+		}
+	}
+
+	// Idempotent: a second materialize changes nothing.
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+	info2, yaml2, err := Get(root, "bronto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if yaml2 != yaml || info2.Meta.PristineSHA256 != info.Meta.PristineSHA256 {
+		t.Error("re-materialize altered the templated config")
+	}
+}
+
+// TestMaterializeUpgradesPlainShippedToTemplated: an UNMODIFIED plain
+// shipped config whose default is now templated (the old bronto) upgrades
+// in place — source written, every preset's bag reconciled (repeat group
+// seeded from defaults), render regenerated, hash moved to the source. A
+// modified one is left exactly as it is.
+func TestMaterializeUpgradesPlainShippedToTemplated(t *testing.T) {
+	root := t.TempDir()
+	plantShipped(t, root, "bronto", "receivers: {}\n# the old plain bronto\n",
+		map[string]map[string]any{"default": {}, "prod": {"OLD": "v"}})
+
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err := Get(root, "bronto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasTemplate || info.Provenance != "shipped" || info.Modified {
+		t.Fatalf("upgraded bronto = %+v, want an unmodified shipped templated config", info)
+	}
+	if !strings.Contains(yaml, "https://ingestion.eu.bronto.io") {
+		t.Errorf("upgrade did not re-render:\n%s", yaml)
+	}
+	for _, preset := range []string{"default", "prod"} {
+		rows, _ := info.Meta.Presets[preset]["backends"].([]any)
+		if len(rows) != 1 {
+			t.Errorf("%s: bag not reconciled with the schema: %v", preset, info.Meta.Presets[preset])
+		}
+	}
+
+	// Modified: untouched, still plain.
+	root2 := t.TempDir()
+	edited := "receivers: {}\n# the old plain bronto\n"
+	plantShipped(t, root2, "bronto", edited, nil)
+	if err := WriteYAML(root2, "bronto", edited+"# my edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := MaterializeDefaults(root2); err != nil {
+		t.Fatal(err)
+	}
+	info, yaml, err = Get(root2, "bronto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HasTemplate || !info.Modified || !strings.Contains(yaml, "# my edit") {
+		t.Errorf("modified plain bronto was touched: %+v yaml=%q", info, yaml)
+	}
+}
+
+// TestMaterializeRetiresDroppedShipped: a shipped-provenance config that is
+// unmodified, inactive, and no longer among the shipped defaults (the old
+// otlp) is deleted; the ACTIVE one stays, as does a modified one.
+func TestMaterializeRetiresDroppedShipped(t *testing.T) {
+	root := t.TempDir()
+	old := "receivers: {}\n# the old otlp\n"
+	plantShipped(t, root, "otlp", old, nil)
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Get(root, "otlp"); err == nil {
+		t.Error("retired otlp still exists")
+	}
+
+	// Active: kept.
+	root2 := t.TempDir()
+	plantShipped(t, root2, "otlp", old, nil)
+	if err := os.WriteFile(filepath.Join(root2, "settings.json"),
+		[]byte(`{"active_config": "otlp"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := MaterializeDefaults(root2); err != nil {
+		t.Fatal(err)
+	}
+	if _, yaml, err := Get(root2, "otlp"); err != nil || yaml != old {
+		t.Errorf("active old otlp was touched: %v %q", err, yaml)
+	}
+
+	// Modified: kept.
+	root3 := t.TempDir()
+	plantShipped(t, root3, "otlp", old, nil)
+	if err := WriteYAML(root3, "otlp", old+"# my edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := MaterializeDefaults(root3); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Get(root3, "otlp"); err != nil {
+		t.Errorf("modified old otlp was retired: %v", err)
+	}
+}
+
+// TestResetTemplatedShipped: Reset on a shipped templated config restores
+// source + render + pristine hash from the embedded template — here after a
+// demotion (plain yaml pasted over it), the strongest modification — with
+// presets kept (reconciled).
+func TestResetTemplatedShipped(t *testing.T) {
+	root := t.TempDir()
+	if err := MaterializeDefaults(root); err != nil {
+		t.Fatal(err)
+	}
+	_, shipped, err := Get(root, "bronto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetVar(root, "bronto", "prod", "K", "V"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteYAML(root, "bronto", "edited: true\n"); err != nil {
+		t.Fatal(err)
+	}
+	if info, _, _ := Get(root, "bronto"); info.HasTemplate || !info.Modified {
+		t.Fatalf("setup: bronto should be a demoted, modified config: %+v", info)
+	}
+
+	if err := Reset(root, "bronto"); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	info, yaml, err := Get(root, "bronto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.HasTemplate || info.Modified || info.Provenance != "shipped" {
+		t.Errorf("reset bronto = %+v, want an unmodified shipped templated config", info)
+	}
+	if yaml != shipped {
+		t.Errorf("yaml after Reset = %q, want the shipped render", yaml)
+	}
+	if _, ok := info.Meta.Presets["prod"]; !ok {
+		t.Errorf("presets lost in Reset: %v", info.Meta.Presets)
 	}
 }

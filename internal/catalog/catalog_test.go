@@ -31,8 +31,19 @@ func canonicalKnobs(t *testing.T) map[string]any {
 	return knobs
 }
 
+// get returns a template by name. "custom-endpoints" left the shipped
+// catalog (the four-config redo) but stays here as the richest fixture —
+// backends with every field shape, toggles, sections, temporality — so the
+// engine tests keep their coverage; it parses from ceSrc below.
 func get(t *testing.T, name string) Template {
 	t.Helper()
+	if name == "custom-endpoints" {
+		tmpl, err := ParseSource(ceSrc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tmpl
+	}
 	tmpl, err := Get(name)
 	if err != nil {
 		t.Fatal(err)
@@ -45,14 +56,114 @@ func TestLoadTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ts) != 1 || ts[0].Name != "custom-endpoints" {
-		t.Fatalf("Templates() = %v, want exactly custom-endpoints", ts)
+	var names []string
+	for _, tm := range ts {
+		names = append(names, tm.Name)
+		if tm.Description == "" {
+			t.Errorf("%s has no description", tm.Name)
+		}
 	}
-	if ts[0].Description == "" {
-		t.Error("custom-endpoints has no description")
+	if want := []string{"bronto", "debug", "otlp-forward"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("Templates() = %v, want %v", names, want)
 	}
 	if _, err := Get("no-such-template"); !state.IsBadRequest(err) {
 		t.Errorf("Get(unknown) err = %v, want BadRequest", err)
+	}
+}
+
+// TestShippedTemplatesSeedable: every shipped template must materialize
+// with no user in the loop — Reconcile(nil) (the schema's normalized
+// default bag, repeat group seeded) has to render. A template that fails
+// this cannot ship as a default.
+func TestShippedTemplatesSeedable(t *testing.T) {
+	ts, err := Templates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range ts {
+		seed := tmpl.Reconcile(nil, "/s")
+		out, err := tmpl.Render(seed, "/s")
+		if err != nil {
+			t.Errorf("%s: default seed does not render: %v", tmpl.Name, err)
+			continue
+		}
+		if strings.Contains(out, "{{") {
+			t.Errorf("%s: unrendered template syntax in default render:\n%s", tmpl.Name, out)
+		}
+	}
+}
+
+// TestRenderShippedDebug: the one knob bakes.
+func TestRenderShippedDebug(t *testing.T) {
+	tmpl := get(t, "debug")
+	out, err := tmpl.Render(map[string]any{"verbosity": "detailed"}, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "verbosity: detailed") {
+		t.Errorf("verbosity not baked:\n%s", out)
+	}
+	if !strings.Contains(out, "127.0.0.1:${env:COMPY_GRPC_PORT:-14317}") {
+		t.Errorf("receiver block missing:\n%s", out)
+	}
+}
+
+// TestRenderShippedOTLPForward: one backend with auth, one without —
+// headers only where an auth header is set, all three pipelines to both.
+func TestRenderShippedOTLPForward(t *testing.T) {
+	tmpl := get(t, "otlp-forward")
+	out, err := tmpl.Render(map[string]any{"backends": []any{
+		map[string]any{"name": "hc", "endpoint": "https://api.honeycomb.io", "auth_header": "x-honeycomb-team"},
+		map[string]any{"name": "plain", "endpoint": "http://10.0.0.5:4318"},
+	}}, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"  otlphttp/hc:\n    endpoint: https://api.honeycomb.io\n    headers:\n      x-honeycomb-team: ${env:HC_API_KEY}  # hc auth value\n",
+		"  otlphttp/plain:\n    endpoint: http://10.0.0.5:4318\n",
+		"    traces:\n      receivers: [otlp]\n      exporters: [otlphttp/hc, otlphttp/plain]\n",
+		"    metrics:\n      receivers: [otlp]\n      exporters: [otlphttp/hc, otlphttp/plain]\n",
+		"    logs:\n      receivers: [otlp]\n      exporters: [otlphttp/hc, otlphttp/plain]\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render missing:\n%s\nin:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "otlphttp/plain:\n    headers") || strings.Contains(out, "processors") {
+		t.Errorf("no-auth backend grew headers, or processors appeared:\n%s", out)
+	}
+}
+
+// TestRenderShippedBronto: region derives the endpoint, collection/dataset
+// headers appear only when set, queue/retry/processors/file_storage always
+// on.
+func TestRenderShippedBronto(t *testing.T) {
+	tmpl := get(t, "bronto")
+	out, err := tmpl.Render(map[string]any{"backends": []any{
+		map[string]any{"name": "prod", "region": "us", "collection": "svc", "dataset": "web"},
+		map[string]any{"name": "bare"},
+	}}, "/home/u/compy/storage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"  otlphttp/prod:\n    endpoint: https://ingestion.us.bronto.io\n    headers:\n      X-BRONTO-API-KEY: ${env:PROD_API_KEY}  # prod api key\n      x-bronto-collection: svc\n      x-bronto-dataset: web\n    sending_queue:\n      storage: file_storage",
+		"  otlphttp/bare:\n    endpoint: https://ingestion.eu.bronto.io\n    headers:\n      X-BRONTO-API-KEY: ${env:BARE_API_KEY}  # bare api key\n    sending_queue:",
+		"retry_on_failure:\n      max_elapsed_time: 0",
+		"  memory_limiter:\n    check_interval: 1s",
+		"  batch:\n    send_batch_size: 1024",
+		"extensions:\n  file_storage:\n    directory: \"/home/u/compy/storage\"\n    create_directory: true",
+		"  extensions: [file_storage]",
+		"    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/prod, otlphttp/bare]\n",
+		"    logs:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/prod, otlphttp/bare]\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render missing:\n%s\nin:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "bare:\n    headers:\n      X-BRONTO-API-KEY: ${env:BARE_API_KEY}  # bare api key\n      x-bronto-collection") {
+		t.Errorf("unset collection rendered a header:\n%s", out)
 	}
 }
 
@@ -878,3 +989,160 @@ exporters:
 		t.Errorf("vocabulary defaults missing:\n%s", out)
 	}
 }
+
+// ceSrc is the retired shipped custom-endpoints template, kept verbatim
+// as the engine's richest fixture: a repeat group exercising every field
+// shape (slug, url, string, secret, choice, multi), sections, toggles, and
+// the temporality machinery. The shipped catalog no longer carries it.
+const ceSrc = `---
+name: custom-endpoints
+description: Send OTLP to one or more backends over HTTP.
+sections:
+  - id: backends
+    label: Backends
+  - id: pipeline
+    label: Pipeline options
+    collapsed: true
+backends:
+  min: 1
+  max: 8
+  fields:
+    - name: name
+      type: slug
+      label: Name
+      description: Short name for this backend; the exporter and its API key variable derive from it
+    - name: endpoint
+      type: url
+      label: Endpoint
+      description: Base OTLP/HTTP URL, e.g. https://api.honeycomb.io. The collector appends /v1/traces etc.
+    - name: auth_header
+      type: string
+      label: Auth header
+      optional: true
+      description: Header that carries the API key, e.g. x-honeycomb-team, api-key, or Authorization; leave empty for no auth header
+    - name: api_key
+      type: secret
+      label: API key
+      description: Stored in the preset, referenced as ${env:<NAME>_API_KEY}
+    - name: auth_scheme
+      type: choice
+      label: Auth scheme prefix
+      options: [none, Bearer, Basic, Api-Token, ApiKey]
+      default: none
+      advanced: true
+      description: Prefix before the key inside the auth header; none for a bare key
+    - name: extra_header
+      type: string
+      label: Extra header
+      optional: true
+      default: ""
+      advanced: true
+      description: One extra literal header, e.g. a tenant/dataset header like X-Scope-OrgID
+    - name: extra_value
+      type: string
+      label: Extra header value
+      optional: true
+      default: ""
+      advanced: true
+    - name: signals
+      type: multi
+      label: Signals
+      options: [traces, metrics, logs]
+      default: [traces, metrics, logs]
+      advanced: true
+    - name: temporality
+      type: choice
+      label: Metric temporality
+      options: [as-is, to-delta, to-cumulative]
+      default: as-is
+      advanced: true
+      description: Convert metric temporality for backends that require it (Datadog/Dynatrace/Azure need delta, VictoriaMetrics cumulative)
+fields:
+  - name: memory_limiter
+    type: toggle
+    label: Memory limiter
+    default: true
+    section: pipeline
+    description: Cap the collector's memory use
+  - name: batch
+    type: toggle
+    label: Batching
+    default: true
+    section: pipeline
+    description: Batch before export, sized under the 1MB payload cap
+  - name: resource_detection
+    type: toggle
+    label: Host and env detection
+    default: true
+    section: pipeline
+    description: Add host.name and OTEL_RESOURCE_ATTRIBUTES; never overrides what the SDK set
+  - name: offline_queue
+    type: toggle
+    label: Offline queue
+    default: false
+    section: pipeline
+    description: Store telemetry on disk and retry until the backend accepts it
+  - name: debug_tee
+    type: toggle
+    label: Local debug tee
+    default: false
+    section: pipeline
+    description: Also print everything to the collector log via the debug exporter
+---
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}  # compy's local gRPC port
+      http:
+        endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
+
+{{if .AnyProcs}}# no sampling, deliberately: a dev loop emits tens of traces/sec; sampling belongs at the vendor edge
+processors:
+{{if .MemoryLimiter}}  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+{{end}}{{if .ResourceDetection}}  resource_detection:
+    detectors: [env, system]
+    override: false  # attributes the SDK set win
+{{end}}{{if .NeedsDelta}}  cumulative_to_delta:
+{{end}}{{if .NeedsCumulative}}  delta_to_cumulative:
+{{end}}{{if .Batch}}  batch:
+    send_batch_size: 1024  # sized under the 1MB payload cap (the lowest vendor ceiling)
+    send_batch_max_size: 1024
+    timeout: 200ms
+{{end}}
+{{end}}exporters:
+{{range .Backends}}  otlphttp/{{.Name}}:
+    endpoint: {{.Endpoint}}
+{{if .HasHeaders}}    headers:
+{{if .AuthHeader}}      {{.AuthHeader}}: {{.AuthPrefix}}${env:{{.EnvVar}}}  # {{.Name}} api key
+{{end}}{{if .ExtraHeader}}      {{.ExtraHeader}}: {{.ExtraValue}}
+{{end}}{{end}}{{if $.OfflineQueue}}    sending_queue:
+      storage: file_storage  # survives restarts and offline stretches
+    retry_on_failure:
+      max_elapsed_time: 0  # retry forever; the queue holds telemetry until the backend answers
+{{end}}{{end}}{{if .DebugTee}}  debug:
+{{end}}
+{{if .OfflineQueue}}extensions:
+  file_storage:
+    directory: "{{.StorageDir}}"
+    create_directory: true
+
+{{end}}service:
+{{if .OfflineQueue}}  extensions: [file_storage]
+{{end}}  pipelines:
+{{if .HasTraces}}    traces:
+      receivers: [otlp]
+{{if .TracesProcs}}      processors: [{{.TracesProcs}}]
+{{end}}      exporters: [{{.TracesExps}}]
+{{end}}{{range .MetricsGroups}}    {{.Pipeline}}:
+      receivers: [otlp]
+{{if .Procs}}      processors: [{{.Procs}}]
+{{end}}      exporters: [{{.Exps}}]
+{{end}}{{if .HasLogs}}    logs:
+      receivers: [otlp]
+{{if .LogsProcs}}      processors: [{{.LogsProcs}}]
+{{end}}      exporters: [{{.LogsExps}}]
+{{end}}`

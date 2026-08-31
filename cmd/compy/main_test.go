@@ -153,14 +153,14 @@ func TestRunPresetsSetAndVars(t *testing.T) {
 	if err := run([]string{"status"}); err != nil { // materialize the state dir
 		t.Fatal(err)
 	}
-	if err := run([]string{"presets", "set", "debug", "prod", "DEBUG_VERBOSITY=detailed"}); err != nil {
+	if err := run([]string{"presets", "set", "otlp-basic", "prod", "OTLP_ENDPOINT=10.0.0.5:4317"}); err != nil {
 		t.Fatalf("presets set: %v", err)
 	}
-	out, err := captureStdout(t, func() error { return run([]string{"vars", "debug"}) })
+	out, err := captureStdout(t, func() error { return run([]string{"vars", "otlp-basic"}) })
 	if err != nil {
 		t.Fatalf("vars: %v", err)
 	}
-	if !strings.Contains(out, "DEBUG_VERBOSITY") || !strings.Contains(out, "detailed") || !strings.Contains(out, "prod") {
+	if !strings.Contains(out, "OTLP_ENDPOINT") || !strings.Contains(out, "10.0.0.5:4317") || !strings.Contains(out, "prod") {
 		t.Errorf("vars output missing the set value:\n%s", out)
 	}
 	out, err = captureStdout(t, func() error { return run([]string{"config", "list"}) })
@@ -173,9 +173,8 @@ func TestRunPresetsSetAndVars(t *testing.T) {
 }
 
 // TestRunPresetsSetTypedTier3: `presets set` on a templated config parses
-// values per the schema — toggles from true/false, the repeat group from a
-// JSON array — and `vars` lists schema fields with secrets shown as (set),
-// never the value.
+// values per the schema — the repeat group from a JSON array — and `vars`
+// lists schema fields with secrets shown as (set), never the value.
 func TestRunPresetsSetTypedTier3(t *testing.T) {
 	cliSetup(t, "")
 	if err := run([]string{"status"}); err != nil { // materialize the state dir
@@ -186,16 +185,10 @@ func TestRunPresetsSetTypedTier3(t *testing.T) {
 	if err := os.WriteFile(knobs, []byte(`{"backends": [{"name": "hc", "endpoint": "https://hc.example", "auth_header": "x-team"}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"config", "create", "t3", "--template", "custom-endpoints", "--knobs", knobs}); err != nil {
+	if err := run([]string{"config", "create", "t3", "--template", "otlp-forward", "--knobs", knobs}); err != nil {
 		t.Fatalf("config create --template: %v", err)
 	}
 
-	if err := run([]string{"presets", "set", "t3", "default", "debug_tee=true"}); err != nil {
-		t.Fatalf("presets set toggle: %v", err)
-	}
-	if err := run([]string{"presets", "set", "t3", "default", "debug_tee=maybe"}); err == nil || !strings.Contains(err.Error(), "toggle") {
-		t.Errorf("bad toggle value = %v, want the toggle guidance", err)
-	}
 	if err := run([]string{"presets", "set", "t3", "default",
 		`backends=[{"name": "hc", "endpoint": "https://hc.example", "auth_header": "x-team", "api_key": "sup3r"}]`}); err != nil {
 		t.Fatalf("presets set backends JSON: %v", err)
@@ -205,7 +198,7 @@ func TestRunPresetsSetTypedTier3(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vars: %v", err)
 	}
-	for _, want := range []string{"FIELD", "debug_tee", "true", "backends[0].api_key", "(set)", "backends[0].endpoint", "https://hc.example"} {
+	for _, want := range []string{"FIELD", "backends[0].api_key", "(set)", "backends[0].endpoint", "https://hc.example"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("vars output missing %q:\n%s", want, out)
 		}
@@ -328,8 +321,10 @@ func TestRunTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("templates: %v", err)
 	}
-	if !strings.Contains(out, "custom-endpoints") {
-		t.Errorf("templates output missing custom-endpoints:\n%s", out)
+	for _, want := range []string{"bronto", "debug", "otlp-forward"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("templates output missing %s:\n%s", want, out)
+		}
 	}
 
 	knobs := filepath.Join(t.TempDir(), "knobs.json")
@@ -337,7 +332,7 @@ func TestRunTemplates(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := captureStdout(t, func() error {
-		return run([]string{"config", "create", "mine", "--template", "custom-endpoints", "--knobs", knobs})
+		return run([]string{"config", "create", "mine", "--template", "otlp-forward", "--knobs", knobs})
 	}); err != nil {
 		t.Fatalf("config create --template: %v", err)
 	}
@@ -345,7 +340,7 @@ func TestRunTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "${env:HC_API_KEY}  # hc api key") {
+	if !strings.Contains(out, "${env:HC_API_KEY}  # hc auth value") {
 		t.Errorf("rendered config missing secret card:\n%s", out)
 	}
 
@@ -355,7 +350,7 @@ func TestRunTemplates(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = captureStdout(t, func() error {
-		return run([]string{"config", "create", "other", "--template", "custom-endpoints", "--knobs", badKnobs})
+		return run([]string{"config", "create", "other", "--template", "otlp-forward", "--knobs", badKnobs})
 	})
 	if err == nil || !strings.Contains(err.Error(), "backends[0].endpoint") {
 		t.Errorf("bad knobs err = %v, want the field named", err)
@@ -367,10 +362,10 @@ func TestRunTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config source: %v", err)
 	}
-	if !strings.Contains(out, "name: custom-endpoints") || !strings.Contains(out, "\n---\n") {
+	if !strings.Contains(out, "name: otlp-forward") || !strings.Contains(out, "\n---\n") {
 		t.Errorf("config source did not print the template source:\n%s", out)
 	}
-	if _, err := captureStdout(t, func() error { return run([]string{"config", "source", "debug"}) }); err == nil {
+	if _, err := captureStdout(t, func() error { return run([]string{"config", "source", "otlp-basic"}) }); err == nil {
 		t.Error("config source on a plain config: want error, got nil")
 	}
 
@@ -404,7 +399,7 @@ func TestRunTemplates(t *testing.T) {
 
 	// Flag conflicts are refused up front.
 	_, err = captureStdout(t, func() error {
-		return run([]string{"config", "create", "x", "--template", "custom-endpoints", "--from-url", "https://x"})
+		return run([]string{"config", "create", "x", "--template", "otlp-forward", "--from-url", "https://x"})
 	})
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("--template + --from-url = %v", err)

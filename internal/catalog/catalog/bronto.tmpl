@@ -1,0 +1,85 @@
+---
+name: bronto
+description: Send OTLP to Bronto.
+backends:
+  min: 1
+  max: 4
+  fields:
+    - name: name
+      type: slug
+      label: Name
+      default: bronto
+      description: Short name for this backend; the exporter and its API key variable derive from it
+    - name: region
+      type: choice
+      label: Region
+      options: [eu, us]
+      default: eu
+      description: Bronto region; sets the ingestion endpoint
+    - name: api_key
+      type: secret
+      label: API key
+      description: Stored in the preset, referenced as ${env:<NAME>_API_KEY}
+    - name: collection
+      type: string
+      label: Collection
+      optional: true
+      default: ""
+      description: Sent as the x-bronto-collection header; empty sends none
+    - name: dataset
+      type: string
+      label: Dataset
+      optional: true
+      default: ""
+      description: Sent as the x-bronto-dataset header; empty sends none
+---
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}  # compy's local gRPC port
+      http:
+        endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  batch:
+    send_batch_size: 1024  # sized under the 1MB payload cap (the lowest vendor ceiling)
+    send_batch_max_size: 1024
+    timeout: 200ms
+
+exporters:
+{{range .Backends}}  otlphttp/{{.Name}}:
+    endpoint: https://ingestion.{{.Row.region}}.bronto.io
+    headers:
+      X-BRONTO-API-KEY: ${env:{{.EnvVar}}}  # {{.Name}} api key
+{{if .Row.collection}}      x-bronto-collection: {{.Row.collection}}
+{{end}}{{if .Row.dataset}}      x-bronto-dataset: {{.Row.dataset}}
+{{end}}    sending_queue:
+      storage: file_storage  # survives restarts and offline stretches
+    retry_on_failure:
+      max_elapsed_time: 0  # retry forever; the queue holds telemetry until the backend answers
+{{end}}
+extensions:
+  file_storage:
+    directory: "{{.StorageDir}}"
+    create_directory: true
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [{{.TracesExps}}]
+{{range .MetricsGroups}}    {{.Pipeline}}:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [{{.Exps}}]
+{{end}}    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [{{.LogsExps}}]

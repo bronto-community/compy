@@ -68,15 +68,18 @@ ruling 2026-08-29 — the OTel ecosystem itself runs on it).
   `app.Apply`.
 - `cfgstore` — configurations: `configs/<name>/` (config.yaml + meta.json,
   plus config.tmpl for templated tier-3 configs — the SOURCE the yaml is
-  rendered from), CRUD/copy, presets, provenance hashing, shipped defaults,
-  remote sync, last-good snapshot/restore.
+  rendered from), CRUD/copy, presets, provenance hashing, shipped defaults
+  (plain from `defaults/*.yaml`, templated from the embedded catalog —
+  materialize, upgrade-in-place, retire-when-dropped, reset), remote sync,
+  last-good snapshot/restore.
 - `catalog` — the config-template engine (tier 3): parses template sources
   (front-matter schema — YAML between `---` marker lines, or the original
   JSON form — + `---` + Go text/template body), validates
   knob values, renders to plain collector YAML (only `type: secret` fields
-  survive as `${env:}` refs). Ships the embedded starter catalog; a config
-  created from it COPIES the source and owns it
-  (docs/design/2026-08-30-config-templates.md, Amendment 3).
+  survive as `${env:}` refs). Ships the embedded catalog — `debug`,
+  `otlp-forward`, `bronto`, which double as the tier-3 shipped defaults
+  (Amendment 7); a config created from a catalog entry COPIES the source
+  and owns it (docs/design/2026-08-30-config-templates.md, Amendment 3).
 - `vars` — extracts `${VAR}` / `${env:VAR:-default}` references (and their
   trailing-comment descriptions) from collector YAML.
 - `distro` — pinned collector-distribution definitions, checksum-verified
@@ -136,9 +139,12 @@ substitution in compy. Activating a templated (tier-3) config RENDERS the
 source with the selected preset's bag first (so switching presets may
 switch pipeline structure), and its environment carries ONLY the bag's
 `type: secret` values (under `catalog.SecretEnv`'s derived names) plus
-`COMPY_*` — everything else is baked into the render. Three shipped defaults
-(`debug`, `otlp`, `bronto`, embedded via `internal/cfgstore/defaults/*.yaml`)
-are materialized into `configs/` on first run. Edit-protection and sync
+`COMPY_*` — everything else is baked into the render. Four shipped defaults —
+`debug`, `otlp-forward`, `bronto` (templated, embedded via
+`internal/catalog/catalog/*.tmpl`) and `otlp-basic` (plain, via
+`internal/cfgstore/defaults/otlp-basic.yaml`) — are materialized into
+`configs/` on first run; a shipped config that is unmodified, inactive,
+and no longer shipped (the old `otlp`) is retired. Edit-protection and sync
 share one mechanism: a config's current YAML hash vs. its recorded
 `pristine_sha256` — matching means "unmodified" (shipped configs upgrade in
 place, remote configs may `sync`), differing means "locally modified"

@@ -608,3 +608,61 @@ Amendment 4 model (presets own ALL of a config's values). Fixed:
   `env`) to the tier-3 table, unioned across presets.
 - **No migration**: free vars are computed at read/activation time from
   source + bag; existing tier-3 configs light up on their next GET.
+
+## Amendment 7 — shipped templated defaults: the four-config set (owner-approved, 2026-08-31)
+
+Owner-approved redo of the out-of-the-box configurations. The shipped set
+is exactly FOUR — `debug`, `otlp-basic`, `otlp-forward`, `bronto` — and
+the `custom-endpoints` catalog template is gone (its engine coverage
+survives as a test fixture). Three of the four are tier-3 templated
+configs, so the shipped-defaults machinery learned to materialize
+templated defaults:
+
+- **The set**: `debug` (tier 3: one `verbosity` choice baked into the
+  debug exporter), `otlp-basic` (tier 2, the one plain default: otlp out
+  with a single `${env:OTLP_ENDPOINT:-…}` free var, no auth), `otlp-forward`
+  (tier 3: the simplest receive→export fan-out — backends 1..8 with
+  name/endpoint/optional auth header/secret, no processors, no toggles),
+  `bronto` (tier 3: backends 1..4 with name/region choice (eu|us — the
+  endpoint derives in the body)/secret/optional collection+dataset
+  headers; memory_limiter + batch, file_storage-backed sending queue and
+  retry-forever always on — fixed, not toggles).
+- **One copy of each source**: tier-3 defaults live in
+  `internal/catalog/catalog/*.tmpl` (they ARE the catalog — "new
+  configuration from template" lists exactly these three); the plain
+  default stays in `internal/cfgstore/defaults/otlp-basic.yaml`.
+- **Materialization** (`cfgstore.MaterializeDefaults`): every embedded
+  catalog template ships as a templated config — source copied to
+  `config.tmpl`, the `default` preset seeded with the schema's normalized
+  defaults (`Reconcile(nil)`; the repeat group seeds its Min rows from
+  the row fields' defaults, which is why the shipped templates default
+  `name` and `endpoint`/`region` — a shipped template must render with
+  no user in the loop, locked by test), `config.yaml` rendered from it,
+  provenance "shipped", pristine hash on the SOURCE (tier-3 sync
+  semantics).
+- **Upgrade in place**: an existing shipped config that is UNMODIFIED
+  (hash vs pristine — against its source for a templated one, against
+  its yaml for a still-plain one whose default turned templated) gets
+  the new source via the same `applySource` path Sync uses: every
+  preset's bag reconciled, render regenerated from the active preset,
+  hash moved to the source. `Reconcile` additionally seeds a missing
+  repeat group with Min default rows (the repeat-group version of
+  "fields the schema defaults are filled in") so a plain-era empty bag
+  upgrades cleanly. Modified configs and non-"shipped" provenance stay
+  untouched, exactly as before; a bag the new schema cannot render is
+  skipped (BadRequest), never bricking startup.
+- **Retire rule**: a shipped-provenance config that is unmodified, NOT
+  the active config, and no longer among the shipped defaults (the old
+  `otlp`) is deleted at materialization. Modified or active → left
+  alone (the old `debug`/`bronto` names are re-shipped, so only `otlp`
+  retires in practice).
+- **Reset** grows the templated arm: a shipped templated config resets
+  source + render + pristine hash from the embedded template (again
+  `applySource`; presets kept, reconciled) — the plain arm still reads
+  `defaults/<name>.yaml` and clears any pasted source.
+- **Vocabulary**: `ceBackend` gains `Row map[string]any` — the raw
+  normalized row (secrets stripped) — as the ONE generic escape hatch
+  for per-row fields the flat vocabulary doesn't model
+  (`{{.Row.region}}`, `{{.Row.collection}}`). The Go side stays
+  vendor-neutral; bronto's endpoint derivation lives in its template
+  body.

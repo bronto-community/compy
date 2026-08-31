@@ -607,6 +607,17 @@ func (t Template) Reconcile(bag map[string]any, storageDir string) map[string]an
 	out := t.PruneUnknown(bag)
 	fill(t.Fields, out)
 	if t.Backends != nil {
+		if _, ok := out["backends"]; !ok {
+			// A bag that predates the repeat group (a plain config upgraded
+			// to a templated default) seeds Min default rows — the
+			// repeat-group version of "fields the schema defaults are filled
+			// in". Row fields without defaults stay absent, lenient as ever.
+			rows := make([]any, t.Backends.Min)
+			for i := range rows {
+				rows[i] = map[string]any{}
+			}
+			out["backends"] = rows
+		}
 		if rows, ok := out["backends"].([]any); ok {
 			for _, r := range rows {
 				if row, ok := r.(map[string]any); ok {

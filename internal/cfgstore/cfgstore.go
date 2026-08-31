@@ -761,24 +761,7 @@ func refetch(root, name string, fetch Fetch) error {
 	// preset's bag. Render trouble (a schema change the active bag cannot
 	// satisfy) aborts before anything is written.
 	if catalog.IsSource(body) {
-		t, err := catalog.ParseSource(body)
-		if err != nil {
-			return err
-		}
-		m = withDefaultPreset(m)
-		for pname, bag := range m.Presets {
-			m.Presets[pname] = t.Reconcile(bag, StorageDir(root))
-		}
-		rendered, err := t.Render(t.PruneUnknown(m.Presets[m.ActivePreset]), StorageDir(root))
-		if err != nil {
-			return err
-		}
-		if err := WriteSource(root, name, body, rendered); err != nil {
-			return err
-		}
-		m.Knobs = nil
-		m.PristineSHA256 = hashOf(body)
-		return writeMeta(root, name, m)
+		return applySource(root, name, body, m)
 	}
 	if err := writeYAMLFile(root, name, body); err != nil {
 		return err
@@ -792,6 +775,33 @@ func refetch(root, name string, fetch Fetch) error {
 		return err
 	}
 	return nil
+}
+
+// applySource installs a new template source over an existing configuration
+// — the shared tier-3 arm of sync, the shipped upgrade, and Reset: every
+// preset's bag reconciled with the new schema (removed fields pruned, newly
+// defaulted filled), config.yaml re-rendered from the ACTIVE preset's bag,
+// the pristine hash moved to the source. Render trouble (a schema this
+// state cannot satisfy) aborts before anything is written.
+func applySource(root, name, src string, m Meta) error {
+	t, err := catalog.ParseSource(src)
+	if err != nil {
+		return err
+	}
+	m = withDefaultPreset(m)
+	for pname, bag := range m.Presets {
+		m.Presets[pname] = t.Reconcile(bag, StorageDir(root))
+	}
+	rendered, err := t.Render(t.PruneUnknown(m.Presets[m.ActivePreset]), StorageDir(root))
+	if err != nil {
+		return err
+	}
+	if err := WriteSource(root, name, src, rendered); err != nil {
+		return err
+	}
+	m.Knobs = nil
+	m.PristineSHA256 = hashOf(src)
+	return writeMeta(root, name, m)
 }
 
 // Sync refetches a remote configuration's YAML and updates the pristine
@@ -836,6 +846,12 @@ func Reset(root, name string) error {
 	}
 	if !info.Modified {
 		return userErrf("config %q already matches the shipped version; nothing to reset", name)
+	}
+	// A shipped TEMPLATED default resets from the embedded catalog template:
+	// source + render + pristine hash back to shipped, presets kept (each
+	// bag reconciled with the schema, as sync does).
+	if t, err := catalog.Get(name); err == nil {
+		return applySource(root, name, t.Source(), info.Meta)
 	}
 	content, err := embeddedDefaults.ReadFile("defaults/" + name + ".yaml")
 	if err != nil {
@@ -1126,21 +1142,29 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	return state.WriteFileAtomic(dst, data, perm)
 }
 
-// MaterializeDefaults creates or upgrades shipped default configurations
-// from the embedded defaults/ directory. It is idempotent: missing configs
-// are created (provenance "shipped"); existing, unmodified configs are
-// overwritten when the embedded content has changed (the upgrade path);
-// existing, modified configs are left untouched.
+// MaterializeDefaults creates or upgrades shipped default configurations:
+// plain ones from the embedded defaults/ directory, templated ones from the
+// embedded catalog (source + a default preset seeded with the schema's
+// normalized defaults + a render, pristine hash on the SOURCE). It is
+// idempotent: missing configs are created (provenance "shipped"); existing,
+// unmodified configs are overwritten when the embedded content has changed
+// (the upgrade path — a still-plain config whose default turned templated
+// upgrades in place, every preset's bag reconciled exactly as Sync does);
+// existing, modified configs and non-"shipped" provenance are left
+// untouched. A shipped-provenance config that is unmodified, not active,
+// and no longer has a shipped default of its name is retired (deleted).
 func MaterializeDefaults(root string) error {
 	entries, err := embeddedDefaults.ReadDir("defaults")
 	if err != nil {
 		return err
 	}
+	shipped := map[string]bool{}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		name := e.Name()[:len(e.Name())-len(filepath.Ext(e.Name()))]
+		shipped[name] = true
 		content, err := embeddedDefaults.ReadFile("defaults/" + e.Name())
 		if err != nil {
 			return err
@@ -1181,6 +1205,67 @@ func MaterializeDefaults(root string) error {
 		m := info.Meta
 		m.PristineSHA256 = hashOf(embedYAML)
 		if err := writeMeta(root, name, m); err != nil {
+			return err
+		}
+	}
+
+	// Templated defaults: every embedded catalog template ships as a
+	// templated config.
+	ts, err := catalog.Templates()
+	if err != nil {
+		return err
+	}
+	for _, t := range ts {
+		shipped[t.Name] = true
+		src := t.Source()
+		if !exists(root, t.Name) {
+			// Reconcile(nil) is the schema's normalized default bag (repeat
+			// group seeded with its Min default rows) — the fresh default
+			// preset.
+			if err := createSource(root, t.Name, src, t.Reconcile(nil, StorageDir(root)), Meta{
+				PristineSHA256: hashOf(src),
+			}); err != nil {
+				return err
+			}
+			continue
+		}
+		info, _, err := buildInfo(root, t.Name)
+		if err != nil {
+			return err
+		}
+		if info.Provenance != "shipped" || info.Modified {
+			continue // the user's now (or their edit); never overwritten
+		}
+		if cur, ok := readSource(root, t.Name); ok && cur == src {
+			continue // nothing to upgrade
+		}
+		if err := applySource(root, t.Name, src, info.Meta); err != nil {
+			if state.IsBadRequest(err) {
+				// A render this config's presets cannot satisfy: leave the
+				// config as it is rather than brick every startup — the next
+				// materialize retries.
+				continue
+			}
+			return err
+		}
+	}
+
+	// Retire arm: a shipped-provenance config that is unmodified, NOT the
+	// active config, and no longer has a shipped default of its name.
+	var s state.Settings
+	if data, err := os.ReadFile(filepath.Join(root, "settings.json")); err == nil {
+		_ = json.Unmarshal(data, &s) // unreadable settings: nothing active
+	}
+	infos, err := List(root)
+	if err != nil {
+		return err
+	}
+	for _, info := range infos {
+		if shipped[info.Name] || info.Provenance != "shipped" ||
+			info.Modified || info.Name == s.ActiveConfig {
+			continue
+		}
+		if err := Delete(root, info.Name); err != nil {
 			return err
 		}
 	}
