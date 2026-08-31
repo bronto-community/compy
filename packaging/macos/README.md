@@ -21,10 +21,14 @@ time. Pipeline (same headless-Chrome CDP approach as
 - Name them into the Apple iconset (icon_16x16 … icon_512x512@2x, shared
   sizes duplicated), then `iconutil -c icns … -o compy.icns`.
 
-`make-app.sh <path/to/compy>` assembles a `compy.app` next to the binary:
-Info.plist (name/display name "compy", id `io.bronto.compy`, icon), the
-icns, a symlink to the binary, and a `compy-window` shim as
-CFBundleExecutable so `open compy.app` runs `compy window`. macOS derives
+`make-app.sh <path/to/compy> [version]` assembles a `compy.app` next to the
+binary: Info.plist (name/display name "compy", id `io.bronto.compy`, icon,
+version), the icns, a symlink to the binary, and a `compy-window` shim as
+CFBundleExecutable so `open compy.app` runs `compy window`. The optional
+version argument stamps `CFBundleShortVersionString` and `CFBundleVersion`;
+only its leading numeric part is used, since those keys must be numeric
+(`0.1.3-SNAPSHOT-abc123` becomes `0.1.3`). Omitted, both are `0.0.0` —
+better than a hardcoded number that silently goes stale. macOS derives
 app identity (menu name, Dock icon) from the bundle containing the running
 executable's path; a symlink inside `Contents/MacOS` is enough — verified
 via `lsappinfo` — and never goes stale when the binary is rebuilt. The tray

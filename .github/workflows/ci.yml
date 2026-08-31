@@ -55,3 +55,49 @@ jobs:
         run: go build -tags desktop,production -o /dev/null ./cmd/compy
         env:
           CGO_LDFLAGS: -framework UniformTypeIdentifiers
+
+  # The Homebrew cask is generated here but was only ever discovered
+  # downstream, in the tap — which is why a template offence went unnoticed
+  # for six releases. Render the cask with a snapshot release and run the
+  # tap's own gates against it, before a tag exists.
+  cask:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: Render the cask
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        with:
+          # Same pin as release.yml, so this validates what a release renders.
+          version: v2.17.0
+          args: release --snapshot --clean --skip=publish,sign,sbom,announce
+        env:
+          # The extras hook's OCB collector builds are slow and irrelevant to
+          # the cask template; the hook documents this switch for exactly this.
+          SKIP_COLLECTOR: "1"
+      - name: Check the rendered cask
+        run: |
+          TAP="$(brew --repository)/Library/Taps/compy-cask-check/homebrew-tap"
+          mkdir -p "$TAP/Casks"
+          cp dist/homebrew/Casks/compy.rb "$TAP/Casks/compy.rb"
+          brew trust --tap compy-cask-check/tap
+
+          # goreleaser's built-in template is not style-clean and offers no
+          # knob to change it, so the tap normalizes style on main instead.
+          # The gate is therefore "everything goreleaser emits is
+          # autocorrectable", not "the render is already clean": if a
+          # non-correctable offence ever appears, normalization cannot save
+          # the tap and this fails.
+          brew style --fix compy-cask-check/tap || true
+          if ! brew style compy-cask-check/tap; then
+            echo "::error::Rendered cask has offences that brew style --fix cannot repair." \
+                 "The tap's normalize step will not be able to fix this either."
+            exit 1
+          fi
+
+          # Offline only: a snapshot cask's URLs and checksums are synthetic,
+          # so --online would fail on the fabricated version. The tap runs the
+          # online audit against the real published assets.
+          brew audit --cask --strict compy-cask-check/tap/compy
