@@ -6,7 +6,8 @@
 | `integration.yml` | nightly, dispatch | downloads the pinned otlp collector (URL and sha256 parsed from `internal/distro/defs.go`, checksum verified) and runs `go test -tags=integration ./integration/` |
 | `security.yml` | PR, weekly, dispatch | govulncheck |
 | `collector-bump.yml` | weekly, dispatch | opens a PR bumping the pinned collector release via `.github/scripts/bump-collector.py` when upstream has a newer one |
-| `release.yml` | tags `v*` | GoReleaser: compy archives, otelcol-compy tarballs, compy.app zip, GitHub release, Homebrew cask |
+| `release.yml` | tags `v*` | GoReleaser: compy archives, compy.app zip, GitHub release, Homebrew cask; the otelcol-compy tarballs are fetched prebuilt (see `collector-build.yml`) |
+| `collector-build.yml` | push to main touching `packaging/collector/`, dispatch | prebuilds the four otelcol-compy tarballs and publishes them under a content-addressed tag (`collector-<version>-<manifest sha8>`), with provenance attestation; the release workflow downloads these instead of compiling |
 
 Dependabot (`.github/dependabot.yml`) watches gomod and github-actions
 weekly.

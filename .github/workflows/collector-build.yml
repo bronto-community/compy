@@ -1,0 +1,72 @@
+# Prebuilds otelcol-compy for all four platforms whenever the manifest
+# changes, and publishes the tarballs as a release tagged by CONTENT:
+# collector-<version>-<manifest sha256, first 8>. The compy release
+# workflow downloads these instead of compiling (25 minutes of OCB per
+# release otherwise) — see .github/scripts/goreleaser-extras.sh. The
+# weekly collector-bump PR touches packaging/collector/, so merging it
+# triggers this build and the prebuilt is waiting before the next compy
+# release. The collector is pure Go (CGO off), so one ubuntu runner
+# cross-compiles everything.
+name: Collector build
+
+on:
+  push:
+    branches: [main]
+    paths: ["packaging/collector/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # publish the prebuilt release
+      id-token: write # provenance attestation (OIDC)
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build all platforms
+        run: |
+          set -eu
+          version=$(sed -n 's/^  version: //p' packaging/collector/manifest.yaml)
+          mhash=$(shasum -a 256 packaging/collector/manifest.yaml | cut -c1-8)
+          echo "tag=collector-${version}-${mhash}" >> "$GITHUB_ENV"
+          mkdir -p out
+          # Sequential on purpose: the builds share the module and build
+          # caches, so everything after the first compile is cheap.
+          for target in darwin_arm64 darwin_amd64 linux_amd64 linux_arm64; do
+            work=$(mktemp -d)
+            GOOS=${target%_*} GOARCH=${target#*_} CGO_ENABLED=0 \
+              sh packaging/collector/build.sh "$work"
+            name="otelcol-compy_${version}_${target}.tar.gz"
+            tar -czf "out/$name" -C "$work" otelcol-compy otelcol-compy.version
+            (cd out && shasum -a 256 "$name" > "$name.sha256")
+            rm -rf "$work"
+          done
+          (cd out && shasum -a 256 *.tar.gz > checksums.txt)
+
+      - name: Publish prebuilt release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" out/* --clobber
+          else
+            gh release create "$tag" out/* \
+              --title "$tag" \
+              --notes "Prebuilt otelcol-compy tarballs for packaging/collector/manifest.yaml at this content hash. Consumed by the compy release workflow; not for direct installation — the bundled collector ships inside compy releases."
+          fi
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: out/checksums.txt

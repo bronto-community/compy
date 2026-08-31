@@ -28,9 +28,9 @@
 #                                           format as upstream's per-asset
 #                                           .sha256 files)
 #
-# SKIP_COLLECTOR=1 skips the slow OCB collector builds (a config-inspection
-# dry run — e.g. rendering the cask .rb via `release --snapshot` without
-# filling the disk); the staged dirs and dist/extra then simply lack the
+# SKIP_COLLECTOR=1 skips fetching the prebuilt collector tarballs (a
+# config-inspection dry run — e.g. rendering the cask .rb via `release
+# --snapshot`); the staged dirs and dist/extra then simply lack the
 # otelcol-compy artifacts. Never set in the release workflow.
 set -eu
 
@@ -53,22 +53,33 @@ mkdir -p "$stage"
 
 version=$(sed -n 's/^  version: //p' "$root/packaging/collector/manifest.yaml")
 
-# collector <os_arch> [stage-dir]: build otelcol-compy for the platform,
-# tarball it into dist/extra, and optionally leave a copy in stage-dir.
+# collector <os_arch> [stage-dir]: fetch the PREBUILT otelcol-compy
+# tarball for this platform into dist/extra, and optionally unpack a copy
+# into stage-dir. The tarballs are built once per manifest change by
+# .github/workflows/collector-build.yml and published under a
+# content-addressed tag (collector-<version>-<manifest sha8>), so a
+# release no longer spends ~25 minutes compiling four collectors. Trust
+# model: same-origin release assets over TLS with a sha256 check, like
+# compy's own pulled-distro updates; the compy release then folds the
+# tarballs into its own signed checksums.txt.
 collector() {
-  goos=${1%_*}
-  goarch=${1#*_}
-  work=$(mktemp -d)
-  # Throwaway GOCACHE per platform: each collector build writes a few GB of
-  # objects that no other platform reuses, so a shared cache just stacks
-  # them up until the disk fills. Dies with $work below.
-  GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 GOCACHE="$work/gocache" \
-    sh "$root/packaging/collector/build.sh" "$work"
+  mhash=$(shasum -a 256 "$root/packaging/collector/manifest.yaml" | cut -c1-8)
+  tag="collector-${version}-${mhash}"
   name="otelcol-compy_${version}_$1.tar.gz"
-  tar -czf "$extra/$name" -C "$work" otelcol-compy otelcol-compy.version
-  (cd "$extra" && shasum -a 256 "$name" > "$name.sha256")
+  url="https://github.com/bronto-community/compy/releases/download/$tag/$name"
+  work=$(mktemp -d)
+  if ! curl -fsSL -o "$work/$name" "$url"; then
+    echo "no prebuilt collector release for this manifest ($tag)." >&2
+    echo "run the 'Collector build' workflow on main, wait for it, then retry." >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  curl -fsSL -o "$work/$name.sha256" "$url.sha256"
+  (cd "$work" && shasum -a 256 -c "$name.sha256" >/dev/null)
+  cp "$work/$name" "$extra/$name"
+  cp "$work/$name.sha256" "$extra/$name.sha256"
   if [ -n "${2:-}" ]; then
-    cp "$work/otelcol-compy" "$work/otelcol-compy.version" "$2/"
+    tar -xzf "$work/$name" -C "$2"
   fi
   rm -rf "$work"
 }
