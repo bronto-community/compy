@@ -406,12 +406,12 @@ async function enterRoute() {
       if (!info) { go("#/configs"); return; }
       await loadYAML(r.name);
       const origin = originOf(info);
-      // Tier 3 (a config that owns template source): both views, both
-      // editable, always — no collapse, no unlock-ask. The capability, not
-      // a hazard.
-      const t3 = S.source != null;
-      S.unlocked = origin === "user" || t3;
-      S.yamlOpen = origin === "user" || t3;
+      // Built-in and linked configs guard their text whatever the tier:
+      // the source pane starts collapsed and read-only, "edit anyway"
+      // makes it yours. A tier-3 form stays editable regardless — preset
+      // values are not the config's text.
+      S.unlocked = origin === "user";
+      S.yamlOpen = origin === "user";
       S.unlockAsk = false;
       resetValPanel();
       S.renameNote = null; S.presetErr = null; S.chipAsk = null;
@@ -1779,7 +1779,21 @@ function tfBackends(f) {
     class: "act tf-add", text: "+ add backend",
     title: canAdd ? "add another backend" : "at most " + rep.max + " backends",
     attrs: canAdd ? null : { disabled: "" },
-    on: { click: () => { rows.push(seedRow(rep.fields, null)); render(); } },
+    on: {
+      click: () => {
+        // The name field may sit behind the advanced disclosure, so a
+        // colliding default would be invisible: unique it up front.
+        const row = seedRow(rep.fields, null);
+        if (typeof row.name === "string" && row.name) {
+          const taken = new Set(rows.map((r) => r && r.name));
+          let n = row.name;
+          for (let i = 2; taken.has(n); i++) n = row.name + i;
+          row.name = n;
+        }
+        rows.push(row);
+        render();
+      },
+    },
   }));
   return wrap;
 }
@@ -1984,7 +1998,7 @@ function presetTabs(info, t3) {
     ? (t3tpl ? prettyMissing(bag, missingRequiredT3(t3tpl, bag, (S.freeVars || {})[S.preset]), t3tpl) : [])
     : missingRequired(info, S.preset);
   if (S.preset && missing.length) {
-    out.push(el("div", { class: "warn sans", text: S.preset + " has no " + nameList(missing) + ". activating with it will fail." }));
+    out.push(el("div", { class: "warn sans", text: nameList(missing) + (missing.length === 1 ? " is" : " are") + " not set. activating " + S.preset + " will fail." }));
   }
   return out;
 }
@@ -1994,12 +2008,13 @@ function screenEditor() {
   if (!info) return el("div", { class: "screen" });
   const origin = originOf(info);
   const host = hostOf(info);
-  // Tier 3: the config owns template source — the form and the source pane
-  // are two views of one file, both always visible and editable (no
-  // collapse, no unlock-ask, whatever the provenance).
+  // Tier 3: the config owns template source — the form edits preset
+  // values and is always live; the source pane below follows the same
+  // collapse/lock rule as a plain config's yaml (built-in and linked
+  // configs guard their text, "edit anyway" makes it yours).
   const t3 = S.source != null && S.yamlOf === info.name;
-  const locked = !t3 && origin !== "user" && !S.unlocked;
-  const yamlShown = t3 || origin === "user" || S.yamlOpen;
+  const locked = origin !== "user" && !S.unlocked;
+  const yamlShown = origin === "user" || S.yamlOpen;
   const list = presetsOf(info);
   if (list.indexOf(S.preset) < 0) S.preset = list[0];
 
@@ -2120,18 +2135,6 @@ function screenEditor() {
   }
   if (lastError) wrap.appendChild(el("div", { class: "strip-wrap" }, [errorStrip()]));
 
-  /* YAML: collapsed by default for built-in and linked configs (a tier-3
-     config never collapses \u2014 both its views are the point) */
-  if (!yamlShown) {
-    wrap.appendChild(el("div", { class: "yaml-collapsed" }, [
-      span("nm", "config.yaml"),
-      origin === "url" ? el("span", { class: "why sans", text: "kept in sync with " + host }) : null,
-      el("span", { class: "grow" }),
-      el("button", { class: "btn quiet", text: "show yaml", on: { click: () => { S.yamlOpen = true; render(); } } }),
-    ]));
-    return wrap;
-  }
-
   /* Tier 3 stacks the form view over the source pane in one scroller (the
      form can be tall, and the pane grows with its text); a plain config
      keeps the pane as the screen's flex fill. The pane is the same slot
@@ -2141,6 +2144,18 @@ function screenEditor() {
     const form = editorFormView(info);
     if (form) paneParent.appendChild(form);
     wrap.appendChild(paneParent);
+  }
+
+  /* Text pane: collapsed by default for built-in and linked configs,
+     whatever the tier \u2014 the tier-3 form above stays live either way. */
+  if (!yamlShown) {
+    paneParent.appendChild(el("div", { class: "yaml-collapsed" }, [
+      span("nm", t3 ? "config source" : "config.yaml"),
+      origin === "url" ? el("span", { class: "why sans", text: "kept in sync with " + host }) : null,
+      el("span", { class: "grow" }),
+      el("button", { class: "btn quiet", text: t3 ? "show source" : "show yaml", on: { click: () => { S.yamlOpen = true; render(); } } }),
+    ]));
+    return wrap;
   }
 
   const pane = el("div", { class: "yaml-pane" });

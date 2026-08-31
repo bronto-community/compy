@@ -112,26 +112,45 @@ func TestRenderShippedDebug(t *testing.T) {
 // headers only where an auth header is set, all three pipelines to both.
 func TestRenderShippedOTLPForward(t *testing.T) {
 	tmpl := get(t, "otlp-forward")
-	out, err := tmpl.Render(map[string]any{"backends": []any{
-		map[string]any{"name": "hc", "endpoint": "https://api.honeycomb.io", "auth_header": "x-honeycomb-team"},
+	bag := map[string]any{"backends": []any{
+		map[string]any{"name": "ex", "endpoint": "https://api.example.com", "auth_header": "x-example-key"},
 		map[string]any{"name": "plain", "endpoint": "http://10.0.0.5:4318"},
-	}}, "/s")
+	}}
+	out, err := tmpl.Render(bag, "/s")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"  otlphttp/hc:\n    endpoint: https://api.honeycomb.io\n    headers:\n      x-honeycomb-team: ${env:HC_API_KEY}  # hc auth value\n",
+		"  otlphttp/ex:\n    endpoint: https://api.example.com\n    headers:\n      x-example-key: ${env:EX_API_KEY}  # ex auth value\n",
 		"  otlphttp/plain:\n    endpoint: http://10.0.0.5:4318\n",
-		"    traces:\n      receivers: [otlp]\n      exporters: [otlphttp/hc, otlphttp/plain]\n",
-		"    metrics:\n      receivers: [otlp]\n      exporters: [otlphttp/hc, otlphttp/plain]\n",
-		"    logs:\n      receivers: [otlp]\n      exporters: [otlphttp/hc, otlphttp/plain]\n",
+		"  memory_limiter:\n    check_interval: 1s",
+		"  batch:\n    send_batch_size: 1024",
+		"    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/ex, otlphttp/plain]\n",
+		"    metrics:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/ex, otlphttp/plain]\n",
+		"    logs:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/ex, otlphttp/plain]\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render missing:\n%s\nin:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "otlphttp/plain:\n    headers") || strings.Contains(out, "processors") {
-		t.Errorf("no-auth backend grew headers, or processors appeared:\n%s", out)
+	if strings.Contains(out, "otlphttp/plain:\n    headers") {
+		t.Errorf("no-auth backend grew headers:\n%s", out)
+	}
+	if strings.Contains(out, "file_storage") {
+		t.Errorf("offline queue rendered while off by default:\n%s", out)
+	}
+	// Toggles off: the pipeline drops back to bare receive→export.
+	bag["memory_limiter"] = false
+	bag["batch"] = false
+	out, err = tmpl.Render(bag, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "processors") {
+		t.Errorf("processors rendered with every toggle off:\n%s", out)
+	}
+	if !strings.Contains(out, "    traces:\n      receivers: [otlp]\n      exporters: [otlphttp/ex, otlphttp/plain]\n") {
+		t.Errorf("bare pipeline missing with toggles off:\n%s", out)
 	}
 }
 
