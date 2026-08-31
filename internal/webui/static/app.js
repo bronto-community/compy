@@ -1315,10 +1315,9 @@ function valueCards(info, values, onEdit, scope) {
           on: { click: () => { S.reveal[v.name] = !S.reveal[v.name]; render(); } },
         }) : null,
       ]),
-      // The tier-3 form's free-var cards ("tf") show the yaml's trailing-
-      // comment description under the input, like the schema fields beside
-      // them; tier-2 cards keep it in the name's tooltip.
-      scope === "tf" && v.description ? el("div", { class: "d sans", text: v.description }) : null,
+      // The yaml's trailing-comment description shows under the input, in
+      // tier-2 cards and the tier-3 form's free-var cards alike.
+      v.description ? el("div", { class: "d sans", text: v.description }) : null,
     ]));
   }
   // No vars at all (shipped debug, say): the tab strip still shows whose
@@ -1814,6 +1813,15 @@ function editorFormView(info) {
      order — the backends repeat group renders under its namesake section. */
   const loose = (tpl.fields || []).filter((fl) => !fl.section);
   if (loose.length) wrap.appendChild(tfGrid(f, loose, f.knobs, ""));
+  // A backends repeat group with no declared "backends" section (the
+  // shipped templates declare none) renders right after the loose fields.
+  if (tpl.backends && !(tpl.sections || []).some((s) => s.id === "backends")) {
+    wrap.appendChild(el("button", { class: "tf-sechead", attrs: { type: "button", disabled: "" } }, [
+      span("colhead", "backends"),
+      f.errs.backends ? span("field-err sans", f.errs.backends) : null,
+    ]));
+    wrap.appendChild(tfBackends(f));
+  }
   for (const sec of tpl.sections || []) {
     const secFields = (tpl.fields || []).filter((fl) => fl.section === sec.id);
     const isBackends = !!tpl.backends && sec.id === "backends";

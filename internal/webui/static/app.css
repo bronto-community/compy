@@ -409,6 +409,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   background: none; border: 0; padding: 0;
 }
 .val .reveal:hover { color: var(--text); }
+.val .d { font-size: 10.5px; color: var(--dim); line-height: 1.4; }
 
 /* help strip: opt-in via the header's help button, closed by it or the ✕;
    always directly under the screen's header line */

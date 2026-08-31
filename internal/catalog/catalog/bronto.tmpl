@@ -7,12 +7,10 @@ backends:
   fields:
     - name: name
       type: slug
-      label: Name
       default: bronto
       description: Short name for this backend; the exporter and its API key variable derive from it
     - name: region
       type: choice
-      label: Region
       options: [eu, us]
       default: eu
       description: Bronto region; sets the ingestion endpoint
@@ -22,13 +20,11 @@ backends:
       description: Stored in the preset, referenced as ${env:<NAME>_API_KEY}
     - name: collection
       type: string
-      label: Collection
       optional: true
       default: ""
       description: Sent as the x-bronto-collection header; empty sends none
     - name: dataset
       type: string
-      label: Dataset
       optional: true
       default: ""
       description: Sent as the x-bronto-dataset header; empty sends none

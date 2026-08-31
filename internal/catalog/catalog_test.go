@@ -642,6 +642,23 @@ a: {{.g}}
 		t.Errorf("render = %q", out)
 	}
 
+	// label: is optional — a missing one derives from the field name.
+	lt, err := ParseSource(`{"name": "t",
+ "fields": [{"name": "auth_header", "type": "string", "default": "x"}],
+ "backends": {"min": 1, "max": 2, "fields": [{"name": "name", "type": "slug"}]}}
+---
+b
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lt.Fields[0].Label; got != "Auth header" {
+		t.Errorf("derived label = %q, want %q", got, "Auth header")
+	}
+	if got := lt.Backends.Fields[0].Label; got != "Name" {
+		t.Errorf("derived backend label = %q, want %q", got, "Name")
+	}
+
 	for _, tc := range []struct{ name, content, wantIn string }{
 		{"no separator", `{"name": "t"}` + "\nbody", "---"},
 		{"bad json", "{nope\n---\nbody\n", "schema"},

@@ -7,17 +7,14 @@ backends:
   fields:
     - name: name
       type: slug
-      label: Name
       default: local
       description: Short name for this backend; the exporter and its auth variable derive from it
     - name: endpoint
       type: url
-      label: Endpoint
       default: http://127.0.0.1:4318
       description: Base OTLP/HTTP URL, e.g. https://api.honeycomb.io. The collector appends /v1/traces etc.
     - name: auth_header
       type: string
-      label: Auth header
       optional: true
       description: Header that carries the auth value, e.g. x-honeycomb-team or Authorization; leave empty for no auth
     - name: api_key

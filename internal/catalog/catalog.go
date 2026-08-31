@@ -263,6 +263,10 @@ func ParseSource(content string) (Template, error) {
 	if err := t.checkSchema(); err != nil {
 		return Template{}, state.BadRequest(err)
 	}
+	fillLabels(t.Fields)
+	if t.Backends != nil {
+		fillLabels(t.Backends.Fields)
+	}
 	body = strings.TrimPrefix(body, "\n")
 	tmpl, err := template.New(t.Name).Funcs(funcs).Option("missingkey=error").Parse(body)
 	if err != nil {
@@ -271,6 +275,18 @@ func ParseSource(content string) (Template, error) {
 	t.body = tmpl
 	t.raw = content
 	return t, nil
+}
+
+// fillLabels derives a missing label from the field name — "api_key" →
+// "Api key" — so label: is optional in the schema. Names are non-empty
+// (checkSchema runs first).
+func fillLabels(fields []Field) {
+	for i, f := range fields {
+		if f.Label == "" {
+			s := strings.NewReplacer("_", " ", "-", " ").Replace(f.Name)
+			fields[i].Label = strings.ToUpper(s[:1]) + s[1:]
+		}
+	}
 }
 
 // checkSchema validates the schema itself: known types, options where the
