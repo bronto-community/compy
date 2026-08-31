@@ -128,7 +128,7 @@ homebrew_casks:
     repository:
       owner: bronto-community
       name: homebrew-tap
-      token: "{{ envOrDefault \"HOMEBREW_TAP_TOKEN\" \"\" }}"
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     hooks:
       post:
         # Everything in the staged dir is unsigned/ad-hoc: strip quarantine
