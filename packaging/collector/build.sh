@@ -29,18 +29,23 @@ version=$(sed -n 's/^  version: //p' "$here/manifest.yaml")
 # builder; the builder's inner `go build` then picks up the caller's
 # GOOS/GOARCH from the environment.
 echo "building otelcol-compy (collector $version) via OCB…" >&2
-cd "$here"
 builder_dir=$(mktemp -d)
 trap 'rm -rf "$builder_dir"' EXIT
 GOBIN="$builder_dir" GOOS= GOARCH= go install go.opentelemetry.io/collector/cmd/builder@v"$version"
+
+# Build inside the throwaway dir: the manifest's output_path (./_build) is
+# relative to the CWD, and a shared packaging/collector/_build lets two
+# concurrent invocations (goreleaser runs the darwin post hooks in
+# parallel) delete each other's output mid-copy — that broke the v0.1.0
+# release. Also keeps generated builder sources away from `gofmt -l .`.
+cp "$here/manifest.yaml" "$builder_dir/manifest.yaml"
+cd "$builder_dir"
 "$builder_dir/builder" --config manifest.yaml
 
 # Install atomically via rename: overwriting the file in place while a
 # running collector executes it taints the inode — macOS then SIGKILLs
 # every fresh exec of the path ("file changed while mapped").
-cp "$here/_build/otelcol-compy" "$out/otelcol-compy.tmp"
+cp "$builder_dir/_build/otelcol-compy" "$out/otelcol-compy.tmp"
 mv "$out/otelcol-compy.tmp" "$out/otelcol-compy"
 printf '%s\n' "$version" > "$out/otelcol-compy.version"
-# The generated builder sources would trip the repo's `gofmt -l .` gate.
-rm -rf "$here/_build"
 echo "built $out/otelcol-compy ($version)" >&2
