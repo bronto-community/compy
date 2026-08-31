@@ -36,6 +36,10 @@ set -eu
 
 bin=$1
 target=$2
+# $3 is the compy release version, forwarded to make-app.sh so the app
+# bundle's CFBundleShortVersionString matches the release. Optional: a bare
+# local invocation still works.
+compy_version=${3:-}
 # GoReleaser suffixes the target with the micro-architecture (GOARM64), so
 # darwin/arm64 arrives as "darwin_arm64_v8.0".
 case $target in
@@ -88,7 +92,7 @@ collector() {
 
 # App bundle, assembled next to the dist binary so nothing near the repo
 # root (a live ./compy, ./compy.app) gets touched.
-sh "$root/packaging/macos/make-app.sh" "$bin"
+sh "$root/packaging/macos/make-app.sh" "$bin" "$compy_version"
 if [ "$t" = darwin_arm64 ]; then
   # zip -y keeps the bundle's relative symlink to the compy binary beside it.
   (cd "$(dirname "$bin")" && rm -f "$extra/compy.app.zip" && zip -qry "$extra/compy.app.zip" compy.app)

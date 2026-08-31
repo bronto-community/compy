@@ -198,6 +198,11 @@ func cmdTray(args []string) error {
 	if len(args) == 0 {
 		return withApp(tray.Run)
 	}
+	// Arity guard, as in cmdService: without it `tray install --help` (and any
+	// other trailing argument) silently installed the agent instead of erroring.
+	if len(args) != 1 {
+		return errors.New("tray: need install|uninstall")
+	}
 	switch args[0] {
 	case "install":
 		bin, err := os.Executable()

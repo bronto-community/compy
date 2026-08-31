@@ -250,6 +250,9 @@ func TestRunArgErrors(t *testing.T) {
 		{[]string{"distro", "use", "nope"}, "no such distro"},
 		{[]string{"service", "frobnicate"}, "unknown subcommand"},
 		{[]string{"vars"}, "need <config>"},
+		// A trailing argument used to be ignored, so this installed the agent.
+		{[]string{"tray", "install", "--help"}, "need install|uninstall"},
+		{[]string{"tray", "bogus"}, "usage: compy tray"},
 	}
 	for _, c := range cases {
 		_, err := captureStdout(t, func() error { return run(c.args) })

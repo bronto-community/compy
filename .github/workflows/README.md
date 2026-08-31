@@ -46,18 +46,27 @@ Developer account and certificate secrets in this repo.
 
 ## Upgrade / uninstall behavior of the cask
 
-The generated cask carries the lifecycle: its postflight strips
-quarantine and runs `compy tray install` via the stable
-`${HOMEBREW_PREFIX}/bin/compy` symlink — a fresh install puts compy in
-the menu bar (the main interface), and an upgrade moves the menu bar
-onto the new binary immediately. The collector job
-is deliberately left alone — its plist bakes the resolved (versioned
-Caskroom) binary path, so after an upgrade compy surfaces "restart the
-collector to run the new version" (`stale_binary` in `/api/status`) and
-the next restart re-resolves it. `uninstall` boots both launchd labels
-out; `zap` additionally trashes the two LaunchAgents plists and
-`~/Library/Application Support/compy`. To inspect the rendered cask
-without the slow collector builds:
+The generated cask's postflight strips quarantine and nothing else. It
+deliberately does **not** run `compy tray install`: that writes a login
+LaunchAgent under `~/Library`, which is not something `brew install`
+should do unasked, and Homebrew's structured `postflight_steps` — the
+replacement for these legacy Ruby flight blocks — run sandboxed "without
+network or general home-directory access", so it would stop working
+anyway. The cask's caveat tells the user to run `compy tray install`.
+
+The tray's own plist points at the stable `${HOMEBREW_PREFIX}/bin/compy`
+symlink, so an upgrade is picked up at the next login without
+reinstalling the agent (`compy tray install` again switches over
+immediately). The collector job is deliberately left alone — its plist
+bakes the resolved (versioned Caskroom) binary path, so after an upgrade
+compy surfaces "restart the collector to run the new version"
+(`stale_binary` in `/api/status`) and the next restart re-resolves it.
+`uninstall` boots both launchd labels out; `zap` additionally trashes the
+two LaunchAgents plists and `~/Library/Application Support/compy`.
+
+CI renders and checks the cask on every PR (the `cask` job in ci.yml), so
+a template change cannot reach the tap unchecked. To inspect the rendered
+cask locally without the slow collector builds:
 `HOMEBREW_TAP_TOKEN=dummy SKIP_COLLECTOR=1 go run
 github.com/goreleaser/goreleaser/v2@v2.17.0 release --snapshot --clean
 --skip=publish,sign,sbom` (the token template needs a value even for a

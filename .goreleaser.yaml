@@ -46,7 +46,7 @@ builds:
       - -s -w -X github.com/bronto-community/compy/internal/version.release={{ .Version }}
     hooks:
       post:
-        - cmd: sh .github/scripts/goreleaser-extras.sh "{{ .Path }}" "{{ .Target }}"
+        - cmd: sh .github/scripts/goreleaser-extras.sh "{{ .Path }}" "{{ .Target }}" "{{ .Version }}"
   # linux is the pure-Go stub build (no tray/window), same as the
   # cross-build gate in CI.
   - id: compy-linux
@@ -123,9 +123,21 @@ homebrew_casks:
     directory: Casks
     description: Local OpenTelemetry Collector manager for the dev loop
     homepage: https://github.com/bronto-community/compy
+    # compy's menu bar item is a login LaunchAgent, so adding it is the
+    # user's call, not the installer's — see the hooks comment below.
     caveats: |
-      compy lives in your menu bar. To take it out, use "Remove from
-      Menu Bar" in its menu, or run `compy tray uninstall`.
+      compy's menu bar item is opt-in. To add it:
+
+        compy tray install
+
+      It then starts at login. Remove it with "Remove from Menu Bar" in its
+      menu, or `compy tray uninstall`.
+    # No goreleaser field maps to `depends_on`, and custom_block is injected
+    # at the top of the cask. brew style relocates it (and rewrites the value
+    # to `macos: :big_sur`); the tap normalizes style on main, so the emitted
+    # stanza order settling differently is expected and harmless.
+    custom_block: |
+      depends_on macos: ">= :big_sur"
     repository:
       owner: bronto-community
       name: homebrew-tap
@@ -133,24 +145,22 @@ homebrew_casks:
     hooks:
       post:
         # Everything in the staged dir is unsigned/ad-hoc: strip quarantine
-        # recursively so compy, otelcol-compy, and compy.app all run.
+        # recursively so compy, otelcol-compy, and compy.app all run. This
+        # hook exists only because nothing here is Developer ID notarized;
+        # notarizing would let it be deleted outright.
         #
-        # Then put compy in the menu bar — it is the main interface, so a
-        # brew install produces it (the caveat says how to remove it).
-        # `tray install` is idempotent: it renders the LaunchAgent plist and
-        # (re)starts the job, which on upgrades also moves the menu bar onto
-        # the new binary. It MUST run via the stable ${HOMEBREW_PREFIX}
-        # symlink, never the staged binary: the plist bakes in the invoked
-        # path (os.Executable), and a versioned Caskroom path dies at the
-        # next upgrade. Defensive: a failure never fails the install. The
-        # collector job is deliberately NOT touched — restarting the user's
-        # data path unasked is not ours to do; compy itself surfaces
-        # "restart to finish the upgrade" in-app.
+        # This deliberately does NOT run `compy tray install`. Installing a
+        # login LaunchAgent is not something `brew install` should do behind
+        # the user's back, and Homebrew is actively closing the door on it:
+        # the structured `postflight_steps` stanzas that replace these legacy
+        # Ruby flight blocks run "in an isolated Ruby subprocess without
+        # network or general home-directory access", which is exactly what
+        # writing ~/Library/LaunchAgents and talking to `launchctl gui/$UID`
+        # needs. The caveat tells the user to run `compy tray install`.
         install: |
           if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path.to_s]
           end
-          system_command "#{HOMEBREW_PREFIX}/bin/compy", args: ["tray", "install"], must_succeed: false
     # brew uninstall boots both jobs out of launchd; the plists themselves
     # (and, zap-only, the state dir with the user's configurations) are
     # user-created files, so per Homebrew convention they go under zap.

@@ -28,24 +28,29 @@ handled best-effort through
 ## Install
 
 ```sh
+brew trust --tap bronto-community/tap
 brew install bronto-community/tap/compy
+compy tray install
 ```
 
-The install puts compy in your menu bar (its main interface, registered
-as a login item) together with its bundled collector distribution
-(`otelcol-compy`) and the `compy.app` identity for the native window. On
-first use of a third-party tap, Homebrew may ask you to trust it once —
-that prompt is expected. To take the icon out again, use "Remove from
-Menu Bar" in its menu.
+Homebrew requires explicit trust for third-party taps and silently ignores
+casks from untrusted ones, hence the first line.
+
+The install brings the compy binary, its bundled collector distribution
+(`otelcol-compy`) and the `compy.app` identity for the native window. The
+menu bar item — compy's main interface — is a login item, so adding it is
+the third line rather than something `brew install` does for you. Take it
+out again with "Remove from Menu Bar" in its menu, or `compy tray
+uninstall`.
 
 Building from source instead is covered in
-[CONTRIBUTING.md](CONTRIBUTING.md); there, `compy tray install` puts the
-icon in the menu bar.
+[CONTRIBUTING.md](CONTRIBUTING.md); `compy tray install` works the same way
+there.
 
 ## Getting started
 
-After installing, the compy icon sits in your menu bar. Click
-it and activate the shipped `debug` configuration — the collector starts
+Once `compy tray install` has run, the compy icon sits in your menu bar.
+Click it and activate the shipped `debug` configuration — the collector starts
 (supervised by launchd) on compy's standard ports, 14318 HTTP and 14317
 gRPC, and prints everything it receives to the collector log. "Open
 compy" opens the window: switch configurations, fill in keys and
@@ -82,11 +87,16 @@ compy status
 compy log
 ```
 
-**Upgrading.** `brew upgrade compy` is the whole upgrade: the menu bar
-restarts itself onto the new version, and a running collector keeps
-running the old one until you restart it — compy tells you (a "restart
-needed" note in the menu bar, window, and `compy status`), and the restart
-from any of them finishes the job.
+**Upgrading.** `brew upgrade compy` replaces the binary. Two things keep
+running the old version until they are restarted:
+
+- The menu bar. Its login item points at the stable
+  `$(brew --prefix)/bin/compy` symlink, so the next login picks up the new
+  version by itself; to switch over immediately, quit it from its menu and
+  run `compy tray install`.
+- A running collector. compy tells you (a "restart needed" note in the menu
+  bar, window, and `compy status`), and the restart from any of them
+  finishes the job.
 
 **Uninstalling.** `brew uninstall compy` stops the collector and the menu
 bar; add `--zap` to also remove the LaunchAgents and compy's state
