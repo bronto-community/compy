@@ -2150,17 +2150,16 @@ function screenEditor() {
      whatever the tier \u2014 the tier-3 form above stays live either way. */
   if (!yamlShown) {
     paneParent.appendChild(el("div", { class: "yaml-collapsed" }, [
-      span("nm", t3 ? "config source" : "config.yaml"),
-      origin === "url" ? el("span", { class: "why sans", text: "kept in sync with " + host }) : null,
       el("span", { class: "grow" }),
-      el("button", { class: "btn quiet", text: t3 ? "show source" : "show yaml", on: { click: () => { S.yamlOpen = true; render(); } } }),
+      el("button", { class: "btn quiet", text: "show " + (t3 ? "config.tmpl" : "config.yaml"), on: { click: () => { S.yamlOpen = true; render(); } } }),
     ]));
     return wrap;
   }
 
   const pane = el("div", { class: "yaml-pane" });
   pane.appendChild(el("div", { class: "yaml-bar" }, [
-    span("colhead", t3 ? "config source" : "config.yaml"),
+    span("colhead", t3 ? "config.tmpl" : "config.yaml"),
+    origin === "url" ? el("span", { class: "why sans", text: "kept in sync with " + host }) : null,
     el("span", { class: "grow" }),
     locked ? el("span", { class: "ro" }, [
       span("word", "read-only"),
