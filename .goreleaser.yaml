@@ -124,7 +124,8 @@ homebrew_casks:
     description: Local OpenTelemetry Collector manager for the dev loop
     homepage: https://github.com/bronto-community/compy
     caveats: |
-      The menu bar icon is opt-in: run `compy tray install`.
+      compy lives in your menu bar. To take it out, use "Remove from
+      Menu Bar" in its menu, or run `compy tray uninstall`.
     repository:
       owner: bronto-community
       name: homebrew-tap
@@ -134,24 +135,22 @@ homebrew_casks:
         # Everything in the staged dir is unsigned/ad-hoc: strip quarantine
         # recursively so compy, otelcol-compy, and compy.app all run.
         #
-        # Then, if the user had the menu-bar tray installed (its LaunchAgent
-        # plist exists), bounce the tray job so the menu bar runs the new
-        # binary immediately — the plist points at the stable
-        # /opt/homebrew/bin/compy symlink, so bootstrap mirrors `compy tray
-        # install`'s semantics. Defensive throughout: no plist → skip; a
-        # failed launchctl never fails the install. The collector job is
-        # deliberately NOT touched — restarting the user's data path unasked
-        # is not ours to do; compy itself surfaces "restart to finish the
-        # upgrade" in-app.
+        # Then put compy in the menu bar — it is the main interface, so a
+        # brew install produces it (the caveat says how to remove it).
+        # `tray install` is idempotent: it renders the LaunchAgent plist and
+        # (re)starts the job, which on upgrades also moves the menu bar onto
+        # the new binary. It MUST run via the stable ${HOMEBREW_PREFIX}
+        # symlink, never the staged binary: the plist bakes in the invoked
+        # path (os.Executable), and a versioned Caskroom path dies at the
+        # next upgrade. Defensive: a failure never fails the install. The
+        # collector job is deliberately NOT touched — restarting the user's
+        # data path unasked is not ours to do; compy itself surfaces
+        # "restart to finish the upgrade" in-app.
         install: |
           if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path.to_s]
           end
-          tray_plist = File.expand_path("~/Library/LaunchAgents/io.bronto.compy.tray.plist")
-          if File.exist?(tray_plist)
-            system_command "/bin/launchctl", args: ["bootout", "gui/#{Process.uid}/io.bronto.compy.tray"], must_succeed: false
-            system_command "/bin/launchctl", args: ["bootstrap", "gui/#{Process.uid}", tray_plist], must_succeed: false
-          end
+          system_command "#{HOMEBREW_PREFIX}/bin/compy", args: ["tray", "install"], must_succeed: false
     # brew uninstall boots both jobs out of launchd; the plists themselves
     # (and, zap-only, the state dir with the user's configurations) are
     # user-created files, so per Homebrew convention they go under zap.
