@@ -2,6 +2,8 @@ module github.com/bronto-community/compy
 
 go 1.25.0
 
+toolchain go1.26.7
+
 require (
 	fyne.io/systray v1.12.2
 	github.com/wailsapp/wails/v2 v2.15.0
