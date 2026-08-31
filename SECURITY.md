@@ -23,17 +23,33 @@ Only the latest release receives security fixes. Update with
 
 ## Verifying releases
 
-Every release attaches a `compy_<version>_checksums.txt` covering all
-archives:
+Release checksums are signed with [cosign](https://docs.sigstore.dev/)
+(keyless); verifying the one signature transitively verifies every
+archive via its checksum:
 
 ```sh
-shasum -a 256 --check --ignore-missing compy_<version>_checksums.txt
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity-regexp 'github.com/bronto-community/compy' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+shasum -a 256 --check --ignore-missing checksums.txt
 ```
+
+Release archives also carry signed [SLSA build provenance](https://slsa.dev/).
+Verify that an artifact was built by this repo's release workflow with:
+
+```sh
+gh attestation verify compy_<version>_<os>_<arch>.tar.gz --repo bronto-community/compy
+```
+
+SPDX SBOMs for every archive are attached to each release.
 
 Release binaries are not yet Developer ID-signed or notarized; the
 Homebrew cask clears macOS's quarantine flag on install, a manually
 downloaded archive needs `xattr -d com.apple.quarantine` (after verifying
-its checksum).
+its checksum and signature).
 
 ## Scope notes
 

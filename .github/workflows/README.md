@@ -13,23 +13,35 @@ weekly.
 
 ## Secrets
 
-- `HOMEBREW_TAP_TOKEN` (releases): a token with push access to
-  `bronto-community/homebrew-tap`, used by GoReleaser to commit the
-  generated cask to `Casks/compy.rb`. When it is missing the release still
-  succeeds; only the cask step is skipped.
+- `BRONTO_COMMUNITY_BOT_APP_ID` / `BRONTO_COMMUNITY_BOT_PRIVATE_KEY`
+  (releases): the Bronto Community Bot GitHub App. The release workflow
+  mints a short-lived installation token from it per run — scoped to
+  contents:write on `bronto-community/homebrew-tap` only — and hands it
+  to GoReleaser as `HOMEBREW_TAP_TOKEN` to commit the generated cask to
+  `Casks/compy.rb`. No long-lived cross-repo token exists. The same app
+  releases bronto-cli.
+- The release job runs in the protected `release` environment (required
+  reviewer), so a pushed `v*` tag waits for a human approval before any
+  release credential is minted.
 - `BUMP_PR_TOKEN` (optional): a PAT with contents and pull-requests write.
   PRs opened with the default `GITHUB_TOKEN` do not trigger CI (GitHub
   blocks workflow recursion), so without this secret a collector-bump PR
   needs a manual nudge (close/reopen) before CI runs on it.
 
-## Known limitation: no signing / notarization
+## Release integrity, and the Apple-signing limitation
 
-Release binaries (compy, otelcol-compy, compy.app) are ad-hoc signed at
-best — there is no Developer ID signing or notarization in the pipeline.
-The cask compensates by stripping `com.apple.quarantine` recursively from
-the staged install in its postflight; a manually downloaded archive needs
-the same `xattr -dr com.apple.quarantine` by hand. Proper signing needs an
-Apple Developer account and certificate secrets in this repo.
+Releases are supply-chain signed: cosign (keyless OIDC) signs the
+checksums file, actions/attest-build-provenance attaches SLSA build
+provenance, and syft SBOMs accompany every archive — SECURITY.md carries
+the verification commands.
+
+What they are NOT is Apple-signed: the binaries (compy, otelcol-compy,
+compy.app) are ad-hoc signed at best — no Developer ID signing or
+notarization in the pipeline. The cask compensates by stripping
+`com.apple.quarantine` recursively from the staged install in its
+postflight; a manually downloaded archive needs the same
+`xattr -dr com.apple.quarantine` by hand. Proper signing needs an Apple
+Developer account and certificate secrets in this repo.
 
 ## Upgrade / uninstall behavior of the cask
 

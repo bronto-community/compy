@@ -84,18 +84,39 @@ archives:
       - README.md
 
 checksum:
+  name_template: checksums.txt
   extra_files:
     - glob: dist/extra/*.tar.gz
     - glob: dist/extra/compy.app.zip
+
+# Keyless (OIDC) cosign signature over the checksums file: verifying one
+# signature transitively verifies every archive and extra file via its
+# checksum. Certificate identity is the release workflow itself. Same
+# pattern (and cosign 2.x output format) as bronto-cli.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    output: true
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+
+# SPDX SBOM per archive (syft), uploaded alongside the release assets.
+sboms:
+  - artifacts: archive
 
 release:
   extra_files:
     - glob: dist/extra/*
 
 # The tap already hosts bronto-cli as a GoReleaser-generated cask under
-# Casks/, so compy follows the same layout. Publishing needs the
-# HOMEBREW_TAP_TOKEN secret (push access to the tap); without it the
-# release workflow passes --skip=homebrew instead of failing.
+# Casks/, so compy follows the same layout. The HOMEBREW_TAP_TOKEN env
+# var is a short-lived installation token minted per release run from the
+# Bronto Community Bot app, scoped to contents:write on homebrew-tap.
 homebrew_casks:
   - name: compy
     ids: [compy-darwin]
