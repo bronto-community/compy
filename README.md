@@ -14,11 +14,10 @@ Under the hood it runs a collector as a per-user macOS LaunchAgent, so the
 OS supervises the process and there is no daemon of compy's own.
 
 The name is short for
-[Compsognathus](https://en.wikipedia.org/wiki/Compsognathus) — one of the
-smallest known dinosaurs, quick on its feet, famous as the little "compy"
-scurrying around much bigger animals in Jurassic Park. That is the idea
-here too: a small, fast companion that runs alongside your dev loop and
-stays out of the way.
+[Compsognathus](https://en.wikipedia.org/wiki/Compsognathus), one of the
+smallest known dinosaurs — about the size of a chicken, and quick on its
+feet. That is the idea here too: a small, fast companion that runs
+alongside your dev loop and stays out of the way.
 
 compy is an open-source project from [Bronto](https://bronto.io),
 maintained as a community artifact: free to use, contributions welcome —
@@ -48,28 +47,25 @@ Building from source instead is covered in
 
 ## Getting started
 
-Three commands and telemetry flows:
+After `compy tray install`, the compy icon sits in your menu bar. Click
+it and activate the shipped `debug` configuration — the collector starts
+(supervised by launchd) on compy's standard ports, 14318 HTTP and 14317
+gRPC, and prints everything it receives to the collector log. "Open
+compy" opens the window: switch configurations, fill in keys and
+endpoints, watch the log.
+
+Your apps find compy through the standard `OTEL_*` environment variables:
 
 ```sh
-compy use debug
-eval "$(compy env)"
-compy status
+eval "$(compy env)"   # this shell (put it in your shell rc for every shell)
 ```
 
-`compy use debug` validates, installs, and starts the collector with the
-shipped `debug` configuration on compy's standard ports (14318 HTTP, 14317
-gRPC) — everything it receives is printed to the collector log. `compy
-env` exports `OTEL_EXPORTER_OTLP_ENDPOINT` and friends into your current
-shell, so anything you start from it sends telemetry to compy. `compy
-status` confirms both.
+or `compy run -- <cmd>` for a single command, or `compy env set-os` for
+OS-level variables that GUI apps see too. Run your app and its telemetry
+shows up in the collector log.
 
-Run your app, then watch its telemetry arrive:
-
-```sh
-compy log
-```
-
-To send somewhere real, switch configurations. Four ship with compy:
+To send somewhere real, switch configurations in the window. Four ship
+with compy:
 
 - `debug` — print everything to the collector log
 - `otlp-basic` — pass everything through to one OTLP endpoint, no auth
@@ -78,13 +74,15 @@ To send somewhere real, switch configurations. Four ship with compy:
 - `bronto` — send to [Bronto](https://bronto.io): an API key and a region
   choice, with batching and the offline queue on by default
 
-The comfortable way to fill in keys and endpoints is the UI — click the
-menu bar icon and "Open compy", or run `compy ui`. The same works from the
-CLI, e.g. for `otlp-basic`:
+The menu bar and the window are the main interface; everything they do
+also exists as CLI commands for scripting and the terminal-inclined —
+`compy` with no arguments lists them. The same first run from the shell:
 
 ```sh
-compy presets set otlp-basic default OTLP_ENDPOINT=collector.example.com:4317
-compy use otlp-basic
+compy use debug
+eval "$(compy env)"
+compy status
+compy log
 ```
 
 **Upgrading.** `brew upgrade compy` is the whole upgrade: the menu bar
@@ -167,14 +165,6 @@ separate daemon. The full contract is [`api/openapi.json`](api/openapi.json).
 compy ui --port 8080 &
 curl http://localhost:8080/api/status
 ```
-
-## Non-goals
-
-compy never displays telemetry — it is not a trace viewer, log tail, or
-metrics UI. Also out of scope for now: runtime download of arbitrary
-(non-pinned) collector distributions, fleet/remote management,
-team/profile sharing, Keychain-backed secrets, and a Windows
-implementation.
 
 ## Contributing
 
