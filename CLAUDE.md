@@ -76,10 +76,14 @@ ruling 2026-08-29 — the OTel ecosystem itself runs on it).
   (front-matter schema — YAML between `---` marker lines, or the original
   JSON form — + `---` + Go text/template body), validates
   knob values, renders to plain collector YAML (only `type: secret` fields
-  survive as `${env:}` refs). Ships the embedded catalog — `debug`,
-  `otlp-forward`, `bronto`, which double as the tier-3 shipped defaults
-  (Amendment 7); a config created from a catalog entry COPIES the source
-  and owns it (docs/design/2026-08-30-config-templates.md, Amendment 3).
+  survive as `${env:}` refs). Repeat groups are AUTHOR-DEFINED (Amendment
+  8): a schema declares any number under `groups:`, each id being both the
+  bag key and the render data key; a row's identity is the reserved
+  `_label` (`catalog.LabelKey`), edited in place like a preset tab, whose
+  slug derives exporter ids and secret env names. Ships the embedded
+  catalog — `debug`, `otlp-forward` — which double as the tier-3 shipped
+  defaults; a config created from a catalog entry COPIES the source and
+  owns it (docs/design/2026-08-30-config-templates.md, Amendment 3).
 - `vars` — extracts `${VAR}` / `${env:VAR:-default}` references (and their
   trailing-comment descriptions) from collector YAML.
 - `distro` — pinned collector-distribution definitions, checksum-verified
@@ -139,12 +143,12 @@ substitution in compy. Activating a templated (tier-3) config RENDERS the
 source with the selected preset's bag first (so switching presets may
 switch pipeline structure), and its environment carries ONLY the bag's
 `type: secret` values (under `catalog.SecretEnv`'s derived names) plus
-`COMPY_*` — everything else is baked into the render. Four shipped defaults —
-`debug`, `otlp-forward`, `bronto` (templated, embedded via
+`COMPY_*` — everything else is baked into the render. Three shipped defaults —
+`debug`, `otlp-forward` (templated, embedded via
 `internal/catalog/catalog/*.tmpl`) and `otlp-basic` (plain, via
 `internal/cfgstore/defaults/otlp-basic.yaml`) — are materialized into
 `configs/` on first run; a shipped config that is unmodified, inactive,
-and no longer shipped (the old `otlp`) is retired. Edit-protection and sync
+and no longer shipped (the old `otlp`, and now `bronto`) is retired. Edit-protection and sync
 share one mechanism: a config's current YAML hash vs. its recorded
 `pristine_sha256` — matching means "unmodified" (shipped configs upgrade in
 place, remote configs may `sync`), differing means "locally modified"

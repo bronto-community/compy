@@ -17,7 +17,7 @@ import (
 func catalogKnobs(name string) map[string]any {
 	return map[string]any{
 		"backends": []any{map[string]any{
-			"name":        name,
+			"_label":      name,
 			"endpoint":    "https://" + name + ".example",
 			"auth_header": "Authorization",
 		}},
@@ -67,7 +67,7 @@ func TestCreateFromCatalog(t *testing.T) {
 	if src != entry.Source() {
 		t.Error("created config's source is not a copy of the catalog entry's")
 	}
-	if !strings.Contains(yaml, "Authorization: ${env:HC_API_KEY}  # hc auth value") {
+	if !strings.Contains(yaml, "Authorization: Bearer ${env:HC_API_KEY:-}  # hc auth value") {
 		t.Errorf("secret reference missing from rendered yaml:\n%s", yaml)
 	}
 	if strings.Contains(yaml, "{{") {
@@ -81,9 +81,10 @@ func TestCreateFromCatalog(t *testing.T) {
 	if _, ok := info.Meta.Presets[cfgstore.DefaultPreset]; !ok {
 		t.Fatalf("no default preset: %v", info.Meta.Presets)
 	}
-	// Defaults normalize into the bag: bronto's region choice fills in.
-	if err := a.CreateFromCatalog("bron", "bronto", map[string]any{
-		"backends": []any{map[string]any{"name": "b1"}},
+	// Defaults normalize into the bag, and a row with no label of its own
+	// gets the positional one.
+	if err := a.CreateFromCatalog("bron", "otlp-forward", map[string]any{
+		"backends": []any{map[string]any{}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +93,7 @@ func TestCreateFromCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	brow := binfo.Meta.Presets[cfgstore.DefaultPreset]["backends"].([]any)[0].(map[string]any)
-	if brow["region"] != "eu" {
+	if brow["auth_header"] != "Authorization" || brow[catalog.LabelKey] != "backend 1" {
 		t.Errorf("defaults not normalized into the preset bag: %v", brow)
 	}
 
@@ -436,9 +437,9 @@ func TestActivateRendersSelectedPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 	two := map[string]any{"backends": []any{
-		map[string]any{"name": "hc", "endpoint": "https://hc.example",
+		map[string]any{"_label": "hc", "endpoint": "https://hc.example",
 			"auth_header": "Authorization"},
-		map[string]any{"name": "second", "endpoint": "https://in.second.example",
+		map[string]any{"_label": "second", "endpoint": "https://in.second.example",
 			"auth_header": "x-second-api-key"},
 	}}
 	if _, err := a.ReplacePreset("mine", "two", two, true); err != nil {
@@ -659,7 +660,7 @@ func TestTemplatesList(t *testing.T) {
 	for _, tm := range ts {
 		names = append(names, tm.Name)
 	}
-	if !reflect.DeepEqual(names, []string{"bronto", "debug", "otlp-forward"}) {
+	if !reflect.DeepEqual(names, []string{"debug", "otlp-forward"}) {
 		t.Errorf("templates = %v", names)
 	}
 }

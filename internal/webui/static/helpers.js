@@ -104,11 +104,46 @@ function seedRow(fields, from, withSecrets) {
   }
   return row;
 }
+/* LABEL_KEY is catalog.LabelKey: the machinery-owned row identity every
+   repeat-group row carries, edited at the top of the row card the way a
+   preset tab is edited. Schema fields may never use a "_"-prefixed name, so
+   it can never collide with one. */
+const LABEL_KEY = "_label";
+// A row's display label: what the user typed, or the positional default the
+// server would derive ("backend 1"). KEEP IN LOCKSTEP with catalog's
+// Group.rowLabel.
+function rowLabel(g, row, i) {
+  const v = (row || {})[LABEL_KEY];
+  return typeof v === "string" && v.trim() ? v : (g.item || g.id) + " " + (i + 1);
+}
+// A fresh row for group g: schema defaults plus a free positional label.
+function seedGroupRow(g, rows) {
+  const row = seedRow(g.fields, null, true);
+  const taken = new Set((rows || []).map((r, i) => rowLabel(g, r, i)));
+  for (let i = (rows || []).length; ; i++) {
+    const label = rowLabel(g, null, i);
+    if (!taken.has(label)) { row[LABEL_KEY] = label; return row; }
+  }
+}
+/* The duplicate gesture's label: `from` if nothing is using it, else the
+   first free "<from> 2", "<from> 3", … — freePresetName's rule, applied to
+   labels rather than preset names. Two rows may not slug to the same
+   thing, so a duplicate has to arrive already renamed. */
+function freeRowLabel(g, rows, from) {
+  const taken = new Set((rows || []).map((r, i) => rowLabel(g, r, i)));
+  if (!taken.has(from)) return from;
+  for (let n = 2; ; n++) if (!taken.has(from + " " + n)) return from + " " + n;
+}
 function seedKnobs(tpl, from, withSecrets) {
   const knobs = seedRow(tpl.fields, from, withSecrets);
-  if (tpl.backends) {
-    const rows = from && Array.isArray(from.backends) && from.backends.length ? from.backends : [null];
-    knobs.backends = rows.map((r) => seedRow(tpl.backends.fields, r, withSecrets));
+  for (const g of tpl.groups || []) {
+    const stored = from && Array.isArray(from[g.id]) ? from[g.id] : null;
+    const rows = stored && stored.length ? stored : new Array(Math.max(g.min || 0, 0)).fill(null);
+    knobs[g.id] = rows.map((r, i) => {
+      const row = seedRow(g.fields, r, withSecrets);
+      row[LABEL_KEY] = rowLabel(g, r, i);
+      return row;
+    });
   }
   // Free vars (Amendment 6): hand-written ${env:} values ride the bag as
   // unknown top-level STRINGS — carry them into the draft so a whole-bag
@@ -116,7 +151,8 @@ function seedKnobs(tpl, from, withSecrets) {
   // the same way; non-strings would 400 there, so they never travel).
   for (const k in from || {}) {
     if (typeof from[k] !== "string" || k in knobs) continue;
-    if (k === "backends" || (tpl.fields || []).some((f) => f.name === k)) continue;
+    if ((tpl.groups || []).some((g) => g.id === k)) continue;
+    if ((tpl.fields || []).some((f) => f.name === k)) continue;
     knobs[k] = from[k];
   }
   return knobs;
@@ -143,8 +179,9 @@ function missingRequiredT3(tpl, bag, freeVars) {
     }
   };
   check("", tpl.fields, bag);
-  if (tpl.backends && Array.isArray(bag.backends)) {
-    bag.backends.forEach((row, i) => check("backends[" + i + "].", tpl.backends.fields, row));
+  for (const g of tpl.groups || []) {
+    if (!Array.isArray(bag[g.id])) continue;
+    bag[g.id].forEach((row, i) => check(g.id + "[" + i + "].", g.fields, row));
   }
   for (const v of freeVars || []) {
     if (v.has_default) continue;
@@ -155,10 +192,10 @@ function missingRequiredT3(tpl, bag, freeVars) {
 }
 /* Missing-value names, made readable for people. A tier-2 var name
    (UPPER_SNAKE) passes verbatim — it IS the name the yaml uses. A tier-3
-   field path becomes prose: "backends[0].api_key" reads "backend
-   honeycomb's api key" when the bag's row carries a name (row 1 otherwise),
-   with the schema's label when one is at hand; the humanized field name is
-   the honest fallback, never a guess. */
+   field path becomes prose: "backends[0].api_key" reads "EU prod's api key"
+   — the row's own LABEL, positional default included — with the schema's
+   label when one is at hand; the humanized field name is the honest
+   fallback, never a guess. */
 function prettyMissing(bag, paths, tpl) {
   const label = (fields, name) => {
     const f = (fields || []).find((x) => x.name === name);
@@ -166,12 +203,12 @@ function prettyMissing(bag, paths, tpl) {
   };
   return (paths || []).map((p) => {
     if (/^[A-Z0-9_]+$/.test(p)) return p; // a tier-2 env var name stays itself
-    const m = /^backends\[(\d+)\]\.([a-z0-9_]+)$/.exec(p);
-    if (!m) return label(tpl && tpl.fields, p);
-    const i = parseInt(m[1], 10);
-    const row = (bag && Array.isArray(bag.backends) && bag.backends[i]) || {};
-    const who = typeof row.name === "string" && row.name ? row.name : "" + (i + 1);
-    return "backend " + who + "'s " + label(tpl && tpl.backends && tpl.backends.fields, m[2]);
+    const m = /^([a-z][a-z0-9_]*)\[(\d+)\]\.([a-z0-9_]+)$/.exec(p);
+    const g = m && ((tpl && tpl.groups) || []).find((x) => x.id === m[1]);
+    if (!g) return label(tpl && tpl.fields, p);
+    const i = parseInt(m[2], 10);
+    const row = (bag && Array.isArray(bag[g.id]) && bag[g.id][i]) || {};
+    return rowLabel(g, row, i) + "'s " + label(g.fields, m[3]);
   });
 }
 /* Light client-side checks only — the server re-validates everything. */
@@ -198,12 +235,20 @@ function knobProblems(tpl, knobs) {
     const p = fieldProblem(f, knobs[f.name]);
     if (p) errs[f.name] = p;
   }
-  if (tpl.backends) {
-    (knobs.backends || []).forEach((row, i) => {
-      for (const f of tpl.backends.fields || []) {
+  for (const g of tpl.groups || []) {
+    const seen = {};
+    (knobs[g.id] || []).forEach((row, i) => {
+      // The row label is the row's identity — a duplicate would collapse
+      // two exporters (and two secret env names) into one. The server says
+      // so too; saying it here keeps it field-adjacent.
+      const l = rowLabel(g, row, i), key = slug(l);
+      if (!key) errs[g.id + "[" + i + "]." + LABEL_KEY] = "needs a letter or digit";
+      else if (seen[key]) errs[g.id + "[" + i + "]." + LABEL_KEY] = "same name as " + seen[key];
+      else seen[key] = l;
+      for (const f of g.fields || []) {
         if (f.type === "secret") continue;
         const p = fieldProblem(f, row[f.name]);
-        if (p) errs["backends[" + i + "]." + f.name] = p;
+        if (p) errs[g.id + "[" + i + "]." + f.name] = p;
       }
     });
   }
@@ -221,10 +266,10 @@ function parseFieldErr(msg) {
 // belongs to the failure panel, never to a field that doesn't exist.
 function knownKnobPath(tpl, path) {
   if (!tpl || !path) return false;
-  if (tpl.backends) {
-    if (path === "backends") return true;
-    const m = /^backends\[\d+\]\.([a-z0-9_]+)$/.exec(path);
-    if (m) return (tpl.backends.fields || []).some((f) => f.name === m[1]);
+  for (const g of tpl.groups || []) {
+    if (path === g.id) return true;
+    const m = new RegExp("^" + g.id + "\\[\\d+\\]\\.([a-z0-9_]+)$").exec(path);
+    if (m) return m[1] === LABEL_KEY || (g.fields || []).some((f) => f.name === m[1]);
   }
   return (tpl.fields || []).some((f) => f.name === path);
 }
@@ -264,14 +309,14 @@ function placeholderKnobs(tpl) {
   const fill = (fields, row) => {
     for (const f of fields || []) {
       if (f.type === "secret" || f.optional || f.default != null) continue;
-      if (f.type === "slug" && !row[f.name]) row[f.name] = "backend";
+      if (f.type === "slug" && !row[f.name]) row[f.name] = "entry";
       else if (f.type === "url" && !row[f.name]) row[f.name] = "https://api.example.com";
       else if (f.type === "multi" && !(row[f.name] || []).length) row[f.name] = (f.options || []).slice();
     }
   };
   const knobs = seedKnobs(tpl, null);
   fill(tpl.fields, knobs);
-  if (tpl.backends) for (const r of knobs.backends || []) fill(tpl.backends.fields, r);
+  for (const g of tpl.groups || []) for (const r of knobs[g.id] || []) fill(g.fields, r);
   return knobs;
 }
 /* The failure panel's rendered excerpt: the collector validates the
@@ -492,6 +537,7 @@ if (typeof module !== "undefined") {
     slug, originOf, hostOf, missingRequired, nameList, freePresetName,
     compyVersionLine,
     fieldDefault, seedRow, seedKnobs, missingRequiredT3, prettyMissing,
+    LABEL_KEY, rowLabel, seedGroupRow, freeRowLabel,
     fieldProblem, knobProblems, parseFieldErr,
     knownKnobPath, isSourceText, placeholderKnobs,
     errLineOf, excerptAround,

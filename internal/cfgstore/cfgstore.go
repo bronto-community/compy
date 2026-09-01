@@ -526,6 +526,13 @@ func createSource(root, name, src string, values map[string]any, m Meta) error {
 	if err != nil {
 		return err
 	}
+	if values == nil {
+		// No caller values (a source pasted into the yaml box): the schema's
+		// own default bag, groups seeded to their Min rows — the same seed
+		// MaterializeDefaults uses, so a min-1 group does not turn "paste a
+		// source" into "need 1 to 8 entries, got 0".
+		values = t.Reconcile(nil, StorageDir(root))
+	}
 	norm, err := t.NormalizeBag(values)
 	if err != nil {
 		return err

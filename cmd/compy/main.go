@@ -572,7 +572,10 @@ func typedValue(a *app.App, config, key, raw string) (any, error) {
 	if err != nil {
 		return raw, nil // an unparseable source: let the save say so
 	}
-	if key == "backends" && t.Backends != nil {
+	for _, g := range t.Groups {
+		if g.ID != key {
+			continue
+		}
 		var rows []any
 		if err := json.Unmarshal([]byte(raw), &rows); err != nil {
 			return nil, fmt.Errorf("presets set: %s takes a JSON array of objects: %v", key, err)
@@ -698,24 +701,32 @@ func printSchemaVars(t catalog.Template, info cfgstore.Info, presets []string, s
 			return v, ok
 		})
 	}
-	if t.Backends != nil {
+	for _, g := range t.Groups {
 		rowCount := 0
 		for _, preset := range presets {
-			if rows, ok := info.Meta.Presets[preset]["backends"].([]any); ok {
+			if rows, ok := info.Meta.Presets[preset][g.ID].([]any); ok {
 				rowCount = max(rowCount, len(rows))
 			}
 		}
+		at := func(i int, name string) func(map[string]any) (any, bool) {
+			return func(bag map[string]any) (any, bool) {
+				rows, _ := bag[g.ID].([]any)
+				if i >= len(rows) {
+					return nil, false
+				}
+				entry, _ := rows[i].(map[string]any)
+				v, ok := entry[name]
+				return v, ok
+			}
+		}
 		for i := 0; i < rowCount; i++ {
-			for _, f := range t.Backends.Fields {
-				row(fmt.Sprintf("backends[%d].%s", i, f.Name), f, func(bag map[string]any) (any, bool) {
-					rows, _ := bag["backends"].([]any)
-					if i >= len(rows) {
-						return nil, false
-					}
-					entry, _ := rows[i].(map[string]any)
-					v, ok := entry[f.Name]
-					return v, ok
-				})
+			// The row's LABEL first: it is the row's identity (the exporter
+			// id and its secret env names derive from it), so it reads as
+			// the heading of the fields under it.
+			row(fmt.Sprintf("%s[%d].%s", g.ID, i, catalog.LabelKey),
+				catalog.Field{Name: catalog.LabelKey, Type: "string"}, at(i, catalog.LabelKey))
+			for _, f := range g.Fields {
+				row(fmt.Sprintf("%s[%d].%s", g.ID, i, f.Name), f, at(i, f.Name))
 			}
 		}
 	}

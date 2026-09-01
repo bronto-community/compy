@@ -631,7 +631,7 @@ func TestPutPresetNoValidateRoute(t *testing.T) {
 		return true, nil
 	}
 	req := httptest.NewRequest(http.MethodPut, "/api/configs/t3/presets/prod?validate=false",
-		strings.NewReader(`{"values":{"debug_tee":true,"backends":[{"name":"hc"}]}}`))
+		strings.NewReader(`{"values":{"offline_queue":true,"backends":[{"_label":"hc","endpoint":"https://hc.example"}]}}`))
 	req.SetPathValue("name", "t3")
 	req.SetPathValue("preset", "prod")
 	rec := httptest.NewRecorder()
@@ -643,7 +643,7 @@ func TestPutPresetNoValidateRoute(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil || !body["ok"] || !body["running_stale"] {
 		t.Fatalf("body = %v, %v, want ok with running_stale", body, err)
 	}
-	if gotValues["debug_tee"] != true {
+	if gotValues["offline_queue"] != true {
 		t.Fatalf("typed value lost: %v", gotValues)
 	}
 	if _, ok := gotValues["backends"].([]any); !ok {

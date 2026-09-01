@@ -950,7 +950,7 @@ func TestCreationPathsWriteDefaultPreset(t *testing.T) {
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"debug", "otlp-basic", "otlp-forward", "bronto"} {
+	for _, name := range []string{"debug", "otlp-basic", "otlp-forward"} {
 		wantDefault(t, root, name)
 	}
 }
@@ -1488,18 +1488,18 @@ func TestMaterializeTemplatedDefaults(t *testing.T) {
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatal(err)
 	}
-	info, yaml, err := Get(root, "bronto")
+	info, yaml, err := Get(root, "otlp-forward")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !info.HasTemplate || info.Provenance != "shipped" || info.Modified {
-		t.Fatalf("bronto = %+v, want an unmodified shipped templated config", info)
+		t.Fatalf("otlp-forward = %+v, want an unmodified shipped templated config", info)
 	}
-	entry, err := catalog.Get("bronto")
+	entry, err := catalog.Get("otlp-forward")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src, ok := readSource(root, "bronto"); !ok || src != entry.Source() {
+	if src, ok := readSource(root, "otlp-forward"); !ok || src != entry.Source() {
 		t.Error("source is not a copy of the embedded template")
 	}
 	bag := info.Meta.Presets[DefaultPreset]
@@ -1508,10 +1508,10 @@ func TestMaterializeTemplatedDefaults(t *testing.T) {
 		t.Fatalf("default preset backends = %v, want the one seeded row", bag)
 	}
 	row, _ := rows[0].(map[string]any)
-	if row["name"] != "bronto" || row["region"] != "eu" {
+	if row[catalog.LabelKey] != "backend 1" || row["auth_header"] != "Authorization" {
 		t.Errorf("seeded row = %v, want the schema defaults", row)
 	}
-	for _, want := range []string{"https://ingestion.eu.bronto.io", "${env:BRONTO_API_KEY}", "file_storage"} {
+	for _, want := range []string{"otlphttp/backend-1", "${env:BACKEND_1_API_KEY:-}", "memory_limiter"} {
 		if !strings.Contains(yaml, want) {
 			t.Errorf("rendered yaml missing %q:\n%s", want, yaml)
 		}
@@ -1521,7 +1521,7 @@ func TestMaterializeTemplatedDefaults(t *testing.T) {
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatal(err)
 	}
-	info2, yaml2, err := Get(root, "bronto")
+	info2, yaml2, err := Get(root, "otlp-forward")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1537,20 +1537,20 @@ func TestMaterializeTemplatedDefaults(t *testing.T) {
 // modified one is left exactly as it is.
 func TestMaterializeUpgradesPlainShippedToTemplated(t *testing.T) {
 	root := t.TempDir()
-	plantShipped(t, root, "bronto", "receivers: {}\n# the old plain bronto\n",
+	plantShipped(t, root, "otlp-forward", "receivers: {}\n# the old plain forward\n",
 		map[string]map[string]any{"default": {}, "prod": {"OLD": "v"}})
 
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatal(err)
 	}
-	info, yaml, err := Get(root, "bronto")
+	info, yaml, err := Get(root, "otlp-forward")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !info.HasTemplate || info.Provenance != "shipped" || info.Modified {
-		t.Fatalf("upgraded bronto = %+v, want an unmodified shipped templated config", info)
+		t.Fatalf("upgraded otlp-forward = %+v, want an unmodified shipped templated config", info)
 	}
-	if !strings.Contains(yaml, "https://ingestion.eu.bronto.io") {
+	if !strings.Contains(yaml, "otlphttp/backend-1") {
 		t.Errorf("upgrade did not re-render:\n%s", yaml)
 	}
 	for _, preset := range []string{"default", "prod"} {
@@ -1562,20 +1562,20 @@ func TestMaterializeUpgradesPlainShippedToTemplated(t *testing.T) {
 
 	// Modified: untouched, still plain.
 	root2 := t.TempDir()
-	edited := "receivers: {}\n# the old plain bronto\n"
-	plantShipped(t, root2, "bronto", edited, nil)
-	if err := WriteYAML(root2, "bronto", edited+"# my edit\n"); err != nil {
+	edited := "receivers: {}\n# the old plain forward\n"
+	plantShipped(t, root2, "otlp-forward", edited, nil)
+	if err := WriteYAML(root2, "otlp-forward", edited+"# my edit\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := MaterializeDefaults(root2); err != nil {
 		t.Fatal(err)
 	}
-	info, yaml, err = Get(root2, "bronto")
+	info, yaml, err = Get(root2, "otlp-forward")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.HasTemplate || !info.Modified || !strings.Contains(yaml, "# my edit") {
-		t.Errorf("modified plain bronto was touched: %+v yaml=%q", info, yaml)
+		t.Errorf("modified plain otlp-forward was touched: %+v yaml=%q", info, yaml)
 	}
 }
 
@@ -1630,29 +1630,29 @@ func TestResetTemplatedShipped(t *testing.T) {
 	if err := MaterializeDefaults(root); err != nil {
 		t.Fatal(err)
 	}
-	_, shipped, err := Get(root, "bronto")
+	_, shipped, err := Get(root, "otlp-forward")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := SetVar(root, "bronto", "prod", "K", "V"); err != nil {
+	if err := SetVar(root, "otlp-forward", "prod", "K", "V"); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteYAML(root, "bronto", "edited: true\n"); err != nil {
+	if err := WriteYAML(root, "otlp-forward", "edited: true\n"); err != nil {
 		t.Fatal(err)
 	}
-	if info, _, _ := Get(root, "bronto"); info.HasTemplate || !info.Modified {
-		t.Fatalf("setup: bronto should be a demoted, modified config: %+v", info)
+	if info, _, _ := Get(root, "otlp-forward"); info.HasTemplate || !info.Modified {
+		t.Fatalf("setup: otlp-forward should be a demoted, modified config: %+v", info)
 	}
 
-	if err := Reset(root, "bronto"); err != nil {
+	if err := Reset(root, "otlp-forward"); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	info, yaml, err := Get(root, "bronto")
+	info, yaml, err := Get(root, "otlp-forward")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !info.HasTemplate || info.Modified || info.Provenance != "shipped" {
-		t.Errorf("reset bronto = %+v, want an unmodified shipped templated config", info)
+		t.Errorf("reset otlp-forward = %+v, want an unmodified shipped templated config", info)
 	}
 	if yaml != shipped {
 		t.Errorf("yaml after Reset = %q, want the shipped render", yaml)

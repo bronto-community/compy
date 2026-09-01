@@ -214,19 +214,18 @@ test("compyVersionLine", () => {
 /* The template form's schema helpers: draft seeding, light validation, and
    the parse of a field-naming 400 into a field-adjacent error. */
 const TPL = {
-  name: "custom-endpoints",
-  sections: [{ id: "backends", label: "Backends" }, { id: "pipeline", label: "Pipeline options", collapsed: true }],
-  backends: {
-    min: 1, max: 8,
+  name: "rich",
+  sections: [{ id: "pipeline", label: "Pipeline options", collapsed: true }],
+  groups: [{
+    id: "backends", label: "Backends", item: "backend", min: 1, max: 8,
     fields: [
-      { name: "name", type: "slug", label: "Name" },
       { name: "endpoint", type: "url", label: "Endpoint" },
       { name: "auth_header", type: "string", label: "Auth header", optional: true },
       { name: "api_key", type: "secret", label: "API key" },
       { name: "auth_scheme", type: "choice", options: ["none", "Bearer"], default: "none", advanced: true },
       { name: "signals", type: "multi", options: ["traces", "metrics", "logs"], default: ["traces", "metrics", "logs"], advanced: true },
     ],
-  },
+  }],
   fields: [
     { name: "batch", type: "toggle", default: true, section: "pipeline" },
     { name: "debug_tee", type: "toggle", default: false, section: "pipeline" },
@@ -238,21 +237,21 @@ test("seedKnobs fills defaults and keeps stored knobs", () => {
   const fresh = H.seedKnobs(TPL, null);
   assert.deepEqual(fresh, {
     batch: true, debug_tee: false,
-    backends: [{ name: "", endpoint: "", auth_header: "", auth_scheme: "none", signals: ["traces", "metrics", "logs"] }],
+    backends: [{ _label: "backend 1", endpoint: "", auth_header: "", auth_scheme: "none", signals: ["traces", "metrics", "logs"] }],
   });
   assert.equal("api_key" in fresh.backends[0], false, "secrets never enter the draft");
   // Defaults are copies: editing the draft must not mutate the schema.
   fresh.backends[0].signals.push("junk");
-  assert.deepEqual(TPL.backends.fields[5].default, ["traces", "metrics", "logs"]);
+  assert.deepEqual(TPL.groups[0].fields[4].default, ["traces", "metrics", "logs"]);
 
   // Change-options: stored meta.knobs win, schema growth backfills.
   const seeded = H.seedKnobs(TPL, {
     debug_tee: true,
-    backends: [{ name: "hc", endpoint: "https://api.honeycomb.io", auth_scheme: "Bearer" }],
+    backends: [{ _label: "hc", endpoint: "https://api.honeycomb.io", auth_scheme: "Bearer" }],
   });
   assert.equal(seeded.debug_tee, true);
   assert.equal(seeded.batch, true, "missing knob falls back to the default");
-  assert.equal(seeded.backends[0].name, "hc");
+  assert.equal(seeded.backends[0]._label, "hc");
   assert.deepEqual(seeded.backends[0].signals, ["traces", "metrics", "logs"], "field the schema grew");
 });
 
@@ -262,7 +261,7 @@ test("seedKnobs withSecrets seeds a preset BAG — secrets are members", () => {
   const fresh = H.seedKnobs(TPL, null, true);
   assert.equal(fresh.backends[0].api_key, "");
   const seeded = H.seedKnobs(TPL, {
-    backends: [{ name: "hc", endpoint: "https://api.honeycomb.io", api_key: "hc_live_1" }],
+    backends: [{ _label: "hc", endpoint: "https://api.honeycomb.io", api_key: "hc_live_1" }],
   }, true);
   assert.equal(seeded.backends[0].api_key, "hc_live_1", "stored secret values ride along");
   assert.equal(seeded.batch, true, "defaults still fill the rest");
@@ -274,12 +273,12 @@ test("seedKnobs withSecrets seeds a preset BAG — secrets are members", () => {
 test("missingRequiredT3 mirrors catalog.MissingRequired", () => {
   assert.deepEqual(H.missingRequiredT3(TPL, {
     backends: [
-      { name: "hc", endpoint: "https://x.example", api_key: "k" },
-      { name: "dd", endpoint: "  ", api_key: "" },
+      { _label: "hc", endpoint: "https://x.example", api_key: "k" },
+      { _label: "dd", endpoint: "  ", api_key: "" },
     ],
   }), ["backends[1].endpoint", "backends[1].api_key"]);
   assert.deepEqual(H.missingRequiredT3(TPL, {
-    backends: [{ name: "hc", endpoint: "https://x.example", api_key: "k" }],
+    backends: [{ _label: "hc", endpoint: "https://x.example", api_key: "k" }],
   }), [], "complete bag reports nothing");
   // Fields with defaults (or optional) never count; a non-string value is set.
   const t2 = { fields: [{ name: "endpoint", type: "url", label: "E" }, { name: "batch", type: "toggle", default: true }] };
@@ -309,7 +308,7 @@ test("missingRequiredT3 free vars follow the tier-2 rule", () => {
 test("seedKnobs carries free-var strings through the draft", () => {
   const bag = {
     debug_tee: true, ASDF: "127.0.0.1", junk: { nested: true },
-    backends: [{ name: "hc", endpoint: "https://x.example", api_key: "k" }],
+    backends: [{ _label: "hc", endpoint: "https://x.example", api_key: "k" }],
   };
   const knobs = H.seedKnobs(TPL, bag, true);
   assert.equal(knobs.ASDF, "127.0.0.1", "an unknown top-level string is a free-var value — it rides");
@@ -321,12 +320,37 @@ test("seedKnobs carries free-var strings through the draft", () => {
   assert.equal(k2.ASDF, "v");
 });
 
+/* Row identity: the group's rows are tabs with the preset gestures, so
+   adding and duplicating have to hand back a label nothing else is using —
+   two rows that slug alike would share one exporter and one secret env
+   var. */
+test("rowLabel, seedGroupRow and freeRowLabel keep row names unique", () => {
+  const g = TPL.groups[0];
+  assert.equal(H.rowLabel(g, { _label: "EU prod" }, 0), "EU prod");
+  assert.equal(H.rowLabel(g, { _label: "   " }, 2), "backend 3", "blank falls back to the position");
+  assert.equal(H.rowLabel(g, null, 0), "backend 1");
+
+  const rows = [{ _label: "backend 1" }, { _label: "backend 2" }];
+  assert.equal(H.seedGroupRow(g, rows)._label, "backend 3");
+  // A hand-named row can occupy the next positional slot; the seed skips it.
+  rows.push({ _label: "backend 3" });
+  assert.equal(H.seedGroupRow(g, rows)._label, "backend 4");
+  assert.equal(H.seedGroupRow(g, [])._label, "backend 1");
+
+  // Duplicate: the source label if free, else the first free suffix.
+  assert.equal(H.freeRowLabel(g, rows, "EU prod"), "EU prod");
+  assert.equal(H.freeRowLabel(g, rows, "backend 1"), "backend 1 2");
+  assert.equal(H.freeRowLabel(g, rows.concat([{ _label: "backend 1 2" }]), "backend 1"), "backend 1 3");
+});
+
 test("prettyMissing reads paths out loud, and leaves env names alone", () => {
-  const bag = { backends: [{ name: "honeycomb" }, { name: "" }] };
+  const bag = { backends: [{ _label: "honeycomb" }, { _label: "" }] };
   assert.deepEqual(H.prettyMissing(bag, ["backends[0].api_key"], TPL),
-    ["backend honeycomb's api key"], "row name + schema label");
+    ["honeycomb's api key"], "row label + schema label");
+  assert.deepEqual(H.prettyMissing(bag, ["backends[1].api_key"], TPL),
+    ["backend 2's api key"], "an unlabelled row counts from 1");
   assert.deepEqual(H.prettyMissing(bag, ["backends[1].api_key"], null),
-    ["backend 2's api key"], "unnamed row counts from 1; no schema humanizes the field name");
+    ["backends[1].api key"], "no schema, no group: the path humanizes as far as it can");
   assert.deepEqual(H.prettyMissing({}, ["memory_limiter"], null), ["memory limiter"]);
   // Tier-2 var names are already the name the yaml uses — verbatim.
   assert.deepEqual(H.prettyMissing({}, ["BRONTO_KEY", "OTLP_ENDPOINT"], null), ["BRONTO_KEY", "OTLP_ENDPOINT"]);
@@ -334,24 +358,27 @@ test("prettyMissing reads paths out loud, and leaves env names alone", () => {
 
 test("knobProblems keys errors the way the server does", () => {
   const knobs = H.seedKnobs(TPL, null);
-  knobs.backends[0].name = "Bad Name";
   knobs.backends[0].endpoint = "api.honeycomb.io";
   knobs.backends[0].signals = [];
   const errs = H.knobProblems(TPL, knobs);
   assert.deepEqual(errs, {
-    "backends[0].name": "lowercase letters, digits, dashes",
     "backends[0].endpoint": "must start with http:// or https://",
     "backends[0].signals": "pick at least one",
   });
   // The thirty-second path is clean.
-  knobs.backends[0].name = "honeycomb";
   knobs.backends[0].endpoint = "https://api.honeycomb.io";
   knobs.backends[0].signals = ["traces"];
-  assert.deepEqual(H.knobProblems(TPL, knobs), {});
-  // Empty required vs empty optional.
-  knobs.backends[0].name = "";
   knobs.backends[0].auth_header = "";
-  assert.deepEqual(H.knobProblems(TPL, knobs), { "backends[0].name": "required" });
+  assert.deepEqual(H.knobProblems(TPL, knobs), {}, "an empty optional is fine");
+  // Two rows that slug to the same identity would collapse into one
+  // exporter — the server says so, and so does the form.
+  knobs.backends.push(H.seedGroupRow(TPL.groups[0], knobs.backends));
+  knobs.backends[1].endpoint = "https://b.example";
+  assert.deepEqual(H.knobProblems(TPL, knobs), {});
+  knobs.backends[1]._label = "Backend 1";
+  assert.deepEqual(H.knobProblems(TPL, knobs), { "backends[1]._label": "same name as backend 1" });
+  knobs.backends[1]._label = "!!";
+  assert.deepEqual(H.knobProblems(TPL, knobs), { "backends[1]._label": "needs a letter or digit" });
 });
 
 test("parseFieldErr", () => {
@@ -373,6 +400,7 @@ test("knownKnobPath admits only paths the form can show", () => {
   // A collector diagnostic that merely LOOKS field-shaped stays a panel error.
   assert.equal(H.knownKnobPath(TPL, "exporters"), false);
   assert.equal(H.knownKnobPath(TPL, "backends[0].nope"), false);
+  assert.equal(H.knownKnobPath(TPL, "backends[0]._label"), true, "the row label is a control too");
   assert.equal(H.knownKnobPath(TPL, ""), false);
   assert.equal(H.knownKnobPath(null, "batch"), false);
   const noRepeat = { fields: [{ name: "batch", type: "toggle" }] };
@@ -407,8 +435,8 @@ test("isSourceText recognizes yaml front matter by the cheap sniff", () => {
 test("placeholderKnobs makes a creatable draft with no field names of its own", () => {
   const knobs = H.placeholderKnobs(TPL);
   // Required slug/url fields get neutral type-derived placeholders…
-  assert.equal(knobs.backends[0].name, "backend");
   assert.equal(knobs.backends[0].endpoint, "https://api.example.com");
+  assert.equal(knobs.backends[0]._label, "backend 1", "the row still gets its positional identity");
   // …defaults and optionals stay what seedKnobs made them.
   assert.equal(knobs.backends[0].auth_scheme, "none");
   assert.equal(knobs.backends[0].auth_header, "");
