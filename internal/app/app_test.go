@@ -2239,7 +2239,7 @@ func TestRecencyFollowsActivations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"debug", "otlp-basic", "bronto", "debug"} {
+	for _, name := range []string{"debug", "otlp-basic", "otlp-forward", "debug"} {
 		if err := a.Activate(name, ""); err != nil {
 			t.Fatalf("Activate(%s): %v", name, err)
 		}
@@ -2249,7 +2249,7 @@ func TestRecencyFollowsActivations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"debug", "bronto", "otlp-basic"}
+	want := []string{"debug", "otlp-forward", "otlp-basic"}
 	if !slices.Equal(st.Recent, want) {
 		t.Errorf("Recent = %v, want %v (most recent first, each config once)", st.Recent, want)
 	}
@@ -2712,7 +2712,7 @@ func TestFactoryReset(t *testing.T) {
 			t.Errorf("plain config %s default preset = %+v, want empty", info.Name, info.Meta.Presets["default"])
 		}
 	}
-	if want := []string{"bronto", "debug", "otlp-basic", "otlp-forward"}; !slices.Equal(names, want) {
+	if want := []string{"debug", "otlp-basic", "otlp-forward"}; !slices.Equal(names, want) {
 		t.Errorf("configs after reset = %v, want %v", names, want)
 	}
 

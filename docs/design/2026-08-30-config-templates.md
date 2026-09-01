@@ -666,3 +666,75 @@ templated defaults:
   (`{{.Row.region}}`, `{{.Row.collection}}`). The Go side stays
   vendor-neutral; bronto's endpoint derivation lives in its template
   body.
+
+## Amendment 8 — author-defined groups (owner-approved, 2026-09-01)
+
+Owner ruling: "backends seems to be hardcoded — what if someone wants to
+name it differently, or wants other lists: receivers, OTTL configurations?
+This is highly limiting." And: "if such an item is named, I don't want a
+`name` attribute — like the presets it should be possible to edit the label
+at the top." Plus, on compatibility: "The user should be able to define
+them, this is an infinite list, we do not want to limit them. But yes,
+clean break."
+
+So the repeat group stops being a feature of the engine and becomes a
+feature of the SCHEMA.
+
+- **`groups:` replaces `backends:`** — a list, not a singleton. Each entry
+  is `{id, label?, item?, min?, max?, fields}`. The id is the bag key AND
+  the render data key (`{{range .backends}}`, `{{range .ottl_statements}}`),
+  must be `[a-z][a-z0-9_]*`, and may not collide with a field name or
+  another group. `label` (the form heading) and `item` (one row: "+ add
+  backend") derive from the id when omitted; `min` defaults to 0 and `max`
+  to 16, the engine's per-group row cap. Groups themselves are unlimited.
+  There is no back-compatibility shim: a source still saying `backends:`
+  fails to parse, loudly, like any other unknown schema key.
+- **Row identity is a LABEL, not a field.** Every row carries the reserved
+  key `_label` (`catalog.LabelKey`), edited in place at the top of the row
+  card exactly the way a preset tab is renamed. Schema fields may not use
+  `_`-prefixed names, so nothing can collide with it. An absent label
+  defaults by position ("backend 1"). Its SLUG is the row's identity in the
+  rendered yaml — the exporter id and the secret env var names
+  (`EU_PROD_API_KEY` for label "EU prod", field `api_key`) — so a rename
+  moves the derived names while the secret VALUE stays in the row. Two rows
+  may not slug to the same thing; that is a 400 (and a field-adjacent error
+  in the form) rather than a silently collapsed exporter.
+- **The Go vocabulary is gone.** `customendpoints.go` — `ceBackend`,
+  `ceMetricsGroup`, `vocabulary()`, the `Backends`/`MetricsGroups`/
+  `TracesExps`/`AnyProcs` value set — is deleted. It could only ever
+  describe the shapes it knew, which is exactly the limitation. Render data
+  is now just the normalized bag: every field under its own name, every
+  group's rows under its own id, each row carrying `_label`, `_slug` and
+  `_env` (field name → derived env var name, so a body writes
+  `${env:{{._env.api_key}}}` and can never bake a value). Top-level secrets
+  get the same `_env` map; `StorageDir` stays.
+- **Bodies assemble their own lists** with three new template funcs beside
+  `upper`/`slug`: `list`, `append`, `join`.
+
+      {{$e := list}}{{range .backends}}{{$e = append $e (printf "otlphttp/%s" ._slug)}}{{end}}
+      exporters: [{{join $e ", "}}]
+
+  That is the whole replacement for `TracesExps` and friends — and it works
+  for a group the engine has never heard of.
+- **Optional fields now normalize to their type's zero** rather than
+  staying absent: `missingkey=error` would otherwise turn an untouched
+  optional field into a render failure the moment a body reads it directly
+  (the old vocabulary hid this behind safe Go lookups).
+
+### The OOTB set, round 3
+
+Three shipped configs, not four — `bronto` is dropped entirely (the
+retire rule removes an unmodified, inactive installed copy on first run;
+a modified or active one stays and, since it references the deleted
+vocabulary, will fail to re-render until reset — the accepted cost of the
+clean break).
+
+- **`otlp-basic`** (tier 2) gains an always-present auth header:
+  `Authorization: Bearer ${env:OTLP_KEY:-}`. Empty sends an empty header;
+  owner's call over a conditional the tier-2 model cannot express.
+- **`otlp-forward`** (tier 3) drops the `name` field entirely — the row
+  label replaced it — and its auth rule is one line: `auth_header`
+  defaults to `Authorization` and sends `Bearer <value>`; ANY other header
+  name sends the value bare; an emptied header name sends no auth block at
+  all. `api_key` is optional, so the shipped default (localhost:4318, no
+  key) opens with no warning — locked by test, for every shipped default.

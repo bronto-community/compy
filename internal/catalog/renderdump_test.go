@@ -21,7 +21,7 @@ func TestRenderDump(t *testing.T) {
 	if err := json.Unmarshal(data, &knobs); err != nil {
 		t.Fatal(err)
 	}
-	tmpl := get(t, "custom-endpoints")
+	tmpl := get(t, "otlp-forward")
 	out, err := tmpl.Render(knobs, os.Getenv("RENDER_STORAGE"))
 	if err != nil {
 		t.Fatal(err)

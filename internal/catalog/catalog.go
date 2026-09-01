@@ -15,12 +15,18 @@
 // convention). Both decode into the same schema structs; fields are arrays
 // either way, which preserves declaration order (form order) for free.
 //
+// Repeat groups are AUTHOR-DEFINED (Amendment 8): a schema declares any
+// number of them under `groups:`, each with its own id, and the id is both
+// the bag key and the render data key — {{range .backends}}, {{range
+// .receivers}}, {{range .ottl_statements}}. Nothing about "backends" is
+// built in. A row's identity is a LABEL the user edits at the top of the
+// row card (reserved bag key "_label", so no schema field competes with
+// it); its slug derives exporter ids and secret env names.
+//
 // Boring rule (authoring guidance for user templates, enforced for shipped
-// ones): template bodies get `if` and `range` only, plus the two helper
-// funcs `upper` and `slug`. Anything needing logic (temporality splits,
-// processor order, exporter lists) is computed here in Go and handed to
-// every render as a flat vocabulary (Backends, MetricsGroups, TracesProcs,
-// …) derived from the recognized knobs.
+// ones): template bodies get `if` and `range` plus five helper funcs —
+// `upper`, `slug`, and the list trio `list`/`append`/`join` that builds a
+// processor or exporter list without any Go behind it.
 package catalog
 
 import (
@@ -67,13 +73,25 @@ type Section struct {
 	Collapsed bool   `json:"collapsed,omitempty"`
 }
 
-// Repeat is the template's repeat group ("backends"): Min..Max rows of
-// Fields.
-type Repeat struct {
-	Min    int     `json:"min"`
-	Max    int     `json:"max"`
+// Group is one author-defined repeat group: Min..Max rows of Fields, listed
+// under `groups:`. ID is the bag key AND the render data key, so the body
+// says {{range .<id>}}; Item names ONE row in the UI ("+ add backend") and
+// seeds a new row's default label.
+type Group struct {
+	ID     string  `json:"id"`
+	Label  string  `json:"label,omitempty"`
+	Item   string  `json:"item,omitempty"`
+	Min    int     `json:"min,omitempty"`
+	Max    int     `json:"max,omitempty"`
 	Fields []Field `json:"fields"`
 }
+
+// LabelKey is the machinery-owned row identity every group row carries —
+// the editable label at the top of the row card, the preset-tab idiom
+// (Amendment 8: rows are named the way presets are, never through a `name`
+// field). Schema fields may not use "_"-prefixed names, so it can never
+// collide with one.
+const LabelKey = "_label"
 
 // Template is one parsed config source: the schema (serialized to the UI
 // as-is), the parsed body, and the raw source text it came from.
@@ -81,10 +99,35 @@ type Template struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Sections    []Section `json:"sections,omitempty"`
-	Fields      []Field   `json:"fields,omitempty"`   // config-level
-	Backends    *Repeat   `json:"backends,omitempty"` // repeat group
+	Fields      []Field   `json:"fields,omitempty"` // config-level
+	Groups      []Group   `json:"groups,omitempty"` // repeat groups
 	body        *template.Template
 	raw         string
+}
+
+// group finds a declared group by id.
+func (t Template) group(id string) (Group, bool) {
+	for _, g := range t.Groups {
+		if g.ID == id {
+			return g, true
+		}
+	}
+	return Group{}, false
+}
+
+// rowLabel is the default label for row i — "backend 1", "receiver 2".
+func (g Group) rowLabel(i int) string { return fmt.Sprintf("%s %d", g.Item, i+1) }
+
+// rowSlug is a row's identity in the rendered yaml: the slug of its label,
+// defaulted by position when the bag has none (a bag straight off disk may
+// predate the label). It derives exporter ids and secret env names, so
+// everything downstream agrees by construction.
+func (g Group) rowSlug(row map[string]any, i int) string {
+	label, _ := row[LabelKey].(string)
+	if strings.TrimSpace(label) == "" {
+		label = g.rowLabel(i)
+	}
+	return slugify(label)
 }
 
 // Source is the raw source text this template was parsed from — what
@@ -101,9 +144,27 @@ func userErrf(format string, a ...any) error {
 	return state.BadRequest(fmt.Errorf(format, a...))
 }
 
+// funcs is the whole template vocabulary. upper/slug are string helpers;
+// list/append/join are what lets a BODY build the lists that used to need Go
+// behind it — a processor order, an exporter set — without any knowledge of
+// what the group is called:
+//
+//	{{$e := list}}{{range .backends}}{{$e = append $e (printf "otlphttp/%s" ._slug)}}{{end}}
+//	exporters: [{{join $e ", "}}]
 var funcs = template.FuncMap{
 	"upper": strings.ToUpper,
 	"slug":  slugify,
+	"list":  func(items ...any) []any { return items },
+	"append": func(l []any, items ...any) []any {
+		return append(slices.Clip(slices.Clone(l)), items...)
+	},
+	"join": func(l []any, sep string) string {
+		parts := make([]string, len(l))
+		for i, v := range l {
+			parts[i] = fmt.Sprint(v)
+		}
+		return strings.Join(parts, sep)
+	},
 }
 
 var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
@@ -260,12 +321,19 @@ func ParseSource(content string) (Template, error) {
 		}
 		body = b
 	}
+	// An omitted max means "as many as the engine allows" — the bound has to
+	// exist before checkSchema judges it, and the UI reads it back.
+	for i := range t.Groups {
+		if t.Groups[i].Max == 0 {
+			t.Groups[i].Max = maxGroupRows
+		}
+	}
 	if err := t.checkSchema(); err != nil {
 		return Template{}, state.BadRequest(err)
 	}
 	fillLabels(t.Fields)
-	if t.Backends != nil {
-		fillLabels(t.Backends.Fields)
+	for i := range t.Groups {
+		fillGroup(&t.Groups[i])
 	}
 	body = strings.TrimPrefix(body, "\n")
 	tmpl, err := template.New(t.Name).Funcs(funcs).Option("missingkey=error").Parse(body)
@@ -277,21 +345,55 @@ func ParseSource(content string) (Template, error) {
 	return t, nil
 }
 
+// humanize turns a schema identifier into prose — "api_key" → "Api key".
+func humanize(s string) string {
+	s = strings.NewReplacer("_", " ", "-", " ").Replace(s)
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 // fillLabels derives a missing label from the field name — "api_key" →
 // "Api key" — so label: is optional in the schema. Names are non-empty
 // (checkSchema runs first).
 func fillLabels(fields []Field) {
 	for i, f := range fields {
 		if f.Label == "" {
-			s := strings.NewReplacer("_", " ", "-", " ").Replace(f.Name)
-			fields[i].Label = strings.ToUpper(s[:1]) + s[1:]
+			fields[i].Label = humanize(f.Name)
 		}
 	}
 }
 
+// fillGroup derives a group's missing label and item name from its id —
+// "backends" → "Backends" / "backend" — so only `id` and `fields` are
+// mandatory. ponytail: the singular is a trailing-"s" strip; declare `item`
+// when that reads wrong ("ottl_policies").
+func fillGroup(g *Group) {
+	fillLabels(g.Fields)
+	if g.Label == "" {
+		g.Label = humanize(g.ID)
+	}
+	if g.Item == "" {
+		s := strings.NewReplacer("_", " ", "-", " ").Replace(g.ID)
+		g.Item = strings.TrimSuffix(s, "s")
+		if g.Item == "" {
+			g.Item = s
+		}
+	}
+}
+
+// maxGroupRows caps every repeat group. Groups themselves are unlimited in
+// number; ONE group's row count is capped because each row is a rendered
+// exporter/receiver block and a form card.
+const maxGroupRows = 16
+
+var groupID = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
 // checkSchema validates the schema itself: known types, options where the
-// type needs them, defaults among the options, sections that exist, repeat
-// bounds inside 1..8, unique field names.
+// type needs them, defaults among the options, sections that exist, group
+// ids that are usable as template data keys, row bounds inside 0..16, unique
+// field names, and the "_" prefix reserved for the machinery.
 func (t Template) checkSchema() error {
 	sections := map[string]bool{}
 	for _, s := range t.Sections {
@@ -305,6 +407,9 @@ func (t Template) checkSchema() error {
 		for _, f := range fields {
 			if f.Name == "" || seen[f.Name] {
 				return fmt.Errorf("%s: empty or duplicate field name %q", where, f.Name)
+			}
+			if strings.HasPrefix(f.Name, "_") {
+				return fmt.Errorf("%s.%s: names starting with _ are reserved (%s is the row label)", where, f.Name, LabelKey)
 			}
 			seen[f.Name] = true
 			if !fieldTypes[f.Type] {
@@ -327,11 +432,25 @@ func (t Template) checkSchema() error {
 	if err := checkFields("fields", t.Fields); err != nil {
 		return err
 	}
-	if t.Backends != nil {
-		if t.Backends.Min < 1 || t.Backends.Max > 8 || t.Backends.Min > t.Backends.Max {
-			return fmt.Errorf("backends: repeat bounds %d..%d outside 1..8", t.Backends.Min, t.Backends.Max)
+	taken := map[string]bool{}
+	for _, f := range t.Fields {
+		taken[f.Name] = true
+	}
+	for _, g := range t.Groups {
+		if !groupID.MatchString(g.ID) {
+			return fmt.Errorf("groups: id %q must be lowercase letters, digits and underscores, starting with a letter", g.ID)
 		}
-		if err := checkFields("backends", t.Backends.Fields); err != nil {
+		if taken[g.ID] {
+			return fmt.Errorf("groups: id %q is already a field or group name", g.ID)
+		}
+		taken[g.ID] = true
+		if g.Min < 0 || g.Max > maxGroupRows || g.Min > g.Max {
+			return fmt.Errorf("%s: row bounds %d..%d outside 0..%d", g.ID, g.Min, g.Max, maxGroupRows)
+		}
+		if len(g.Fields) == 0 {
+			return fmt.Errorf("%s: a group needs at least one field", g.ID)
+		}
+		if err := checkFields(g.ID, g.Fields); err != nil {
 			return err
 		}
 	}
@@ -428,6 +547,19 @@ func checkValue(f Field, v any) (any, error) {
 	return nil, fmt.Errorf("internal: unvalidatable type %q", f.Type)
 }
 
+// zeroValue is a field's empty-but-present value, by type. KEEP IN LOCKSTEP
+// with helpers.js's fieldDefault, which seeds the same shapes in the form.
+func zeroValue(f Field) any {
+	switch f.Type {
+	case "toggle":
+		return false
+	case "multi":
+		return []string{}
+	default:
+		return ""
+	}
+}
+
 // normalizeFields validates bag values against fields and fills defaults,
 // returning the normalized map. where prefixes error messages
 // ("backends[1].endpoint: ..."). Secret fields are ordinary bag members
@@ -454,6 +586,12 @@ func normalizeFields(where string, fields []Field, bag map[string]any) (map[stri
 			if f.Default != nil {
 				v = f.Default
 			} else if f.Optional {
+				// An optional field with no declared default still has to
+				// EXIST for the body: `missingkey=error` turns an absent key
+				// into a render failure, so the type's zero stands in — the
+				// same value the form seeds and the same one an emptied
+				// control stores.
+				out[f.Name] = zeroValue(f)
 				continue
 			} else {
 				return nil, userErrf("%s%s: required", where, f.Name)
@@ -483,11 +621,10 @@ func (t Template) NormalizeBag(bag map[string]any) (map[string]any, error) {
 	known := t.knownTop()
 	rest := map[string]any{}
 	free := map[string]any{}
-	var backends any
-	hasBackends := false
+	groups := map[string]any{}
 	for k, v := range bag {
-		if k == "backends" && t.Backends != nil {
-			backends, hasBackends = v, true
+		if _, isGroup := t.group(k); isGroup {
+			groups[k] = v
 			continue
 		}
 		if s, isStr := v.(string); isStr && !known[k] {
@@ -501,58 +638,78 @@ func (t Template) NormalizeBag(bag map[string]any) (map[string]any, error) {
 		return nil, err
 	}
 	maps.Copy(out, free)
-	if t.Backends != nil {
-		var rows []any
-		if hasBackends {
-			var ok bool
-			rows, ok = backends.([]any)
-			if !ok {
-				if typed, isTyped := backends.([]map[string]any); isTyped {
-					for _, r := range typed {
-						rows = append(rows, r)
-					}
-				} else {
-					return nil, userErrf("backends: not a list")
-				}
-			}
+	for _, g := range t.Groups {
+		rows, err := normalizeGroup(g, groups[g.ID])
+		if err != nil {
+			return nil, err
 		}
-		if len(rows) < t.Backends.Min || len(rows) > t.Backends.Max {
-			return nil, userErrf("backends: need %d to %d entries, got %d", t.Backends.Min, t.Backends.Max, len(rows))
+		out[g.ID] = rows
+	}
+	return out, nil
+}
+
+// normalizeGroup validates one group's rows: bounds, per-row fields, and the
+// row LABEL — defaulted by position when absent, and unique after slugging
+// (two rows sharing a slug would share an exporter id and a secret env
+// name).
+func normalizeGroup(g Group, v any) ([]any, error) {
+	var rows []any
+	if v != nil {
+		switch vv := v.(type) {
+		case []any:
+			rows = vv
+		case []map[string]any:
+			for _, r := range vv {
+				rows = append(rows, r)
+			}
+		default:
+			return nil, userErrf("%s: not a list", g.ID)
 		}
-		var normRows []any
-		names := map[string]bool{}
-		for i, r := range rows {
-			row, ok := r.(map[string]any)
-			if !ok {
-				return nil, userErrf("backends[%d]: not an object", i)
-			}
-			norm, err := normalizeFields(fmt.Sprintf("backends[%d].", i), t.Backends.Fields, row)
-			if err != nil {
-				return nil, err
-			}
-			if n, ok := norm["name"].(string); ok {
-				if names[n] {
-					return nil, userErrf("backends[%d].name: duplicate name %q", i, n)
-				}
-				names[n] = true
-			}
-			normRows = append(normRows, norm)
+	}
+	if len(rows) < g.Min || len(rows) > g.Max {
+		return nil, userErrf("%s: need %d to %d entries, got %d", g.ID, g.Min, g.Max, len(rows))
+	}
+	out := make([]any, 0, len(rows))
+	slugs := map[string]string{}
+	for i, r := range rows {
+		row, ok := r.(map[string]any)
+		if !ok {
+			return nil, userErrf("%s[%d]: not an object", g.ID, i)
 		}
-		out["backends"] = normRows
+		label, _ := row[LabelKey].(string)
+		if label = strings.TrimSpace(label); label == "" {
+			label = g.rowLabel(i)
+		}
+		s := slugify(label)
+		if s == "" {
+			return nil, userErrf("%s[%d].%s: %q has no letters or digits to name it by", g.ID, i, LabelKey, label)
+		}
+		if other, dup := slugs[s]; dup {
+			return nil, userErrf("%s[%d].%s: %q is the same name as %q", g.ID, i, LabelKey, label, other)
+		}
+		slugs[s] = label
+		plain := maps.Clone(row)
+		delete(plain, LabelKey)
+		norm, err := normalizeFields(fmt.Sprintf("%s[%d].", g.ID, i), g.Fields, plain)
+		if err != nil {
+			return nil, err
+		}
+		norm[LabelKey] = label
+		out = append(out, norm)
 	}
 	return out, nil
 }
 
 // knownTop is the set of top-level bag keys the schema owns: field names
-// plus the repeat group's key. Any other top-level key holding a string is
+// plus every group's id. Any other top-level key holding a string is
 // free-var material.
 func (t Template) knownTop() map[string]bool {
 	known := map[string]bool{}
 	for _, f := range t.Fields {
 		known[f.Name] = true
 	}
-	if t.Backends != nil {
-		known["backends"] = true
+	for _, g := range t.Groups {
+		known[g.ID] = true
 	}
 	return known
 }
@@ -585,16 +742,24 @@ func (t Template) PruneUnknown(bag map[string]any) map[string]any {
 			out[k] = s
 		}
 	}
-	if t.Backends != nil {
-		if rows, ok := bag["backends"].([]any); ok {
-			var pruned []any
-			for _, r := range rows {
-				if row, ok := r.(map[string]any); ok {
-					pruned = append(pruned, keep(t.Backends.Fields, row))
-				}
-			}
-			out["backends"] = pruned
+	for _, g := range t.Groups {
+		rows, ok := bag[g.ID].([]any)
+		if !ok {
+			continue
 		}
+		var pruned []any
+		for _, r := range rows {
+			row, ok := r.(map[string]any)
+			if !ok {
+				continue
+			}
+			kept := keep(g.Fields, row)
+			if label, ok := row[LabelKey].(string); ok {
+				kept[LabelKey] = label // the row's identity is never pruned
+			}
+			pruned = append(pruned, kept)
+		}
+		out[g.ID] = pruned
 	}
 	return out
 }
@@ -622,22 +787,28 @@ func (t Template) Reconcile(bag map[string]any, storageDir string) map[string]an
 	}
 	out := t.PruneUnknown(bag)
 	fill(t.Fields, out)
-	if t.Backends != nil {
-		if _, ok := out["backends"]; !ok {
-			// A bag that predates the repeat group (a plain config upgraded
-			// to a templated default) seeds Min default rows — the
-			// repeat-group version of "fields the schema defaults are filled
-			// in". Row fields without defaults stay absent, lenient as ever.
-			rows := make([]any, t.Backends.Min)
+	for _, g := range t.Groups {
+		if _, ok := out[g.ID]; !ok {
+			// A bag that predates this group (a plain config upgraded to a
+			// templated default, or a group the author just added) seeds Min
+			// default rows — the repeat-group version of "fields the schema
+			// defaults are filled in". Row fields without defaults stay
+			// absent, lenient as ever.
+			rows := make([]any, g.Min)
 			for i := range rows {
 				rows[i] = map[string]any{}
 			}
-			out["backends"] = rows
+			out[g.ID] = rows
 		}
-		if rows, ok := out["backends"].([]any); ok {
-			for _, r := range rows {
-				if row, ok := r.(map[string]any); ok {
-					fill(t.Backends.Fields, row)
+		if rows, ok := out[g.ID].([]any); ok {
+			for i, r := range rows {
+				row, ok := r.(map[string]any)
+				if !ok {
+					continue
+				}
+				fill(g.Fields, row)
+				if s, _ := row[LabelKey].(string); strings.TrimSpace(s) == "" {
+					row[LabelKey] = g.rowLabel(i)
 				}
 			}
 		}
@@ -675,17 +846,17 @@ func (t Template) secretWalk(bag map[string]any, fn func(name string, v any)) {
 			fn(secretEnvName(f.Name), bag[f.Name])
 		}
 	}
-	if t.Backends != nil {
-		rows, _ := bag["backends"].([]any)
-		for _, r := range rows {
+	for _, g := range t.Groups {
+		rows, _ := bag[g.ID].([]any)
+		for i, r := range rows {
 			row, _ := r.(map[string]any)
-			n, _ := row["name"].(string)
-			if n == "" {
+			s := g.rowSlug(row, i)
+			if s == "" {
 				continue
 			}
-			for _, f := range t.Backends.Fields {
+			for _, f := range g.Fields {
 				if f.Type == "secret" {
-					fn(secretEnvName(n, f.Name), row[f.Name])
+					fn(secretEnvName(s, f.Name), row[f.Name])
 				}
 			}
 		}
@@ -769,11 +940,11 @@ func (t Template) MissingRequired(bag map[string]any) []string {
 		}
 	}
 	check("", t.Fields, bag)
-	if t.Backends != nil {
-		rows, _ := bag["backends"].([]any)
+	for _, g := range t.Groups {
+		rows, _ := bag[g.ID].([]any)
 		for i, r := range rows {
 			row, _ := r.(map[string]any)
-			check(fmt.Sprintf("backends[%d].", i), t.Backends.Fields, row)
+			check(fmt.Sprintf("%s[%d].", g.ID, i), g.Fields, row)
 		}
 	}
 	return missing
@@ -793,31 +964,37 @@ func (t Template) stripSecrets(bag map[string]any) map[string]any {
 		return out
 	}
 	out := strip(t.Fields, bag)
-	if t.Backends != nil {
-		if rows, ok := out["backends"].([]any); ok {
-			stripped := make([]any, 0, len(rows))
-			for _, r := range rows {
-				if row, ok := r.(map[string]any); ok {
-					stripped = append(stripped, strip(t.Backends.Fields, row))
-				} else {
-					stripped = append(stripped, r)
-				}
-			}
-			out["backends"] = stripped
+	for _, g := range t.Groups {
+		rows, ok := out[g.ID].([]any)
+		if !ok {
+			continue
 		}
+		stripped := make([]any, 0, len(rows))
+		for _, r := range rows {
+			if row, ok := r.(map[string]any); ok {
+				stripped = append(stripped, strip(g.Fields, row))
+			} else {
+				stripped = append(stripped, r)
+			}
+		}
+		out[g.ID] = stripped
 	}
 	return out
 }
 
 // Render validates a preset's bag and executes the template body. Secret
 // values are stripped from the inputs first (they travel via the
-// environment; the rendered yaml keeps its ${env:} references). The data is
-// the normalized bag merged with the computed vocabulary (Backends,
-// MetricsGroups, TracesProcs, …) every template body may draw on — user
-// templates included, so a copied catalog source keeps rendering after
-// edits. storageDir is where the offline queue's file_storage extension
-// keeps its state — the caller's state directory; it bakes in as a literal.
-// Execution errors are BadRequest-marked: the body is the user's file.
+// environment; the rendered yaml keeps its ${env:} references), and each is
+// replaced by its NAME under the row's `_env` map — the body writes
+// ${env:{{._env.api_key}}} and can never accidentally bake a value.
+//
+// The data is the normalized bag: every top-level field under its own name,
+// every group's rows under the group's id, each row carrying `_label` (what
+// the user typed), `_slug` (its identity in the yaml) and `_env`. Plus
+// `_env` for top-level secrets and `StorageDir` — where the offline queue's
+// file_storage extension keeps its state, the caller's state directory,
+// baked in as a literal. Execution errors are BadRequest-marked: the body is
+// the user's file.
 func (t Template) Render(bag map[string]any, storageDir string) (string, error) {
 	norm, err := t.NormalizeBag(bag)
 	if err != nil {
@@ -826,7 +1003,33 @@ func (t Template) Render(bag map[string]any, storageDir string) (string, error) 
 	norm = t.stripSecrets(norm)
 	data := map[string]any{}
 	maps.Copy(data, norm)
-	maps.Copy(data, vocabulary(norm, storageDir))
+	envNames := func(fields []Field, parts ...string) map[string]string {
+		env := map[string]string{}
+		for _, f := range fields {
+			if f.Type == "secret" {
+				env[f.Name] = secretEnvName(append(parts, f.Name)...)
+			}
+		}
+		return env
+	}
+	for _, g := range t.Groups {
+		rows, _ := norm[g.ID].([]any)
+		out := make([]any, 0, len(rows))
+		for i, r := range rows {
+			row, _ := r.(map[string]any)
+			rr := maps.Clone(row)
+			if rr == nil {
+				rr = map[string]any{}
+			}
+			s := g.rowSlug(row, i)
+			rr["_slug"] = s
+			rr["_env"] = envNames(g.Fields, s)
+			out = append(out, rr)
+		}
+		data[g.ID] = out
+	}
+	data["_env"] = envNames(t.Fields)
+	data["StorageDir"] = storageDir
 	var b strings.Builder
 	if err := t.body.Execute(&b, data); err != nil {
 		return "", userErrf("render %s: %v", t.Name, err)

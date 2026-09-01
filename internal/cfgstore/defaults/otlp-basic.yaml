@@ -8,6 +8,8 @@ receivers:
 exporters:
   otlp:
     endpoint: ${env:OTLP_ENDPOINT:-127.0.0.1:4317}  # where to send (host:port)
+    headers:
+      Authorization: Bearer ${env:OTLP_KEY:-}  # the backend's API key; empty sends an empty header
 service:
   pipelines:
     traces: {receivers: [otlp], exporters: [otlp]}

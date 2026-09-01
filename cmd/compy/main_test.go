@@ -182,7 +182,7 @@ func TestRunPresetsSetTypedTier3(t *testing.T) {
 	}
 	cliFakeDistro(t)
 	knobs := filepath.Join(t.TempDir(), "knobs.json")
-	if err := os.WriteFile(knobs, []byte(`{"backends": [{"name": "hc", "endpoint": "https://hc.example", "auth_header": "x-team"}]}`), 0o600); err != nil {
+	if err := os.WriteFile(knobs, []byte(`{"backends": [{"_label": "hc", "endpoint": "https://hc.example", "auth_header": "x-team"}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := run([]string{"config", "create", "t3", "--template", "otlp-forward", "--knobs", knobs}); err != nil {
@@ -190,7 +190,7 @@ func TestRunPresetsSetTypedTier3(t *testing.T) {
 	}
 
 	if err := run([]string{"presets", "set", "t3", "default",
-		`backends=[{"name": "hc", "endpoint": "https://hc.example", "auth_header": "x-team", "api_key": "sup3r"}]`}); err != nil {
+		`backends=[{"_label": "hc", "endpoint": "https://hc.example", "auth_header": "x-team", "api_key": "sup3r"}]`}); err != nil {
 		t.Fatalf("presets set backends JSON: %v", err)
 	}
 
@@ -324,14 +324,14 @@ func TestRunTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("templates: %v", err)
 	}
-	for _, want := range []string{"bronto", "debug", "otlp-forward"} {
+	for _, want := range []string{"debug", "otlp-forward"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("templates output missing %s:\n%s", want, out)
 		}
 	}
 
 	knobs := filepath.Join(t.TempDir(), "knobs.json")
-	if err := os.WriteFile(knobs, []byte(`{"backends":[{"name":"hc","endpoint":"https://api.hc.example","auth_header":"x-key"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(knobs, []byte(`{"backends":[{"_label":"hc","endpoint":"https://api.hc.example","auth_header":"x-key"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := captureStdout(t, func() error {
@@ -343,13 +343,13 @@ func TestRunTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "${env:HC_API_KEY}  # hc auth value") {
+	if !strings.Contains(out, "${env:HC_API_KEY:-}  # hc auth value") {
 		t.Errorf("rendered config missing secret card:\n%s", out)
 	}
 
 	// A bad knobs file names the offending field.
 	badKnobs := filepath.Join(t.TempDir(), "bad.json")
-	if err := os.WriteFile(badKnobs, []byte(`{"backends":[{"name":"hc","endpoint":"nope"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(badKnobs, []byte(`{"backends":[{"_label":"hc","endpoint":"nope"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err = captureStdout(t, func() error {

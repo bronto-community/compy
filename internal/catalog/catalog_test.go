@@ -11,34 +11,33 @@ import (
 	"github.com/bronto-community/compy/internal/vars"
 )
 
-// canonicalKnobs is the knob set the golden render, the tier-invariant
-// test, and the sandbox validate all share: 2 backends, mixed temporality,
-// all pipeline toggles on.
+// canonicalKnobs is the knob set the golden render and the tier-invariant
+// test share: two labelled backends, one with auth and one without, every
+// pipeline toggle on.
 func canonicalKnobs(t *testing.T) map[string]any {
 	t.Helper()
 	var knobs map[string]any
 	if err := json.Unmarshal([]byte(`{
 		"backends": [
-			{"name": "honeycomb", "endpoint": "https://api.honeycomb.io", "auth_header": "x-honeycomb-team"},
-			{"name": "dynatrace", "endpoint": "https://abc123.live.dynatrace.com/api/v2/otlp",
-			 "auth_header": "Authorization", "auth_scheme": "Api-Token", "temporality": "to-delta",
-			 "extra_header": "X-Tenant", "extra_value": "tenant-1"}
+			{"_label": "EU prod", "endpoint": "https://api.example.com"},
+			{"_label": "vendor two", "endpoint": "https://otlp.example.net",
+			 "auth_header": "x-example-key"}
 		],
-		"offline_queue": true, "debug_tee": true
+		"offline_queue": true
 	}`), &knobs); err != nil {
 		t.Fatal(err)
 	}
 	return knobs
 }
 
-// get returns a template by name. "custom-endpoints" left the shipped
-// catalog (the four-config redo) but stays here as the richest fixture —
-// backends with every field shape, toggles, sections, temporality — so the
-// engine tests keep their coverage; it parses from ceSrc below.
+// get returns a template by name. "rich" is not shipped: it is the engine's
+// fixture — TWO author-defined groups, every field shape, sections, toggles
+// — so the engine tests keep their coverage without a shipped template
+// having to carry it.
 func get(t *testing.T, name string) Template {
 	t.Helper()
-	if name == "custom-endpoints" {
-		tmpl, err := ParseSource(ceSrc)
+	if name == "rich" {
+		tmpl, err := ParseSource(richSrc)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,7 +62,7 @@ func TestLoadTemplates(t *testing.T) {
 			t.Errorf("%s has no description", tm.Name)
 		}
 	}
-	if want := []string{"bronto", "debug", "otlp-forward"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"debug", "otlp-forward"}; !reflect.DeepEqual(names, want) {
 		t.Fatalf("Templates() = %v, want %v", names, want)
 	}
 	if _, err := Get("no-such-template"); !state.IsBadRequest(err) {
@@ -73,8 +72,8 @@ func TestLoadTemplates(t *testing.T) {
 
 // TestShippedTemplatesSeedable: every shipped template must materialize
 // with no user in the loop — Reconcile(nil) (the schema's normalized
-// default bag, repeat group seeded) has to render. A template that fails
-// this cannot ship as a default.
+// default bag, groups seeded) has to render. A template that fails this
+// cannot ship as a default.
 func TestShippedTemplatesSeedable(t *testing.T) {
 	ts, err := Templates()
 	if err != nil {
@@ -89,6 +88,11 @@ func TestShippedTemplatesSeedable(t *testing.T) {
 		}
 		if strings.Contains(out, "{{") {
 			t.Errorf("%s: unrendered template syntax in default render:\n%s", tmpl.Name, out)
+		}
+		// A shipped default may not open with a warning: nothing required is
+		// allowed to be missing from the seed.
+		if m := tmpl.MissingRequired(seed); len(m) > 0 {
+			t.Errorf("%s: default seed is missing required values %v", tmpl.Name, m)
 		}
 	}
 }
@@ -108,33 +112,40 @@ func TestRenderShippedDebug(t *testing.T) {
 	}
 }
 
-// TestRenderShippedOTLPForward: one backend with auth, one without —
-// headers only where an auth header is set, all three pipelines to both.
+// TestRenderShippedOTLPForward is the auth rule in one place: the default
+// Authorization header sends a bearer token, ANY other header name sends the
+// value bare, and an emptied header name sends no auth at all. Exporter ids
+// and env var names come from the row LABEL — there is no name field.
 func TestRenderShippedOTLPForward(t *testing.T) {
 	tmpl := get(t, "otlp-forward")
 	bag := map[string]any{"backends": []any{
-		map[string]any{"name": "ex", "endpoint": "https://api.example.com", "auth_header": "x-example-key"},
-		map[string]any{"name": "plain", "endpoint": "http://10.0.0.5:4318"},
+		map[string]any{"_label": "EU prod", "endpoint": "https://api.example.com"},
+		map[string]any{"_label": "vendor two", "endpoint": "https://otlp.example.net", "auth_header": "x-example-key"},
+		map[string]any{"_label": "local tap", "endpoint": "http://10.0.0.5:4318", "auth_header": ""},
 	}}
 	out, err := tmpl.Render(bag, "/s")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"  otlphttp/ex:\n    endpoint: https://api.example.com\n    headers:\n      x-example-key: ${env:EX_API_KEY}  # ex auth value\n",
-		"  otlphttp/plain:\n    endpoint: http://10.0.0.5:4318\n",
+		"  otlphttp/eu-prod:\n    endpoint: https://api.example.com\n    headers:\n      Authorization: Bearer ${env:EU_PROD_API_KEY:-}  # EU prod auth value\n",
+		"  otlphttp/vendor-two:\n    endpoint: https://otlp.example.net\n    headers:\n      x-example-key: ${env:VENDOR_TWO_API_KEY:-}  # vendor two auth value\n",
+		"  otlphttp/local-tap:\n    endpoint: http://10.0.0.5:4318\n",
 		"  memory_limiter:\n    check_interval: 1s",
 		"  batch:\n    send_batch_size: 1024",
-		"    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/ex, otlphttp/plain]\n",
-		"    metrics:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/ex, otlphttp/plain]\n",
-		"    logs:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/ex, otlphttp/plain]\n",
+		"    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/eu-prod, otlphttp/vendor-two, otlphttp/local-tap]\n",
+		"    metrics:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/eu-prod, otlphttp/vendor-two, otlphttp/local-tap]\n",
+		"    logs:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/eu-prod, otlphttp/vendor-two, otlphttp/local-tap]\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render missing:\n%s\nin:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "otlphttp/plain:\n    headers") {
-		t.Errorf("no-auth backend grew headers:\n%s", out)
+	if strings.Contains(out, "otlphttp/local-tap:\n    endpoint: http://10.0.0.5:4318\n    headers") {
+		t.Errorf("emptied auth header still rendered headers:\n%s", out)
+	}
+	if strings.Contains(out, "x-example-key: Bearer") {
+		t.Errorf("Bearer prefix leaked onto a custom header:\n%s", out)
 	}
 	if strings.Contains(out, "file_storage") {
 		t.Errorf("offline queue rendered while off by default:\n%s", out)
@@ -149,53 +160,42 @@ func TestRenderShippedOTLPForward(t *testing.T) {
 	if strings.Contains(out, "processors") {
 		t.Errorf("processors rendered with every toggle off:\n%s", out)
 	}
-	if !strings.Contains(out, "    traces:\n      receivers: [otlp]\n      exporters: [otlphttp/ex, otlphttp/plain]\n") {
+	if !strings.Contains(out, "    traces:\n      receivers: [otlp]\n      exporters: [otlphttp/eu-prod") {
 		t.Errorf("bare pipeline missing with toggles off:\n%s", out)
 	}
-}
-
-// TestRenderShippedBronto: region derives the endpoint, collection/dataset
-// headers appear only when set, queue/retry/processors/file_storage always
-// on.
-func TestRenderShippedBronto(t *testing.T) {
-	tmpl := get(t, "bronto")
-	out, err := tmpl.Render(map[string]any{"backends": []any{
-		map[string]any{"name": "prod", "region": "us", "collection": "svc", "dataset": "web"},
-		map[string]any{"name": "bare"},
-	}}, "/home/u/compy/storage")
+	// The offline queue brings the extension and the per-exporter queue.
+	bag["offline_queue"] = true
+	out, err = tmpl.Render(bag, "/home/u/compy/storage")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"  otlphttp/prod:\n    endpoint: https://ingestion.us.bronto.io\n    headers:\n      X-BRONTO-API-KEY: ${env:PROD_API_KEY}  # prod api key\n      x-bronto-collection: svc\n      x-bronto-dataset: web\n    sending_queue:\n      storage: file_storage",
-		"  otlphttp/bare:\n    endpoint: https://ingestion.eu.bronto.io\n    headers:\n      X-BRONTO-API-KEY: ${env:BARE_API_KEY}  # bare api key\n    sending_queue:",
-		"retry_on_failure:\n      max_elapsed_time: 0",
-		"  memory_limiter:\n    check_interval: 1s",
-		"  batch:\n    send_batch_size: 1024",
+		"    sending_queue:\n      storage: file_storage",
 		"extensions:\n  file_storage:\n    directory: \"/home/u/compy/storage\"\n    create_directory: true",
 		"  extensions: [file_storage]",
-		"    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/prod, otlphttp/bare]\n",
-		"    logs:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/prod, otlphttp/bare]\n",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("render missing:\n%s\nin:\n%s", want, out)
+			t.Errorf("offline queue render missing:\n%s\nin:\n%s", want, out)
 		}
-	}
-	if strings.Contains(out, "bare:\n    headers:\n      X-BRONTO-API-KEY: ${env:BARE_API_KEY}  # bare api key\n      x-bronto-collection") {
-		t.Errorf("unset collection rendered a header:\n%s", out)
 	}
 }
 
-// TestSchemaOrder locks declaration order = form order: the JSON arrays in
-// the front matter come through in file order.
+// TestSchemaOrder locks declaration order = form order: the arrays in the
+// front matter come through in file order, groups included.
 func TestSchemaOrder(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
+	tmpl := get(t, "rich")
+	var ids []string
+	for _, g := range tmpl.Groups {
+		ids = append(ids, g.ID)
+	}
+	if want := []string{"backends", "receivers"}; !reflect.DeepEqual(ids, want) {
+		t.Errorf("group order = %v, want %v", ids, want)
+	}
 	var beNames []string
-	for _, f := range tmpl.Backends.Fields {
+	for _, f := range tmpl.Groups[0].Fields {
 		beNames = append(beNames, f.Name)
 	}
-	wantBE := []string{"name", "endpoint", "auth_header", "api_key", "auth_scheme",
-		"extra_header", "extra_value", "signals", "temporality"}
+	wantBE := []string{"endpoint", "auth_header", "api_key", "auth_scheme", "signals"}
 	if !reflect.DeepEqual(beNames, wantBE) {
 		t.Errorf("backend field order = %v, want %v", beNames, wantBE)
 	}
@@ -203,15 +203,23 @@ func TestSchemaOrder(t *testing.T) {
 	for _, f := range tmpl.Fields {
 		names = append(names, f.Name)
 	}
-	want := []string{"memory_limiter", "batch", "resource_detection", "offline_queue", "debug_tee"}
+	want := []string{"memory_limiter", "batch", "debug_tee"}
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("field order = %v, want %v", names, want)
 	}
-	if tmpl.Backends.Min != 1 || tmpl.Backends.Max != 8 {
-		t.Errorf("repeat bounds = %d..%d, want 1..8", tmpl.Backends.Min, tmpl.Backends.Max)
+	if tmpl.Groups[0].Min != 1 || tmpl.Groups[0].Max != 8 {
+		t.Errorf("row bounds = %d..%d, want 1..8", tmpl.Groups[0].Min, tmpl.Groups[0].Max)
 	}
-	if len(tmpl.Sections) != 2 || !tmpl.Sections[1].Collapsed {
-		t.Errorf("sections = %+v, want backends + collapsed pipeline", tmpl.Sections)
+	// label/item derive from the id when the author omits them; an omitted
+	// max is the engine's cap.
+	if tmpl.Groups[0].Label != "Backends" || tmpl.Groups[0].Item != "backend" {
+		t.Errorf("derived group naming = %q/%q", tmpl.Groups[0].Label, tmpl.Groups[0].Item)
+	}
+	if tmpl.Groups[1].Item != "receiver" || tmpl.Groups[1].Max != maxGroupRows {
+		t.Errorf("second group = %+v", tmpl.Groups[1])
+	}
+	if len(tmpl.Sections) != 1 || !tmpl.Sections[0].Collapsed {
+		t.Errorf("sections = %+v, want one collapsed pipeline section", tmpl.Sections)
 	}
 }
 
@@ -241,16 +249,108 @@ func TestAdvancedRuleLint(t *testing.T) {
 			}
 		}
 		check("fields", tmpl.Fields)
-		if tmpl.Backends != nil {
-			check("backends", tmpl.Backends.Fields)
+		for _, g := range tmpl.Groups {
+			check(g.ID, g.Fields)
 		}
+	}
+}
+
+// TestGroupSchemaErrors: the schema's own rules about groups — usable ids,
+// no collisions, bounds inside the engine's cap, and the "_" prefix the
+// machinery reserves for the row label.
+func TestGroupSchemaErrors(t *testing.T) {
+	src := func(groups, fields string) string {
+		return "---\nname: t\n" + fields + groups + "---\nbody\n"
+	}
+	one := "groups:\n  - id: %s\n    fields:\n      - name: x\n        type: string\n        default: v\n"
+	for _, tc := range []struct{ name, content, wantIn string }{
+		{"bad id", src(strings.Replace(one, "%s", "Backends", 1), ""), "must be lowercase"},
+		{"id collides with a field", src(strings.Replace(one, "%s", "a", 1),
+			"fields:\n  - name: a\n    type: string\n    default: v\n"), "already a field"},
+		{"duplicate group ids", src(strings.Replace(one, "%s", "a", 1)+"  - id: a\n    fields:\n      - name: y\n        type: string\n        default: v\n", ""), "already a field"},
+		{"no fields", src("groups:\n  - id: a\n    fields: []\n", ""), "at least one field"},
+		{"max above the cap", src("groups:\n  - id: a\n    max: 99\n    fields:\n      - name: x\n        type: string\n        default: v\n", ""), "row bounds"},
+		{"min above max", src("groups:\n  - id: a\n    min: 3\n    max: 2\n    fields:\n      - name: x\n        type: string\n        default: v\n", ""), "row bounds"},
+		{"reserved row-field name", src("groups:\n  - id: a\n    fields:\n      - name: _label\n        type: string\n        default: v\n", ""), "reserved"},
+		{"reserved config-field name", src("", "fields:\n  - name: _x\n    type: string\n    default: v\n"), "reserved"},
+	} {
+		_, err := ParseSource(tc.content)
+		if err == nil {
+			t.Errorf("%s: parsed, want error", tc.name)
+			continue
+		}
+		if !state.IsBadRequest(err) {
+			t.Errorf("%s: err %v not BadRequest-marked", tc.name, err)
+		}
+		if !strings.Contains(err.Error(), tc.wantIn) {
+			t.Errorf("%s: err %q missing %q", tc.name, err, tc.wantIn)
+		}
+	}
+}
+
+// TestRowLabels is the row-identity rule: the label is what the user typed,
+// its slug is what the yaml uses, an absent label defaults by position, and
+// two rows may not slug to the same thing. Renaming a row moves its derived
+// env var name — the secret VALUE rides in the row and is never touched.
+func TestRowLabels(t *testing.T) {
+	tmpl := get(t, "rich")
+	norm, err := tmpl.NormalizeBag(map[string]any{"backends": []any{
+		map[string]any{"endpoint": "https://a.example"},
+		map[string]any{"_label": "  EU prod  ", "endpoint": "https://b.example"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := norm["backends"].([]any)
+	if got := rows[0].(map[string]any)[LabelKey]; got != "backend 1" {
+		t.Errorf("default label = %v, want %q", got, "backend 1")
+	}
+	if got := rows[1].(map[string]any)[LabelKey]; got != "EU prod" {
+		t.Errorf("label not trimmed: %v", got)
+	}
+
+	for _, tc := range []struct {
+		name, wantIn string
+		rows         []any
+	}{
+		{"colliding labels", "is the same name as", []any{
+			map[string]any{"_label": "EU prod", "endpoint": "https://a.example"},
+			map[string]any{"_label": "eu-prod", "endpoint": "https://b.example"},
+		}},
+		{"unsluggable label", "no letters or digits", []any{
+			map[string]any{"_label": "!!!", "endpoint": "https://a.example"},
+		}},
+	} {
+		_, err := tmpl.NormalizeBag(map[string]any{"backends": tc.rows})
+		if err == nil || !strings.Contains(err.Error(), tc.wantIn) {
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.wantIn)
+		}
+	}
+
+	// A rename moves the derived name; the value stays with the row.
+	row := map[string]any{"_label": "EU prod", "endpoint": "https://a.example", "api_key": "k"}
+	bag := map[string]any{"backends": []any{row}}
+	if env := tmpl.SecretEnv(bag); env["EU_PROD_API_KEY"] != "k" {
+		t.Errorf("SecretEnv before rename = %v", env)
+	}
+	row[LabelKey] = "US prod"
+	env := tmpl.SecretEnv(bag)
+	if env["US_PROD_API_KEY"] != "k" || len(env) != 1 {
+		t.Errorf("SecretEnv after rename = %v, want just US_PROD_API_KEY", env)
+	}
+	out, err := tmpl.Render(bag, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "otlphttp/us-prod:") {
+		t.Errorf("rename did not move the exporter id:\n%s", out)
 	}
 }
 
 // TestNormalizeBag is the validation matrix: every rejection is
 // BadRequest-marked and names the offending field.
 func TestNormalizeBag(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
+	tmpl := get(t, "rich")
 	be := func(rows ...map[string]any) map[string]any {
 		var l []any
 		for _, r := range rows {
@@ -258,7 +358,7 @@ func TestNormalizeBag(t *testing.T) {
 		}
 		return map[string]any{"backends": l}
 	}
-	ok := map[string]any{"name": "a", "endpoint": "https://x.example"}
+	ok := map[string]any{"endpoint": "https://x.example"}
 
 	bad := []struct {
 		name, wantIn string
@@ -267,16 +367,23 @@ func TestNormalizeBag(t *testing.T) {
 		{"no backends", "backends: need 1 to 8", map[string]any{}},
 		{"too many backends", "backends: need 1 to 8", be(ok, ok, ok, ok, ok, ok, ok, ok, ok)},
 		{"backends not a list", "backends: not a list", map[string]any{"backends": "x"}},
-		{"missing name", "backends[0].name: required", be(map[string]any{"endpoint": "https://x.example"})},
-		{"bad slug", "backends[0].name", be(map[string]any{"name": "Bad Name", "endpoint": "https://x.example"})},
-		{"missing endpoint", "backends[0].endpoint: required", be(map[string]any{"name": "a"})},
-		{"bad url", "backends[0].endpoint", be(map[string]any{"name": "a", "endpoint": "not a url"})},
-		{"bad choice", "backends[0].auth_scheme", be(map[string]any{"name": "a", "endpoint": "https://x.example", "auth_scheme": "Digest"})},
-		{"bad multi member", "backends[0].signals", be(map[string]any{"name": "a", "endpoint": "https://x.example", "signals": []any{"traces", "profiles"}})},
-		{"empty multi", "backends[0].signals", be(map[string]any{"name": "a", "endpoint": "https://x.example", "signals": []any{}})},
-		{"unknown field", "backends[0].port: unknown field", be(map[string]any{"name": "a", "endpoint": "https://x.example", "port": 1})},
-		{"secret non-string", "backends[0].api_key", be(map[string]any{"name": "a", "endpoint": "https://x.example", "api_key": 5})},
-		{"duplicate names", "duplicate name", be(ok, map[string]any{"name": "a", "endpoint": "https://y.example"})},
+		{"row not an object", "backends[0]: not an object", map[string]any{"backends": []any{"x"}}},
+		{"missing endpoint", "backends[0].endpoint: required", be(map[string]any{})},
+		{"bad url", "backends[0].endpoint", be(map[string]any{"endpoint": "not a url"})},
+		{"bad choice", "backends[0].auth_scheme", be(map[string]any{"endpoint": "https://x.example", "auth_scheme": "Digest"})},
+		{"bad multi member", "backends[0].signals", be(map[string]any{"endpoint": "https://x.example", "signals": []any{"traces", "profiles"}})},
+		{"empty multi", "backends[0].signals", be(map[string]any{"endpoint": "https://x.example", "signals": []any{}})},
+		{"unknown field", "backends[0].port: unknown field", be(map[string]any{"endpoint": "https://x.example", "port": 1})},
+		{"secret non-string", "backends[0].api_key", be(map[string]any{"endpoint": "https://x.example", "api_key": 5})},
+		{"too many rows in the second group", "receivers: need 0 to 16", func() map[string]any {
+			m := be(ok)
+			rows := make([]any, maxGroupRows+1)
+			for i := range rows {
+				rows[i] = map[string]any{"port": "1"}
+			}
+			m["receivers"] = rows
+			return m
+		}()},
 		{"toggle non-bool", "debug_tee", func() map[string]any { m := be(ok); m["debug_tee"] = "yes"; return m }()},
 		{"unknown config field", "sampling: unknown field", func() map[string]any { m := be(ok); m["sampling"] = true; return m }()},
 	}
@@ -296,19 +403,23 @@ func TestNormalizeBag(t *testing.T) {
 	}
 
 	// The happy path fills every default; an absent secret stays absent
-	// (never defaulted, never demanded — the pre-flight's business).
+	// (never defaulted, never demanded — the pre-flight's business). A group
+	// with min 0 normalizes to no rows rather than failing.
 	norm, err := tmpl.NormalizeBag(be(ok))
 	if err != nil {
 		t.Fatal(err)
 	}
 	row := norm["backends"].([]any)[0].(map[string]any)
-	if row["auth_scheme"] != "none" || row["temporality"] != "as-is" {
+	if row["auth_scheme"] != "none" {
 		t.Errorf("row defaults not filled: %v", row)
 	}
 	if !reflect.DeepEqual(row["signals"], []string{"traces", "metrics", "logs"}) {
 		t.Errorf("signals default = %v", row["signals"])
 	}
-	if norm["memory_limiter"] != true || norm["offline_queue"] != false {
+	if rows, ok := norm["receivers"].([]any); !ok || len(rows) != 0 {
+		t.Errorf("empty group = %v, want an empty list", norm["receivers"])
+	}
+	if norm["memory_limiter"] != true || norm["debug_tee"] != false {
 		t.Errorf("toggle defaults not filled: %v", norm)
 	}
 	if _, present := row["api_key"]; present {
@@ -318,7 +429,7 @@ func TestNormalizeBag(t *testing.T) {
 	// A set secret rides along in the bag (Amendment 4: presets own
 	// everything; secrets are ordinary bag members).
 	norm, err = tmpl.NormalizeBag(be(map[string]any{
-		"name": "a", "endpoint": "https://x.example", "api_key": "shh",
+		"endpoint": "https://x.example", "api_key": "shh",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -343,19 +454,20 @@ func TestNormalizeBag(t *testing.T) {
 }
 
 // TestRenderGolden locks the exact rendered YAML — comments included — for
-// the canonical knob set. If this changes deliberately, update testdata.
+// the shipped otlp-forward and the canonical knob set. If this changes
+// deliberately, run with UPDATE_GOLDEN=1.
 func TestRenderGolden(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
+	tmpl := get(t, "otlp-forward")
 	got, err := tmpl.Render(canonicalKnobs(t), "/home/u/compy/storage")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if os.Getenv("UPDATE_GOLDEN") != "" {
-		if err := os.WriteFile("testdata/custom-endpoints-golden.yaml", []byte(got), 0o644); err != nil {
+		if err := os.WriteFile("testdata/otlp-forward-golden.yaml", []byte(got), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want, err := os.ReadFile("testdata/custom-endpoints-golden.yaml")
+	want, err := os.ReadFile("testdata/otlp-forward-golden.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,74 +476,16 @@ func TestRenderGolden(t *testing.T) {
 	}
 }
 
-// TestMetricsGroupsSplit: three temporalities and a metrics-less backend
-// give exactly the three split pipelines, each with the right converter and
-// exporters.
-func TestMetricsGroupsSplit(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
-	knobs := map[string]any{
-		"backends": []any{
-			map[string]any{"name": "keep", "endpoint": "https://a.example"},
-			map[string]any{"name": "dd", "endpoint": "https://b.example", "temporality": "to-delta"},
-			map[string]any{"name": "vm", "endpoint": "https://c.example", "temporality": "to-cumulative"},
-			map[string]any{"name": "tr", "endpoint": "https://d.example", "signals": []any{"traces"}},
-		},
-	}
-	out, err := tmpl.Render(knobs, "/s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"    metrics:\n      receivers: [otlp]\n      processors: [memory_limiter, resource_detection, batch]\n      exporters: [otlphttp/keep]\n",
-		"    metrics/delta:\n      receivers: [otlp]\n      processors: [memory_limiter, resource_detection, cumulative_to_delta, batch]\n      exporters: [otlphttp/dd]\n",
-		"    metrics/cumulative:\n      receivers: [otlp]\n      processors: [memory_limiter, resource_detection, delta_to_cumulative, batch]\n      exporters: [otlphttp/vm]\n",
-		"      exporters: [otlphttp/keep, otlphttp/dd, otlphttp/vm, otlphttp/tr]\n", // traces: all four
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("render missing:\n%s\nin:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "otlphttp/tr,") || strings.Contains(out, "[otlphttp/tr]") {
-		// tr is traces-only: it must appear in no metrics/logs pipeline.
-		for _, line := range strings.Split(out, "\n") {
-			if strings.Contains(line, "otlphttp/tr") && !strings.Contains(line, "otlphttp/keep") {
-				t.Errorf("traces-only backend leaked into %q", line)
-			}
-		}
-	}
-}
-
-// TestRenderMinimal: one backend, everything off, renders no processors
-// block, no extensions, no debug.
-func TestRenderMinimal(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
-	knobs := map[string]any{
-		"backends":           []any{map[string]any{"name": "b", "endpoint": "https://x.example", "auth_header": "Authorization", "auth_scheme": "Bearer"}},
-		"memory_limiter":     false,
-		"batch":              false,
-		"resource_detection": false,
-	}
-	out, err := tmpl.Render(knobs, "/s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, absent := range []string{"processors", "extensions", "debug", "sending_queue"} {
-		if strings.Contains(out, absent) {
-			t.Errorf("minimal render contains %q:\n%s", absent, out)
-		}
-	}
-	if !strings.Contains(out, "Authorization: Bearer ${env:B_API_KEY}  # b api key") {
-		t.Errorf("auth scheme prefix missing:\n%s", out)
-	}
-}
-
 // TestTierInvariant: the rendered config, fed back through the tier-2 vars
-// parser, yields exactly the secret cards — named, described, and required
-// (COMPY ports carry defaults and are compy-injected, so the pre-flight
-// asks for the API keys and nothing else).
+// parser, yields the secret refs under their derived names — tier 3
+// contains tier 2 by construction.
 func TestTierInvariant(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
-	out, err := tmpl.Render(canonicalKnobs(t), "/home/u/compy/storage")
+	tmpl := get(t, "rich")
+	out, err := tmpl.Render(map[string]any{"backends": []any{
+		map[string]any{"_label": "EU prod", "endpoint": "https://api.example.com"},
+		map[string]any{"_label": "vendor two", "endpoint": "https://otlp.example.net",
+			"auth_header": "x-example-key"},
+	}}, "/home/u/compy/storage")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,25 +498,31 @@ func TestTierInvariant(t *testing.T) {
 			required = append(required, v.Name)
 		}
 	}
-	if want := []string{"DYNATRACE_API_KEY", "HONEYCOMB_API_KEY"}; !reflect.DeepEqual(required, want) {
+	// Only the second row declares an auth header, so only its key is
+	// referenced — per-preset structure decides what exists.
+	if want := []string{"VENDOR_TWO_API_KEY"}; !reflect.DeepEqual(required, want) {
 		t.Fatalf("required vars = %v, want %v", required, want)
 	}
-	if d := byName["HONEYCOMB_API_KEY"].Description; d != "honeycomb api key" {
-		t.Errorf("HONEYCOMB_API_KEY description = %q", d)
-	}
-	if d := byName["DYNATRACE_API_KEY"].Description; d != "dynatrace api key" {
-		t.Errorf("DYNATRACE_API_KEY description = %q", d)
+	if d := byName["VENDOR_TWO_API_KEY"].Description; d != "vendor two api key" {
+		t.Errorf("VENDOR_TWO_API_KEY description = %q", d)
 	}
 	// The env-with-default port refs survive as the shipped configs' idiom.
-	if !byName["COMPY_GRPC_PORT"].HasDefault || !byName["COMPY_HTTP_PORT"].HasDefault {
-		t.Error("COMPY port refs lost their defaults")
+	if !byName["COMPY_GRPC_PORT"].HasDefault {
+		t.Error("COMPY port ref lost its default")
 	}
 }
 
-// TestEnvVarFor: dashes cannot appear in env var names.
-func TestEnvVarFor(t *testing.T) {
-	if got := envVarFor("my-backend"); got != "MY_BACKEND_API_KEY" {
-		t.Errorf("envVarFor = %q", got)
+// TestSecretEnvName: dashes and spaces cannot appear in env var names.
+func TestSecretEnvName(t *testing.T) {
+	if got := secretEnvName("my-backend", "api_key"); got != "MY_BACKEND_API_KEY" {
+		t.Errorf("secretEnvName = %q", got)
+	}
+	g := Group{ID: "backends", Item: "backend"}
+	if got := g.rowSlug(map[string]any{LabelKey: "EU Prod (main)"}, 0); got != "eu-prod-main" {
+		t.Errorf("rowSlug = %q", got)
+	}
+	if got := g.rowSlug(map[string]any{}, 2); got != "backend-3" {
+		t.Errorf("positional rowSlug = %q", got)
 	}
 }
 
@@ -531,18 +591,17 @@ func TestLooksLikeSource(t *testing.T) {
 
 // TestYAMLFrontMatterTwin: the same schema written as YAML front matter and
 // as JSON front matter parses to the identical schema struct — order,
-// defaults, options, repeat bounds — and renders the identical output.
+// defaults, options, group bounds — and renders the identical output.
 func TestYAMLFrontMatterTwin(t *testing.T) {
-	body := "a: {{.g}}\n{{range .backends}}b: {{.name}}\n{{end}}"
+	body := "a: {{.g}}\n{{range .backends}}b: {{._slug}}\n{{end}}"
 	jsonSrc := `{"name": "twin", "description": "d",
  "sections": [{"id": "s", "label": "S", "collapsed": true}],
  "fields": [
    {"name": "g", "type": "string", "label": "G", "default": "x", "section": "s"},
    {"name": "on", "type": "toggle", "label": "O", "default": true},
    {"name": "k", "type": "secret", "label": "K", "description": "a key"}],
- "backends": {"min": 1, "max": 3, "fields": [
-   {"name": "name", "type": "slug", "label": "N"},
-   {"name": "signals", "type": "multi", "label": "Sig", "options": ["a", "b"], "default": ["a"], "advanced": true}]}}
+ "groups": [{"id": "backends", "label": "B", "item": "backend", "min": 1, "max": 3, "fields": [
+   {"name": "signals", "type": "multi", "label": "Sig", "options": ["a", "b"], "default": ["a"], "advanced": true}]}]}
 ---
 ` + body
 	yamlSrc := `---
@@ -566,19 +625,19 @@ fields:
     type: secret
     label: K
     description: a key
-backends:
-  min: 1
-  max: 3
-  fields:
-    - name: name
-      type: slug
-      label: N
-    - name: signals
-      type: multi
-      label: Sig
-      options: [a, b]
-      default: [a]
-      advanced: true
+groups:
+  - id: backends
+    label: B
+    item: backend
+    min: 1
+    max: 3
+    fields:
+      - name: signals
+        type: multi
+        label: Sig
+        options: [a, b]
+        default: [a]
+        advanced: true
 ---
 ` + body
 	jt, err := ParseSource(jsonSrc)
@@ -596,7 +655,7 @@ backends:
 	if yt.Source() != yamlSrc {
 		t.Error("Source() does not round-trip the raw YAML-fronted text")
 	}
-	bag := map[string]any{"backends": []any{map[string]any{"name": "one", "signals": []string{"b"}}}}
+	bag := map[string]any{"backends": []any{map[string]any{"_label": "one", "signals": []string{"b"}}}}
 	jout, err := jt.Render(bag, "/s")
 	if err != nil {
 		t.Fatal(err)
@@ -622,6 +681,7 @@ func TestParseSourceYAMLErrors(t *testing.T) {
 		{"name required", "---\ndescription: d\n---\nbody\n", "name is required"},
 		{"bad field type", "---\nname: t\nfields:\n  - name: x\n    type: wat\n---\nbody\n", "unknown type"},
 		{"bad body", "---\nname: t\n---\n{{end}}\n", "body"},
+		{"the retired backends key is gone", "---\nname: t\nbackends:\n  min: 1\n---\nbody\n", "backends"},
 	} {
 		_, err := ParseSource(tc.content)
 		if err == nil {
@@ -661,10 +721,11 @@ a: {{.g}}
 		t.Errorf("render = %q", out)
 	}
 
-	// label: is optional — a missing one derives from the field name.
+	// label: is optional — a missing one derives from the field name, and a
+	// group's label/item derive from its id.
 	lt, err := ParseSource(`{"name": "t",
  "fields": [{"name": "auth_header", "type": "string", "default": "x"}],
- "backends": {"min": 1, "max": 2, "fields": [{"name": "name", "type": "slug"}]}}
+ "groups": [{"id": "ottl_policies", "min": 1, "max": 2, "fields": [{"name": "statement", "type": "string", "default": ""}]}]}
 ---
 b
 `)
@@ -674,8 +735,11 @@ b
 	if got := lt.Fields[0].Label; got != "Auth header" {
 		t.Errorf("derived label = %q, want %q", got, "Auth header")
 	}
-	if got := lt.Backends.Fields[0].Label; got != "Name" {
-		t.Errorf("derived backend label = %q, want %q", got, "Name")
+	if got := lt.Groups[0].Fields[0].Label; got != "Statement" {
+		t.Errorf("derived group field label = %q, want %q", got, "Statement")
+	}
+	if lt.Groups[0].Label != "Ottl policies" || lt.Groups[0].Item != "ottl policie" {
+		t.Errorf("derived group naming = %q/%q", lt.Groups[0].Label, lt.Groups[0].Item)
 	}
 
 	for _, tc := range []struct{ name, content, wantIn string }{
@@ -699,20 +763,20 @@ b
 	}
 }
 
-// TestPruneUnknown: fields the schema no longer declares vanish, backend
-// rows included — how stored bags survive a schema edit — while declared
-// values, secrets among them (they are declared fields, and pruning a
-// secret would delete a key), pass through untouched. Unknown top-level
+// TestPruneUnknown: fields the schema no longer declares vanish, group rows
+// included — how stored bags survive a schema edit — while declared values,
+// secrets among them (they are declared fields, and pruning a secret would
+// delete a key) and the row LABEL, pass through untouched. Unknown top-level
 // STRINGS are free vars and survive this pass (only Reconcile, render in
 // hand, prunes those); unknown non-strings still vanish.
 func TestPruneUnknown(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
+	tmpl := get(t, "rich")
 	knobs := map[string]any{
 		"debug_tee": true,
 		"gone":      7,
 		"ASDF":      "free-value",
 		"backends": []any{map[string]any{
-			"name": "hc", "endpoint": "https://x.example",
+			"_label": "EU prod", "endpoint": "https://x.example",
 			"api_key": "shh", "old_field": 1,
 		}},
 	}
@@ -730,10 +794,13 @@ func TestPruneUnknown(t *testing.T) {
 	if row["api_key"] != "shh" {
 		t.Errorf("secret did not survive the prune: %v", row)
 	}
+	if row[LabelKey] != "EU prod" {
+		t.Errorf("row label pruned: %v", row)
+	}
 	if _, has := row["old_field"]; has {
 		t.Errorf("unknown row field survived: %v", row)
 	}
-	if row["name"] != "hc" || row["endpoint"] != "https://x.example" {
+	if row["endpoint"] != "https://x.example" {
 		t.Errorf("declared row values lost: %v", row)
 	}
 	if got := tmpl.PruneUnknown(nil); len(got) != 0 {
@@ -745,10 +812,10 @@ func TestPruneUnknown(t *testing.T) {
 // same yaml as one without them — the ${env:} references stay, the value
 // appears nowhere. THE invisible rule.
 func TestRenderNeverBakesSecrets(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
+	tmpl := get(t, "rich")
 	bag := map[string]any{
 		"backends": []any{map[string]any{
-			"name": "hc", "endpoint": "https://x.example",
+			"_label": "hc", "endpoint": "https://x.example",
 			"auth_header": "x-team", "api_key": "sup3rs3cret",
 		}},
 	}
@@ -791,15 +858,15 @@ func TestRenderNeverBakesSecrets(t *testing.T) {
 }
 
 // TestSecretEnv: the env split's mapping — a row secret becomes
-// UPPER(row_name)_UPPER(field), agreeing exactly with the rendered
-// ${env:} references; blanks are omitted.
+// UPPER(row_slug)_UPPER(field), agreeing exactly with the rendered ${env:}
+// references; blanks are omitted.
 func TestSecretEnv(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
+	tmpl := get(t, "rich")
 	bag := map[string]any{
 		"backends": []any{
-			map[string]any{"name": "my-backend", "endpoint": "https://x.example",
+			map[string]any{"_label": "my backend", "endpoint": "https://x.example",
 				"auth_header": "Authorization", "api_key": "k1"},
-			map[string]any{"name": "other", "endpoint": "https://y.example",
+			map[string]any{"_label": "other", "endpoint": "https://y.example",
 				"auth_header": "api-key", "api_key": "   "},
 		},
 	}
@@ -819,8 +886,8 @@ func TestSecretEnv(t *testing.T) {
 	}
 	filled := tmpl.SecretEnv(map[string]any{
 		"backends": []any{
-			map[string]any{"name": "my-backend", "api_key": "a"},
-			map[string]any{"name": "other", "api_key": "b"},
+			map[string]any{"_label": "my backend", "api_key": "a"},
+			map[string]any{"_label": "other", "api_key": "b"},
 		},
 	})
 	for _, v := range vars.Parse(out) {
@@ -834,17 +901,18 @@ func TestSecretEnv(t *testing.T) {
 }
 
 // TestReconcile is the per-preset schema-edit rule: unknown pruned, newly
-// defaulted filled, required-without-default left absent (lenient — the
-// strict answer belongs to that preset's next write or activation). An
-// unrenderable bag (missing endpoint here) keeps its free-var values —
-// pruning free vars needs a render to judge against.
+// defaulted filled, row labels defaulted by position, required-without-
+// default left absent (lenient — the strict answer belongs to that preset's
+// next write or activation). An unrenderable bag (missing endpoint here)
+// keeps its free-var values — pruning free vars needs a render to judge
+// against.
 func TestReconcile(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
+	tmpl := get(t, "rich")
 	bag := tmpl.Reconcile(map[string]any{
 		"gone": 1,
 		"ASDF": "kept",
 		"backends": []any{map[string]any{
-			"name": "hc", "api_key": "shh", "old": true,
+			"api_key": "shh", "old": true,
 		}},
 	}, "/s")
 	if _, has := bag["gone"]; has {
@@ -853,15 +921,26 @@ func TestReconcile(t *testing.T) {
 	if bag["ASDF"] != "kept" {
 		t.Errorf("unrenderable bag lost its free var: %v", bag)
 	}
-	if bag["memory_limiter"] != true || bag["offline_queue"] != false {
+	if bag["memory_limiter"] != true || bag["debug_tee"] != false {
 		t.Errorf("defaults not filled: %v", bag)
 	}
 	row := bag["backends"].([]any)[0].(map[string]any)
 	if row["api_key"] != "shh" || row["auth_scheme"] != "none" {
 		t.Errorf("row not reconciled: %v", row)
 	}
+	if row[LabelKey] != "backend 1" {
+		t.Errorf("row label not defaulted: %v", row)
+	}
 	if _, has := row["endpoint"]; has {
 		t.Errorf("reconcile invented a required value: %v", row)
+	}
+	// A bag with no entry for a group at all seeds Min rows.
+	seeded := tmpl.Reconcile(nil, "/s")
+	if rows, _ := seeded["backends"].([]any); len(rows) != 1 {
+		t.Errorf("min rows not seeded: %v", seeded["backends"])
+	}
+	if rows, _ := seeded["receivers"].([]any); len(rows) != 0 {
+		t.Errorf("min-0 group seeded rows: %v", seeded["receivers"])
 	}
 }
 
@@ -876,7 +955,7 @@ const freeSrc = `{"name": "free", "fields": [
 ]}
 ---
 a: {{.greeting}}
-key: ${env:TOKEN}  # the key
+key: ${env:{{._env.token}}}  # the key
 host: ${env:ASDF:-fallback}  # target host
 collide: ${env:greeting}
 port: ${env:COMPY_HTTP_PORT:-14318}
@@ -896,6 +975,9 @@ func TestFreeVars(t *testing.T) {
 	rendered, err := tmpl.Render(bag, "/s")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(rendered, "key: ${env:TOKEN}") {
+		t.Errorf("top-level _env did not name the secret:\n%s", rendered)
 	}
 	free := tmpl.FreeVars(rendered, bag)
 	if len(free) != 1 || free[0].Name != "ASDF" {
@@ -973,212 +1055,187 @@ func TestReconcilePrunesStaleFreeVars(t *testing.T) {
 
 // TestMissingRequiredBag: the generalized pre-flight — schema-required
 // fields (secrets and non-secrets alike) absent or blank in the bag, named
-// as field paths.
+// as field paths under their OWN group's id.
 func TestMissingRequiredBag(t *testing.T) {
-	tmpl := get(t, "custom-endpoints")
+	tmpl := get(t, "rich")
 	missing := tmpl.MissingRequired(map[string]any{
 		"backends": []any{
-			map[string]any{"name": "hc", "endpoint": "https://x.example", "api_key": "k"},
-			map[string]any{"name": "dd", "endpoint": "  ", "api_key": ""},
+			map[string]any{"_label": "hc", "endpoint": "https://x.example", "api_key": "k"},
+			map[string]any{"_label": "dd", "endpoint": "  ", "api_key": ""},
 		},
+		"receivers": []any{map[string]any{"port": ""}},
 	})
-	want := []string{"backends[1].endpoint", "backends[1].api_key"}
+	want := []string{"backends[1].endpoint", "backends[1].api_key", "receivers[0].port"}
 	if !reflect.DeepEqual(missing, want) {
 		t.Errorf("MissingRequired = %v, want %v", missing, want)
 	}
 	if got := tmpl.MissingRequired(map[string]any{"backends": []any{
-		map[string]any{"name": "hc", "endpoint": "https://x.example", "api_key": "k"},
+		map[string]any{"_label": "hc", "endpoint": "https://x.example", "api_key": "k"},
 	}}); got != nil {
 		t.Errorf("complete bag reported missing: %v", got)
 	}
 }
 
-// TestVocabularyForUserTemplates: a hand-written template that declares
-// only SOME of the recognized knobs still renders — the vocabulary fills
-// zero values (and shipped row defaults) for the rest instead of panicking.
-func TestVocabularyForUserTemplates(t *testing.T) {
-	src := `{"name": "mini", "description": "d",
- "backends": {"min": 1, "max": 2, "fields": [
-   {"name": "name", "type": "slug", "label": "N"},
-   {"name": "endpoint", "type": "url", "label": "E"}]}}
+// TestUserDefinedGroups is Amendment 8's point: nothing about "backends" is
+// built in. A hand-written template naming its groups whatever it likes
+// renders both, each row identified by its own label, with no Go behind it —
+// the list funcs do the assembling.
+func TestUserDefinedGroups(t *testing.T) {
+	src := `---
+name: mine
+description: d
+groups:
+  - id: taps
+    item: tap
+    min: 1
+    max: 3
+    fields:
+      - name: port
+        type: string
+        default: "4318"
+  - id: ottl_statements
+    label: OTTL statements
+    item: statement
+    fields:
+      - name: statement
+        type: string
+        default: ""
 ---
-exporters:
-{{range .Backends}}  otlphttp/{{.Name}}:
-    endpoint: {{.Endpoint}}
-{{end}}service:
-  pipelines:
-{{if .HasTraces}}    traces: {exporters: [{{.TracesExps}}]}
-{{end}}`
+receivers:
+{{- range .taps}}
+  otlp/{{._slug}}:
+    endpoint: 127.0.0.1:{{.port}}
+{{- end}}
+{{- if .ottl_statements}}
+processors:
+  transform:
+    log_statements:
+{{- range .ottl_statements}}
+      - {{.statement}}  # {{._label}}
+{{- end}}
+{{- end}}
+`
 	tmpl, err := ParseSource(src)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out, err := tmpl.Render(map[string]any{
-		"backends": []any{map[string]any{"name": "b", "endpoint": "https://x.example"}},
+		"taps": []any{
+			map[string]any{"_label": "grpc in", "port": "4317"},
+			map[string]any{},
+		},
+		"ottl_statements": []any{
+			map[string]any{"_label": "drop health", "statement": `delete_key(attributes, "health")`},
+		},
 	}, "/s")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// No signals field declared → the row defaults to all signals; no
-	// toggles declared → no processors in the lists.
-	if !strings.Contains(out, "traces: {exporters: [otlphttp/b]}") {
-		t.Errorf("vocabulary defaults missing:\n%s", out)
+	for _, want := range []string{
+		"  otlp/grpc-in:\n    endpoint: 127.0.0.1:4317\n",
+		"  otlp/tap-2:\n    endpoint: 127.0.0.1:4318\n",
+		"      - delete_key(attributes, \"health\")  # drop health\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render missing:\n%s\nin:\n%s", want, out)
+		}
+	}
+	// An empty group renders nothing at all.
+	out, err = tmpl.Render(map[string]any{"taps": []any{map[string]any{}}}, "/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "processors") {
+		t.Errorf("empty group rendered its block:\n%s", out)
 	}
 }
 
-// ceSrc is the retired shipped custom-endpoints template, kept verbatim
-// as the engine's richest fixture: a repeat group exercising every field
-// shape (slug, url, string, secret, choice, multi), sections, toggles, and
-// the temporality machinery. The shipped catalog no longer carries it.
-const ceSrc = `---
-name: custom-endpoints
-description: Send OTLP to one or more backends over HTTP.
+// richSrc is the engine's fixture: two author-defined groups (one required,
+// one optional), every field shape (url, string, secret, choice, multi), a
+// collapsed section, and a body that assembles its lists with list/append/
+// join. Not shipped — the shipped catalog stays small on purpose.
+const richSrc = `---
+name: rich
+description: Two groups, every field shape.
 sections:
-  - id: backends
-    label: Backends
   - id: pipeline
     label: Pipeline options
     collapsed: true
-backends:
-  min: 1
-  max: 8
-  fields:
-    - name: name
-      type: slug
-      label: Name
-      description: Short name for this backend; the exporter and its API key variable derive from it
-    - name: endpoint
-      type: url
-      label: Endpoint
-      description: Base OTLP/HTTP URL, e.g. https://api.honeycomb.io. The collector appends /v1/traces etc.
-    - name: auth_header
-      type: string
-      label: Auth header
-      optional: true
-      description: Header that carries the API key, e.g. x-honeycomb-team, api-key, or Authorization; leave empty for no auth header
-    - name: api_key
-      type: secret
-      label: API key
-      description: Stored in the preset, referenced as ${env:<NAME>_API_KEY}
-    - name: auth_scheme
-      type: choice
-      label: Auth scheme prefix
-      options: [none, Bearer, Basic, Api-Token, ApiKey]
-      default: none
-      advanced: true
-      description: Prefix before the key inside the auth header; none for a bare key
-    - name: extra_header
-      type: string
-      label: Extra header
-      optional: true
-      default: ""
-      advanced: true
-      description: One extra literal header, e.g. a tenant/dataset header like X-Scope-OrgID
-    - name: extra_value
-      type: string
-      label: Extra header value
-      optional: true
-      default: ""
-      advanced: true
-    - name: signals
-      type: multi
-      label: Signals
-      options: [traces, metrics, logs]
-      default: [traces, metrics, logs]
-      advanced: true
-    - name: temporality
-      type: choice
-      label: Metric temporality
-      options: [as-is, to-delta, to-cumulative]
-      default: as-is
-      advanced: true
-      description: Convert metric temporality for backends that require it (Datadog/Dynatrace/Azure need delta, VictoriaMetrics cumulative)
+groups:
+  - id: backends
+    min: 1
+    max: 8
+    fields:
+      - name: endpoint
+        type: url
+        description: Base OTLP/HTTP URL
+      - name: auth_header
+        type: string
+        optional: true
+        description: Header that carries the API key; leave empty for no auth
+      - name: api_key
+        type: secret
+        label: API key
+        description: Stored in the preset
+      - name: auth_scheme
+        type: choice
+        options: [none, Bearer, Basic]
+        default: none
+        advanced: true
+      - name: signals
+        type: multi
+        options: [traces, metrics, logs]
+        default: [traces, metrics, logs]
+        advanced: true
+  - id: receivers
+    item: receiver
+    fields:
+      - name: port
+        type: string
 fields:
   - name: memory_limiter
     type: toggle
-    label: Memory limiter
     default: true
     section: pipeline
-    description: Cap the collector's memory use
   - name: batch
     type: toggle
-    label: Batching
     default: true
     section: pipeline
-    description: Batch before export, sized under the 1MB payload cap
-  - name: resource_detection
-    type: toggle
-    label: Host and env detection
-    default: true
-    section: pipeline
-    description: Add host.name and OTEL_RESOURCE_ATTRIBUTES; never overrides what the SDK set
-  - name: offline_queue
-    type: toggle
-    label: Offline queue
-    default: false
-    section: pipeline
-    description: Store telemetry on disk and retry until the backend accepts it
   - name: debug_tee
     type: toggle
-    label: Local debug tee
     default: false
     section: pipeline
-    description: Also print everything to the collector log via the debug exporter
 ---
+{{- $procs := list -}}
+{{- if .memory_limiter}}{{$procs = append $procs "memory_limiter"}}{{end -}}
+{{- if .batch}}{{$procs = append $procs "batch"}}{{end -}}
+{{- $exp := list -}}
+{{- range .backends}}{{$exp = append $exp (printf "otlphttp/%s" ._slug)}}{{end -}}
+{{- if .debug_tee}}{{$exp = append $exp "debug"}}{{end -}}
 receivers:
   otlp:
     protocols:
       grpc:
         endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}  # compy's local gRPC port
-      http:
-        endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
-
-{{if .AnyProcs}}# no sampling, deliberately: a dev loop emits tens of traces/sec; sampling belongs at the vendor edge
-processors:
-{{if .MemoryLimiter}}  memory_limiter:
-    check_interval: 1s
-    limit_percentage: 80
-    spike_limit_percentage: 20
-{{end}}{{if .ResourceDetection}}  resource_detection:
-    detectors: [env, system]
-    override: false  # attributes the SDK set win
-{{end}}{{if .NeedsDelta}}  cumulative_to_delta:
-{{end}}{{if .NeedsCumulative}}  delta_to_cumulative:
-{{end}}{{if .Batch}}  batch:
-    send_batch_size: 1024  # sized under the 1MB payload cap (the lowest vendor ceiling)
-    send_batch_max_size: 1024
-    timeout: 200ms
-{{end}}
-{{end}}exporters:
-{{range .Backends}}  otlphttp/{{.Name}}:
-    endpoint: {{.Endpoint}}
-{{if .HasHeaders}}    headers:
-{{if .AuthHeader}}      {{.AuthHeader}}: {{.AuthPrefix}}${env:{{.EnvVar}}}  # {{.Name}} api key
-{{end}}{{if .ExtraHeader}}      {{.ExtraHeader}}: {{.ExtraValue}}
-{{end}}{{end}}{{if $.OfflineQueue}}    sending_queue:
-      storage: file_storage  # survives restarts and offline stretches
-    retry_on_failure:
-      max_elapsed_time: 0  # retry forever; the queue holds telemetry until the backend answers
-{{end}}{{end}}{{if .DebugTee}}  debug:
-{{end}}
-{{if .OfflineQueue}}extensions:
-  file_storage:
-    directory: "{{.StorageDir}}"
-    create_directory: true
-
-{{end}}service:
-{{if .OfflineQueue}}  extensions: [file_storage]
-{{end}}  pipelines:
-{{if .HasTraces}}    traces:
+{{- range .receivers}}
+  prometheus/{{._slug}}:
+    endpoint: 127.0.0.1:{{.port}}
+{{- end}}
+exporters:
+{{- range .backends}}
+  otlphttp/{{._slug}}:
+    endpoint: {{.endpoint}}
+{{- if .auth_header}}
+    headers:
+      {{.auth_header}}: {{if ne .auth_scheme "none"}}{{.auth_scheme}} {{end}}${env:{{._env.api_key}}}  # {{._label}} api key
+{{- end}}
+{{- end}}
+service:
+  pipelines:
+    traces:
       receivers: [otlp]
-{{if .TracesProcs}}      processors: [{{.TracesProcs}}]
-{{end}}      exporters: [{{.TracesExps}}]
-{{end}}{{range .MetricsGroups}}    {{.Pipeline}}:
-      receivers: [otlp]
-{{if .Procs}}      processors: [{{.Procs}}]
-{{end}}      exporters: [{{.Exps}}]
-{{end}}{{if .HasLogs}}    logs:
-      receivers: [otlp]
-{{if .LogsProcs}}      processors: [{{.LogsProcs}}]
-{{end}}      exporters: [{{.LogsExps}}]
-{{end}}`
+{{- if $procs}}
+      processors: [{{join $procs ", "}}]
+{{- end}}
+      exporters: [{{join $exp ", "}}]
+`

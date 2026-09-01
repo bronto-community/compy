@@ -128,7 +128,7 @@
               "pristine_sha256": { "type": "string" },
               "presets": {
                 "type": "object",
-                "description": "One value bag per preset — a preset holds ALL of a config's values. Tier 2: env strings keyed by variable name. Tier 3: typed schema values keyed by field name (plus \"backends\": an array of per-row objects), secrets included as strings.",
+                "description": "One value bag per preset — a preset holds ALL of a config's values. Tier 2: env strings keyed by variable name. Tier 3: typed schema values keyed by field name (plus one array of per-row objects per declared group, keyed by the group's id; each row carries \"_label\"), secrets included as strings.",
                 "additionalProperties": {
                   "type": "object",
                   "additionalProperties": true
@@ -259,22 +259,28 @@
             "description": "Config-level fields, in form order.",
             "items": { "$ref": "#/components/schemas/TemplateField" }
           },
-          "backends": {
-            "type": "object",
-            "description": "The repeat group: min..max rows of fields. Knob shape: {\"backends\": [{...}, ...]}.",
-            "properties": {
-              "min": { "type": "integer" },
-              "max": { "type": "integer" },
-              "fields": { "type": "array", "items": { "$ref": "#/components/schemas/TemplateField" } }
-            },
-            "required": ["min", "max", "fields"]
+          "groups": {
+            "type": "array",
+            "description": "Author-defined repeat groups, in declaration order. A group's id is the bag key AND the render data key, so a schema may declare as many as it likes under any names ({\"backends\": [{...}]}, {\"receivers\": [{...}]}). Every row additionally carries \"_label\", the machinery-owned identity the user edits at the top of the row card; its slug derives the row's exporter id and its secrets' env var names. Field names may not start with \"_\".",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Lowercase letters, digits and underscores, starting with a letter. Unique among fields and groups." },
+                "label": { "type": "string", "description": "Heading for the group; derived from the id when omitted." },
+                "item": { "type": "string", "description": "Singular name for ONE row (\"+ add backend\", default label \"backend 1\"); derived from the id when omitted." },
+                "min": { "type": "integer", "description": "Minimum rows, default 0." },
+                "max": { "type": "integer", "description": "Maximum rows, default and hard cap 16." },
+                "fields": { "type": "array", "items": { "$ref": "#/components/schemas/TemplateField" } }
+              },
+              "required": ["id", "label", "item", "max", "fields"]
+            }
           }
         },
         "required": ["name", "description"]
       },
       "Knobs": {
         "type": "object",
-        "description": "Initial values for a config created from a catalog entry, keyed by field name (plus \"backends\": an array of per-row objects when the template has a repeat group); they seed the fresh default preset, which owns ALL of the config's values. Values: string for slug/url/string/choice/secret, boolean for toggle, array of strings for multi. Omitted fields take their schema default; a non-secret field with neither value nor default is a 400 naming the field, as is an unknown field.",
+        "description": "Initial values for a config created from a catalog entry, keyed by field name (plus one array of per-row objects per declared group, keyed by the group's id); they seed the fresh default preset, which owns ALL of the config's values. Values: string for slug/url/string/choice/secret, boolean for toggle, array of strings for multi. Omitted fields take their schema default; a non-secret field with neither value nor default is a 400 naming the field, as is an unknown field.",
         "additionalProperties": true
       },
       "Ok": {
@@ -1129,7 +1135,7 @@
                 "properties": {
                   "values": {
                     "type": "object",
-                    "description": "The preset's whole value bag. Tier 2: env strings keyed by variable name. Tier 3: schema values keyed by field name (plus \"backends\": an array of per-row objects); string for slug/url/string/choice/secret, boolean for toggle, array of strings for multi. Omitted fields take their schema default.",
+                    "description": "The preset's whole value bag. Tier 2: env strings keyed by variable name. Tier 3: schema values keyed by field name (plus one array of per-row objects per declared group, keyed by the group's id, each row carrying \"_label\"); string for slug/url/string/choice/secret, boolean for toggle, array of strings for multi. Omitted fields take their schema default.",
                     "additionalProperties": true
                   }
                 },

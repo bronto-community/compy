@@ -499,6 +499,16 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 .tf-browhead { display: flex; align-items: center; gap: 10px; }
 .tf-browhead .x { font-size: 11px; color: var(--dim); }
 .tf-browhead .x:hover { color: var(--err); }
+/* The row's name IS the row's identity (exporter id, secret env var), so it
+   is edited in place at the top of the card — the preset-tab idiom. */
+.tf-browhead .rowname {
+  font-family: inherit; font-size: 11.5px; letter-spacing: .04em;
+  color: var(--muted); background: transparent;
+  border: none; border-bottom: 1px dashed var(--border3);
+  padding: 1px 0; outline: none; min-width: 60px;
+}
+.tf-browhead .rowname:hover { color: var(--text); }
+.tf-browhead .rowname:focus { color: var(--text); border-bottom-color: var(--accent); }
 .tf-more, .tf-add { width: fit-content; font-size: 11.5px; }
 .tf-add { color: var(--muted); }
 .tf-add:hover { color: var(--accent); }
@@ -935,6 +945,7 @@ dialog.ask .row { display: flex; justify-content: flex-end; gap: 10px; }
 .preset-sel:focus-visible, .play:focus-visible, .addp:focus-visible,
 .pick:focus-visible, .mini:focus-visible, .menu-add:focus-visible,
 .ptab input:focus-visible, .ptab-add:focus-visible,
+.tf-browhead .rowname:focus-visible,
 .reveal:focus-visible,
 .lvl:focus-visible, .tail:focus-visible, .tile .link:focus-visible,
 .seg button:focus-visible {

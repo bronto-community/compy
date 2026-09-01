@@ -1,0 +1,56 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}  # compy's local gRPC port
+      http:
+        endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  batch:
+    send_batch_size: 1024
+    send_batch_max_size: 1024
+    timeout: 200ms
+
+exporters:
+  otlphttp/eu-prod:
+    endpoint: https://api.example.com
+    headers:
+      Authorization: Bearer ${env:EU_PROD_API_KEY:-}  # EU prod auth value
+    sending_queue:
+      storage: file_storage  # survives restarts and offline stretches
+    retry_on_failure:
+      max_elapsed_time: 0  # retry forever; the queue holds telemetry until the backend answers
+  otlphttp/vendor-two:
+    endpoint: https://otlp.example.net
+    headers:
+      x-example-key: ${env:VENDOR_TWO_API_KEY:-}  # vendor two auth value
+    sending_queue:
+      storage: file_storage  # survives restarts and offline stretches
+    retry_on_failure:
+      max_elapsed_time: 0  # retry forever; the queue holds telemetry until the backend answers
+
+extensions:
+  file_storage:
+    directory: "/home/u/compy/storage"
+    create_directory: true
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/eu-prod, otlphttp/vendor-two]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/eu-prod, otlphttp/vendor-two]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/eu-prod, otlphttp/vendor-two]

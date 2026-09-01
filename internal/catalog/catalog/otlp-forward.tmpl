@@ -1,31 +1,31 @@
 ---
 name: otlp-forward
-description: Forward OTLP to one or more backends over HTTP.
+description: Receive OTLP locally and forward it to one or more backends over HTTP.
 sections:
   - id: pipeline
     label: Pipeline options
     collapsed: true
-backends:
-  min: 1
-  max: 8
-  fields:
-    - name: endpoint
-      type: url
-      default: http://127.0.0.1:4318
-      description: Base OTLP/HTTP URL, e.g. https://api.example.com. The collector appends /v1/traces etc.
-    - name: auth_header
-      type: string
-      optional: true
-      description: Header that carries the auth value, e.g. x-example-key or Authorization; leave empty for no auth
-    - name: api_key
-      type: secret
-      label: Auth value
-      description: Stored in the preset, referenced as ${env:<NAME>_API_KEY}
-    - name: name
-      type: slug
-      default: local
-      advanced: true
-      description: Short name for this backend; the exporter and its auth variable derive from it
+groups:
+  - id: backends
+    label: Backends
+    item: backend
+    min: 1
+    max: 8
+    fields:
+      - name: endpoint
+        type: url
+        default: http://127.0.0.1:4318
+        description: Base OTLP/HTTP URL, e.g. https://api.example.com. The collector appends /v1/traces etc.
+      - name: api_key
+        type: secret
+        label: Auth value
+        optional: true
+        description: Stored in this preset, never in the config. Sent as a bearer token unless you change the header below.
+      - name: auth_header
+        type: string
+        default: Authorization
+        advanced: true
+        description: Header that carries the auth value. Authorization sends "Bearer <value>"; any other header sends the value as-is. Empty sends no auth header at all.
 fields:
   - name: memory_limiter
     type: toggle
@@ -43,6 +43,11 @@ fields:
     section: pipeline
     description: Store telemetry on disk and retry until the backend accepts it
 ---
+{{- $procs := list -}}
+{{- if .memory_limiter}}{{$procs = append $procs "memory_limiter"}}{{end -}}
+{{- if .batch}}{{$procs = append $procs "batch"}}{{end -}}
+{{- $exp := list -}}
+{{- range .backends}}{{$exp = append $exp (printf "otlphttp/%s" ._slug)}}{{end -}}
 receivers:
   otlp:
     protocols:
@@ -50,44 +55,62 @@ receivers:
         endpoint: 127.0.0.1:${env:COMPY_GRPC_PORT:-14317}  # compy's local gRPC port
       http:
         endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
-
-{{if .AnyProcs}}processors:
-{{if .MemoryLimiter}}  memory_limiter:
+{{if $procs}}
+processors:
+{{- if .memory_limiter}}
+  memory_limiter:
     check_interval: 1s
     limit_percentage: 80
     spike_limit_percentage: 20
-{{end}}{{if .Batch}}  batch:
+{{- end}}
+{{- if .batch}}
+  batch:
     send_batch_size: 1024
     send_batch_max_size: 1024
     timeout: 200ms
+{{- end}}
 {{end}}
-{{end}}exporters:
-{{range .Backends}}  otlphttp/{{.Name}}:
-    endpoint: {{.Endpoint}}
-{{if .AuthHeader}}    headers:
-      {{.AuthHeader}}: ${env:{{.EnvVar}}}  # {{.Name}} auth value
-{{end}}{{if $.OfflineQueue}}    sending_queue:
+exporters:
+{{- range .backends}}
+  otlphttp/{{._slug}}:
+    endpoint: {{.endpoint}}
+{{- if .auth_header}}
+    headers:
+      {{.auth_header}}: {{if eq .auth_header "Authorization"}}Bearer {{end}}${env:{{._env.api_key}}:-}  # {{._label}} auth value
+{{- end}}
+{{- if $.offline_queue}}
+    sending_queue:
       storage: file_storage  # survives restarts and offline stretches
     retry_on_failure:
       max_elapsed_time: 0  # retry forever; the queue holds telemetry until the backend answers
-{{end}}{{end}}
-{{if .OfflineQueue}}extensions:
+{{- end}}
+{{- end}}
+{{if .offline_queue}}
+extensions:
   file_storage:
     directory: "{{.StorageDir}}"
     create_directory: true
-
-{{end}}service:
-{{if .OfflineQueue}}  extensions: [file_storage]
-{{end}}  pipelines:
+{{end}}
+service:
+{{- if .offline_queue}}
+  extensions: [file_storage]
+{{- end}}
+  pipelines:
     traces:
       receivers: [otlp]
-{{if .TracesProcs}}      processors: [{{.TracesProcs}}]
-{{end}}      exporters: [{{.TracesExps}}]
-{{range .MetricsGroups}}    {{.Pipeline}}:
+{{- if $procs}}
+      processors: [{{join $procs ", "}}]
+{{- end}}
+      exporters: [{{join $exp ", "}}]
+    metrics:
       receivers: [otlp]
-{{if .Procs}}      processors: [{{.Procs}}]
-{{end}}      exporters: [{{.Exps}}]
-{{end}}    logs:
+{{- if $procs}}
+      processors: [{{join $procs ", "}}]
+{{- end}}
+      exporters: [{{join $exp ", "}}]
+    logs:
       receivers: [otlp]
-{{if .LogsProcs}}      processors: [{{.LogsProcs}}]
-{{end}}      exporters: [{{.LogsExps}}]
+{{- if $procs}}
+      processors: [{{join $procs ", "}}]
+{{- end}}
+      exporters: [{{join $exp ", "}}]

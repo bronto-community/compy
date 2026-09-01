@@ -66,15 +66,15 @@ or `compy run -- <cmd>` for a single command, or `compy env set-os` for
 OS-level variables that GUI apps see too. Run your app and its telemetry
 shows up in the collector log.
 
-To send somewhere real, switch configurations in the window. Four ship
+To send somewhere real, switch configurations in the window. Three ship
 with compy:
 
 - `debug` — print everything to the collector log
-- `otlp-basic` — pass everything through to one OTLP endpoint, no auth
-- `otlp-forward` — fan out to one or more OTLP/HTTP backends with auth
-  headers, batching, and an optional on-disk retry queue
-- `bronto` — send to [Bronto](https://bronto.io): an API key and a region
-  choice, with batching and the offline queue on by default
+- `otlp-basic` — pass everything through to one OTLP endpoint, with a
+  bearer token when your backend wants one
+- `otlp-forward` — fan out to as many OTLP/HTTP backends as you like, each
+  with its own endpoint and auth, plus batching and an optional on-disk
+  retry queue
 
 The menu bar and the window are the main interface; everything they do
 also exists as CLI commands for scripting and the terminal-inclined —
@@ -116,10 +116,11 @@ compy restores the one that was running.
 
 **Templated configurations.** A configuration whose text opens with a
 schema block is templated: the UI renders a form (dropdowns, toggles,
-secrets, repeatable backend groups) and compy renders the collector YAML
-from the template and the selected preset. `debug`, `otlp-forward`, and
-`bronto` ship this way; the plain-YAML and env-var tiers stay available
-for configs you write yourself.
+secrets, and repeat groups the template itself names — backends,
+receivers, whatever your config is a list of) and compy renders the
+collector YAML from the template and the selected preset. `debug` and
+`otlp-forward` ship this way; the plain-YAML and env-var tiers stay
+available for configs you write yourself.
 
 **Shipped, remote, and your own configs.** `compy config create
 --from-url` pulls a configuration from a URL and can later `sync` to its
