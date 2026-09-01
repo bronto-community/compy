@@ -69,7 +69,7 @@ To send somewhere real, switch configurations in the window. Three ship
 with compy:
 
 - `debug` — print everything to the collector log
-- `otlp-basic` — pass everything through to one OTLP endpoint, with a
+- `otlp-basic` — pass everything through to one OTLP/HTTP endpoint, with a
   bearer token when your backend wants one
 - `otlp-forward` — fan out to as many OTLP/HTTP backends as you like, each
   with its own endpoint and auth, plus batching and an optional on-disk

@@ -418,7 +418,7 @@ func TestGetParsesVars(t *testing.T) {
 	want := map[string]string{
 		"COMPY_GRPC_PORT": "compy's local gRPC port",
 		"COMPY_HTTP_PORT": "compy's local HTTP port",
-		"OTLP_ENDPOINT":   "where to send (host:port)",
+		"OTLP_ENDPOINT":   "where to send (base URL; the collector appends /v1/traces etc.)",
 	}
 	for name, desc := range want {
 		got, ok := byName[name]
