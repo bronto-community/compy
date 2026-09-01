@@ -28,18 +28,17 @@ handled best-effort through
 ## Install
 
 ```sh
-brew trust --tap bronto-community/tap
 brew install bronto-community/tap/compy
 compy tray install
 ```
 
-Homebrew requires explicit trust for third-party taps and silently ignores
-casks from untrusted ones, hence the first line.
+No `brew tap` and no `brew trust` step: installing a fully qualified name taps
+the repository and trusts that one cask on its own.
 
 The install brings the compy binary, its bundled collector distribution
 (`otelcol-compy`) and the `compy.app` identity for the native window. The
 menu bar item — compy's main interface — is a login item, so adding it is
-the third line rather than something `brew install` does for you. Take it
+that second command rather than something `brew install` does for you. Take it
 out again with "Remove from Menu Bar" in its menu, or `compy tray
 uninstall`.
 
