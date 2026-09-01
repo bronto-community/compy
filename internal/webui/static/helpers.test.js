@@ -320,6 +320,29 @@ test("seedKnobs carries free-var strings through the draft", () => {
   assert.equal(k2.ASDF, "v");
 });
 
+/* Row identity: the group's rows are tabs with the preset gestures, so
+   adding and duplicating have to hand back a label nothing else is using —
+   two rows that slug alike would share one exporter and one secret env
+   var. */
+test("rowLabel, seedGroupRow and freeRowLabel keep row names unique", () => {
+  const g = TPL.groups[0];
+  assert.equal(H.rowLabel(g, { _label: "EU prod" }, 0), "EU prod");
+  assert.equal(H.rowLabel(g, { _label: "   " }, 2), "backend 3", "blank falls back to the position");
+  assert.equal(H.rowLabel(g, null, 0), "backend 1");
+
+  const rows = [{ _label: "backend 1" }, { _label: "backend 2" }];
+  assert.equal(H.seedGroupRow(g, rows)._label, "backend 3");
+  // A hand-named row can occupy the next positional slot; the seed skips it.
+  rows.push({ _label: "backend 3" });
+  assert.equal(H.seedGroupRow(g, rows)._label, "backend 4");
+  assert.equal(H.seedGroupRow(g, [])._label, "backend 1");
+
+  // Duplicate: the source label if free, else the first free suffix.
+  assert.equal(H.freeRowLabel(g, rows, "EU prod"), "EU prod");
+  assert.equal(H.freeRowLabel(g, rows, "backend 1"), "backend 1 2");
+  assert.equal(H.freeRowLabel(g, rows.concat([{ _label: "backend 1 2" }]), "backend 1"), "backend 1 3");
+});
+
 test("prettyMissing reads paths out loud, and leaves env names alone", () => {
   const bag = { backends: [{ _label: "honeycomb" }, { _label: "" }] };
   assert.deepEqual(H.prettyMissing(bag, ["backends[0].api_key"], TPL),

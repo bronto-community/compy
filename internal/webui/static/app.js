@@ -1650,6 +1650,7 @@ function buildEditorForm(info) {
     errs: {},
     secOpen: prev ? prev.secOpen : {}, // collapsed sections opened by hand
     rowOpen: prev ? prev.rowOpen : {}, // per-group-row "more options"
+    rowSel: prev ? prev.rowSel : {},   // the selected row tab, per group
     onChange: edSaveSync,              // a knob keystroke flips the save button in place
   };
 }
@@ -1747,73 +1748,118 @@ function tfGrid(f, fields, row, prefix) {
 }
 
 /* One repeat group (Amendment 8: the schema names them, there is nothing
-   built in about "backends"): one card per row, its LABEL editable in the
-   head the way a preset tab is — that label is the row's identity, so the
-   exporter id and the secret's env var name follow a rename. Primary fields
-   up front, advanced ones behind a per-row disclosure; +/✕ respect the
-   schema bounds. */
+   built in about "backends"). Its rows are TABS, the preset strip's
+   look and gestures reused wholesale — the selected tab renames in place,
+   the copy icon duplicates, the trash deletes, the + adds — because a row
+   is exactly what a preset is here: a named thing you switch between. That
+   label IS the row's identity, so the exporter id and the secret's env var
+   name follow a rename. The panel under the strip holds the selected row's
+   fields, advanced ones behind a disclosure. */
 function tfGroup(f, g) {
   const rows = f.knobs[g.id] || (f.knobs[g.id] = []);
+  const min = g.min || 0;
   const primary = (g.fields || []).filter((x) => !x.advanced);
   const adv = (g.fields || []).filter((x) => x.advanced);
-  const wrap = el("div", { class: "tf-rows" });
-  const min = g.min || 0;
+  // Selection is per group and always in range: deleting the last row, or
+  // arriving at a shorter bag, moves it rather than blanking the panel.
+  let sel = f.rowSel[g.id] || 0;
+  if (sel >= rows.length) sel = Math.max(rows.length - 1, 0);
+  f.rowSel[g.id] = sel;
+  const touched = () => { if (f.onChange) f.onChange(); };
+  // A row whose fields carry errors says so on its tab — the panel shows
+  // one row at a time, and a hidden failure is a failure you can't fix.
+  const rowBad = (i) => Object.keys(f.errs).some((k) => k.indexOf(g.id + "[" + i + "].") === 0);
+
+  const tabs = el("div", { class: "ptabs gtabs" });
   rows.forEach((row, i) => {
-    const key = g.id + "[" + i + "]";
-    const open = !!f.rowOpen[key];
-    const canDel = rows.length > min;
+    const on = i === sel;
     const label = rowLabel(g, row, i);
-    const labelErr = f.errs[key + "." + LABEL_KEY];
-    wrap.appendChild(el("div", { class: "tf-brow" }, [
-      el("div", { class: "tf-browhead" }, [
-        el("input", {
-          class: "rowname",
-          title: "rename this " + g.item,
-          attrs: {
-            spellcheck: "false", size: Math.max(label.length, 8),
-            "data-fk": "tf:" + key + "." + LABEL_KEY,
-            "aria-label": "rename this " + g.item,
+    tabs.appendChild(el("span", { class: "ptab" + (on ? " on" : "") + (rowBad(i) ? " bad" : "") }, [
+      on ? el("input", {
+        title: "rename this " + g.item,
+        attrs: {
+          spellcheck: "false", size: Math.max(label.length, 6),
+          "data-fk": "tf:" + g.id + "[" + i + "]." + LABEL_KEY,
+          "aria-label": "rename this " + g.item,
+        },
+        props: { value: label },
+        on: {
+          input: (e) => { row[LABEL_KEY] = e.target.value; touched(); },
+          change: () => render(), // the other tabs' titles and any collision follow
+        },
+      }) : el("button", {
+        class: "pick", text: label,
+        on: { click: () => { f.rowSel[g.id] = i; render(); } },
+      }),
+      on ? el("button", {
+        class: "mini", title: "duplicate this " + g.item,
+        on: {
+          click: () => {
+            const copy = JSON.parse(JSON.stringify(row));
+            copy[LABEL_KEY] = freeRowLabel(g, rows, label);
+            rows.splice(i + 1, 0, copy);
+            f.rowSel[g.id] = i + 1;
+            f.errs = {}; f.rowOpen = {};
+            touched(); render();
           },
-          props: { value: label },
-          on: {
-            input: (e) => {
-              row[LABEL_KEY] = e.target.value;
-              if (f.onChange) f.onChange();
-            },
-            change: () => render(), // the ✕/± titles and any collision follow
+        },
+      }, [icon("copy", 12)]) : null,
+      on && rows.length > min ? el("button", {
+        class: "mini del", title: "delete " + label,
+        on: {
+          click: () => {
+            rows.splice(i, 1);
+            f.rowSel[g.id] = Math.max(i - 1, 0);
+            f.errs = {}; f.rowOpen = {};
+            touched(); render();
           },
-        }),
-        labelErr ? span("field-err sans", labelErr) : null,
-        el("span", { class: "grow" }),
-        el("button", {
-          class: "act x", text: "✕",
-          title: canDel ? "remove this " + g.item : "this config needs at least " + min + " " + (min === 1 ? g.item : g.label.toLowerCase()),
-          attrs: canDel ? null : { disabled: "" },
-          on: { click: () => { rows.splice(i, 1); f.errs = {}; f.rowOpen = {}; if (f.onChange) f.onChange(); render(); } },
-        }),
-      ]),
-      tfGrid(f, primary, row, key + "."),
-      adv.length ? el("button", {
-        class: "act tf-more", text: open ? "fewer options ▾" : "more options ▸",
-        on: { click: () => { f.rowOpen[key] = !open; render(); } },
-      }) : null,
-      open ? tfGrid(f, adv, row, key + ".") : null,
+        },
+      }, [icon("trash", 12)]) : null,
     ]));
   });
   const canAdd = rows.length < g.max;
-  wrap.appendChild(el("button", {
-    class: "act tf-add", text: "+ add " + g.item,
-    title: canAdd ? "add another " + g.item : "at most " + g.max + " " + g.label.toLowerCase(),
+  tabs.appendChild(el("button", {
+    class: "ptab-add",
+    title: canAdd ? "add a " + g.item : "at most " + g.max + " " + g.label.toLowerCase(),
     attrs: canAdd ? null : { disabled: "" },
     on: {
       click: () => {
         rows.push(seedGroupRow(g, rows));
-        if (f.onChange) f.onChange();
-        render();
+        f.rowSel[g.id] = rows.length - 1;
+        touched(); render();
       },
     },
-  }));
-  return wrap;
+  }, [icon("plus", 13)]));
+
+  const row = rows[sel];
+  const key = g.id + "[" + sel + "]";
+  const open = !!f.rowOpen[key];
+  const labelErr = row ? f.errs[key + "." + LABEL_KEY] : null;
+  const panel = el("div", { class: "gpanel" }, row ? [
+    labelErr ? span("field-err sans", labelErr) : null,
+    tfGrid(f, primary, row, key + "."),
+    adv.length ? el("button", {
+      class: "act tf-more", text: open ? "fewer options ▾" : "more options ▸",
+      on: { click: () => { f.rowOpen[key] = !open; render(); } },
+    }) : null,
+    open ? tfGrid(f, adv, row, key + ".") : null,
+  ] : [el("div", { class: "why sans", text: "no " + g.label.toLowerCase() + " yet" })]);
+  return el("div", { class: "tf-group" }, [tabs, panel]);
+}
+
+/* A field 400 (or a client-side check) on a row the tabs are hiding is
+   invisible: bring the first offending row of each group forward with its
+   error. */
+function focusErrRows(f, errs) {
+  if (!f || !f.tpl) return;
+  const done = {};
+  for (const p of Object.keys(errs || {})) {
+    const m = /^([a-z][a-z0-9_]*)\[(\d+)\]\./.exec(p);
+    if (!m || done[m[1]]) continue;
+    if (!(f.tpl.groups || []).some((g) => g.id === m[1])) continue;
+    done[m[1]] = 1;
+    f.rowSel[m[1]] = parseInt(m[2], 10);
+  }
 }
 
 /* The form view itself — the tier-3 editor's primary view, above the source
@@ -2488,7 +2534,7 @@ async function saveT3(info, validate) {
   if (!paneDirty && !formDirty) return;
   if (formDirty && validate) {
     const errs = knobProblems(S.eform.tpl, S.eform.knobs);
-    if (Object.keys(errs).length) { S.eform.errs = errs; render(); return; }
+    if (Object.keys(errs).length) { S.eform.errs = errs; focusErrRows(S.eform, errs); render(); return; }
   }
   S.saving = true;
   resetValPanel();
@@ -2541,6 +2587,7 @@ async function saveT3(info, validate) {
       const fe = e.status === 400 ? parseFieldErr(e.message || "") : null;
       if (fe && S.eform && S.eform.tpl && knownKnobPath(S.eform.tpl, fe.path)) {
         S.eform.errs[fe.path] = fe.msg; // field-adjacent, same key space as the client checks
+        focusErrRows(S.eform, S.eform.errs); // the offending row's tab comes forward
         if (sourceSaved) note("the source was saved — fix the marked value, then save again", 5200);
       } else {
         S.valErr = e.message || String(e);

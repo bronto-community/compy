@@ -491,27 +491,20 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 .tf-sechead .caret.closed svg { transform: rotate(-90deg); }
 .tf-sechead .why { font-size: 11.5px; color: var(--dim); text-transform: none; letter-spacing: 0; }
 .tf-sechead:not([disabled]):hover .colhead { color: var(--muted); }
-.tf-rows { display: flex; flex-direction: column; gap: 8px; }
-.tf-brow {
-  border: 1px solid var(--border2); border-radius: 5px; padding: 8px 10px;
-  display: flex; flex-direction: column; gap: 7px; background: var(--raise);
+/* A repeat group's rows ARE tabs — the preset strip below, reused whole
+   (same rename-in-place, duplicate, delete, add), because a row is the same
+   kind of thing: a named item you switch between. The only difference is
+   geometry: nested inside the form body, so it drops .ptabs' card-edge
+   negative margins and opens onto its own panel instead of the card. */
+.tf-group { display: flex; flex-direction: column; }
+.tf-group .ptabs { margin: 0; padding: 4px 6px 0; }
+.gpanel {
+  border: 1px solid var(--border2); border-top: 0; border-radius: 0 0 5px 5px;
+  padding: 10px; background: var(--panel);
+  display: flex; flex-direction: column; gap: 7px;
 }
-.tf-browhead { display: flex; align-items: center; gap: 10px; }
-.tf-browhead .x { font-size: 11px; color: var(--dim); }
-.tf-browhead .x:hover { color: var(--err); }
-/* The row's name IS the row's identity (exporter id, secret env var), so it
-   is edited in place at the top of the card — the preset-tab idiom. */
-.tf-browhead .rowname {
-  font-family: inherit; font-size: 11.5px; letter-spacing: .04em;
-  color: var(--muted); background: transparent;
-  border: none; border-bottom: 1px dashed var(--border3);
-  padding: 1px 0; outline: none; min-width: 60px;
-}
-.tf-browhead .rowname:hover { color: var(--text); }
-.tf-browhead .rowname:focus { color: var(--text); border-bottom-color: var(--accent); }
-.tf-more, .tf-add { width: fit-content; font-size: 11.5px; }
-.tf-add { color: var(--muted); }
-.tf-add:hover { color: var(--accent); }
+.tf-more { width: fit-content; font-size: 11.5px; color: var(--muted); }
+.tf-more:hover { color: var(--accent); }
 
 /* ── editor ───────────────────────────────────────────────────────── */
 .ed-head {
@@ -575,6 +568,9 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
   padding: 1px 0; outline: none;
 }
 .ptab input:focus { border-bottom-color: var(--accent); }
+/* A row tab whose fields carry errors: the panel shows one row at a time,
+   so a hidden failure has to be visible on the strip. */
+.ptab.bad, .ptab.bad:hover { color: var(--err); }
 .ptab .mini { display: flex; cursor: pointer; color: var(--dim); background: none; border: 0; padding: 0 0 0 2px; }
 .ptab .mini:hover { color: var(--text); }
 .ptab .mini.del:hover { color: var(--err); }
@@ -945,7 +941,6 @@ dialog.ask .row { display: flex; justify-content: flex-end; gap: 10px; }
 .preset-sel:focus-visible, .play:focus-visible, .addp:focus-visible,
 .pick:focus-visible, .mini:focus-visible, .menu-add:focus-visible,
 .ptab input:focus-visible, .ptab-add:focus-visible,
-.tf-browhead .rowname:focus-visible,
 .reveal:focus-visible,
 .lvl:focus-visible, .tail:focus-visible, .tile .link:focus-visible,
 .seg button:focus-visible {

@@ -689,10 +689,16 @@ feature of the SCHEMA.
   to 16, the engine's per-group row cap. Groups themselves are unlimited.
   There is no back-compatibility shim: a source still saying `backends:`
   fails to parse, loudly, like any other unknown schema key.
-- **Row identity is a LABEL, not a field.** Every row carries the reserved
-  key `_label` (`catalog.LabelKey`), edited in place at the top of the row
-  card exactly the way a preset tab is renamed. Schema fields may not use
-  `_`-prefixed names, so nothing can collide with it. An absent label
+- **Row identity is a LABEL, not a field**, and the rows ARE tabs. Every row
+  carries the reserved key `_label` (`catalog.LabelKey`) and the group
+  renders as the preset strip reused wholesale — same look, same gestures:
+  the selected tab renames in place, the copy icon duplicates (with the
+  first free "<label> 2"), the trash deletes down to `min`, the `+` adds,
+  and the selected row's fields sit in a panel under the strip. A row is
+  the same kind of thing a preset is: a named item you switch between.
+  Schema fields may not use `_`-prefixed names, so nothing can collide with
+  the key. A tab whose fields carry errors is marked, and a field 400 on a
+  hidden row brings that row's tab forward. An absent label
   defaults by position ("backend 1"). Its SLUG is the row's identity in the
   rendered yaml — the exporter id and the secret env var names
   (`EU_PROD_API_KEY` for label "EU prod", field `api_key`) — so a rename

@@ -125,6 +125,15 @@ function seedGroupRow(g, rows) {
     if (!taken.has(label)) { row[LABEL_KEY] = label; return row; }
   }
 }
+/* The duplicate gesture's label: `from` if nothing is using it, else the
+   first free "<from> 2", "<from> 3", … — freePresetName's rule, applied to
+   labels rather than preset names. Two rows may not slug to the same
+   thing, so a duplicate has to arrive already renamed. */
+function freeRowLabel(g, rows, from) {
+  const taken = new Set((rows || []).map((r, i) => rowLabel(g, r, i)));
+  if (!taken.has(from)) return from;
+  for (let n = 2; ; n++) if (!taken.has(from + " " + n)) return from + " " + n;
+}
 function seedKnobs(tpl, from, withSecrets) {
   const knobs = seedRow(tpl.fields, from, withSecrets);
   for (const g of tpl.groups || []) {
@@ -528,7 +537,7 @@ if (typeof module !== "undefined") {
     slug, originOf, hostOf, missingRequired, nameList, freePresetName,
     compyVersionLine,
     fieldDefault, seedRow, seedKnobs, missingRequiredT3, prettyMissing,
-    LABEL_KEY, rowLabel, seedGroupRow,
+    LABEL_KEY, rowLabel, seedGroupRow, freeRowLabel,
     fieldProblem, knobProblems, parseFieldErr,
     knownKnobPath, isSourceText, placeholderKnobs,
     errLineOf, excerptAround,
