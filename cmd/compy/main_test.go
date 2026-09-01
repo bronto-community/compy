@@ -153,14 +153,14 @@ func TestRunPresetsSetAndVars(t *testing.T) {
 	if err := run([]string{"status"}); err != nil { // materialize the state dir
 		t.Fatal(err)
 	}
-	if err := run([]string{"presets", "set", "otlp-basic", "prod", "OTLP_ENDPOINT=10.0.0.5:4317"}); err != nil {
+	if err := run([]string{"presets", "set", "otlp-basic", "prod", "OTLP_ENDPOINT=http://10.0.0.5:4318"}); err != nil {
 		t.Fatalf("presets set: %v", err)
 	}
 	out, err := captureStdout(t, func() error { return run([]string{"vars", "otlp-basic"}) })
 	if err != nil {
 		t.Fatalf("vars: %v", err)
 	}
-	if !strings.Contains(out, "OTLP_ENDPOINT") || !strings.Contains(out, "10.0.0.5:4317") || !strings.Contains(out, "prod") {
+	if !strings.Contains(out, "OTLP_ENDPOINT") || !strings.Contains(out, "http://10.0.0.5:4318") || !strings.Contains(out, "prod") {
 		t.Errorf("vars output missing the set value:\n%s", out)
 	}
 	out, err = captureStdout(t, func() error { return run([]string{"config", "list"}) })
