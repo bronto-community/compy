@@ -31,8 +31,8 @@ type API struct {
 	SetOSEnv func(on bool) error
 
 	GetSettings func() (map[string]any, error)
-	PutSettings func(grpcPort, httpPort, metricsPort *int, protocol *string) error // partial: nil = unchanged
-	AdoptPorts  func(grpcPort, httpPort *int) error                                // both nil = classify the running config's detected ports; explicit values resolve ambiguity
+	PutSettings func(grpcPort, httpPort, metricsPort *int, protocol *string, tracingOn *bool, tracingEndpoint, tracingHeaders *string) error // partial: nil = unchanged
+	AdoptPorts  func(grpcPort, httpPort *int) error                                                                                          // both nil = classify the running config's detected ports; explicit values resolve ambiguity
 
 	Health       func() (any, error) // collector's own metrics; {"available": false} when stopped
 	Apply        func() error
@@ -461,12 +461,19 @@ func handlePutSettings(api API) http.HandlerFunc {
 			HTTPPort    *int    `json:"http_port"`
 			MetricsPort *int    `json:"metrics_port"`
 			Protocol    *string `json:"protocol"`
+			Tracing     *bool   `json:"tracing"`
+			// An empty string is a real value here — it clears a custom
+			// endpoint back to compy's own receiver — so these stay
+			// pointers rather than being tested for emptiness.
+			TracingEndpoint *string `json:"tracing_endpoint"`
+			TracingHeaders  *string `json:"tracing_headers"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeBodyErr(w, err)
 			return
 		}
-		if err := api.PutSettings(body.GRPCPort, body.HTTPPort, body.MetricsPort, body.Protocol); err != nil {
+		if err := api.PutSettings(body.GRPCPort, body.HTTPPort, body.MetricsPort, body.Protocol,
+			body.Tracing, body.TracingEndpoint, body.TracingHeaders); err != nil {
 			writeClosureErr(w, err)
 			return
 		}

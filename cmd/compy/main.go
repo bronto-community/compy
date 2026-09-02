@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -27,6 +28,7 @@ import (
 	"github.com/bronto-community/compy/internal/envvars"
 	"github.com/bronto-community/compy/internal/launchd"
 	"github.com/bronto-community/compy/internal/state"
+	"github.com/bronto-community/compy/internal/tracing"
 	"github.com/bronto-community/compy/internal/tray"
 	"github.com/bronto-community/compy/internal/version"
 	"github.com/bronto-community/compy/internal/webui"
@@ -76,10 +78,48 @@ const usage = `compy — local OpenTelemetry Collector manager
 `
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	// Compy's own tracing, when the user has turned it on. Set up around
+	// the whole command so a CLI invocation's spans are flushed before the
+	// process exits — the flush is bounded (tracing.shutdownTimeout) and
+	// failures are silent: telemetry about compy must never change what
+	// compy does or how long it takes.
+	stop := startTracing()
+	err := run(os.Args[1:])
+	stop()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "compy: "+errorText(err))
 		os.Exit(1)
 	}
+}
+
+// startTracing installs the tracer for this process and returns its flush.
+// Every failure — unreadable settings, a bad endpoint — leaves tracing off
+// and says nothing: this is opt-in observability, not a feature the user is
+// waiting on. `compy settings` reports the configuration itself, which is
+// where a mistake belongs.
+func startTracing() func() {
+	s, err := state.LoadSettings()
+	if err != nil || !s.Tracing {
+		return func() {}
+	}
+	shutdown, err := tracing.Setup(context.Background(), s, traceSurface())
+	if err != nil {
+		return func() {}
+	}
+	return func() { _ = shutdown(context.Background()) }
+}
+
+// traceSurface names which compy this process is, so one trace stream can
+// be split by where an operation came from. The long-lived surfaces are
+// their own subcommand; everything else is somebody at a terminal.
+func traceSurface() string {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "ui", "window", "tray":
+			return os.Args[1]
+		}
+	}
+	return "cli"
 }
 
 // errorText renders a command's failure, appending the still-running
@@ -812,8 +852,15 @@ func cmdSettings(args []string) error {
 			if s.MetricsPort == 0 {
 				metrics = "0 (a free port, chosen at launch)"
 			}
-			fmt.Printf("grpc-port: %d\nhttp-port: %d\nmetrics-port: %s\nprotocol: %s\n",
-				s.GRPCPort, s.HTTPPort, metrics, s.EffectiveProtocol())
+			trace := "off"
+			if s.Tracing {
+				trace = "on → " + tracing.Endpoint(s)
+				if s.TracingEndpoint == "" {
+					trace += " (compy's own collector)"
+				}
+			}
+			fmt.Printf("grpc-port: %d\nhttp-port: %d\nmetrics-port: %s\nprotocol: %s\ntracing: %s\n",
+				s.GRPCPort, s.HTTPPort, metrics, s.EffectiveProtocol(), trace)
 			return nil
 		})
 	}
@@ -823,15 +870,21 @@ func cmdSettings(args []string) error {
 	fs := flag.NewFlagSet("settings set", flag.ContinueOnError)
 	var grpcPort, httpPort, metricsPort int
 	var protocol string
+	var tracing0 bool
+	var tracingEndpoint, tracingHeaders string
 	fs.IntVar(&grpcPort, "grpc-port", 0, "gRPC port")
 	fs.IntVar(&httpPort, "http-port", 0, "HTTP port")
 	fs.IntVar(&metricsPort, "metrics-port", 0, "the collector's own telemetry port (0 = pick a free one at launch)")
 	fs.StringVar(&protocol, "protocol", "", "advertised OTLP protocol: grpc, http/protobuf, or http/json")
+	fs.BoolVar(&tracing0, "tracing", false, "compy's own OpenTelemetry tracing")
+	fs.StringVar(&tracingEndpoint, "tracing-endpoint", "", "where compy's traces go; empty = compy's own collector")
+	fs.StringVar(&tracingHeaders, "tracing-headers", "", `headers for the tracing endpoint, "Name: value" per line`)
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	var grpcP, httpP, metricsP *int
 	var protoP *string
+	var tr app.Tracing
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "grpc-port":
@@ -842,9 +895,15 @@ func cmdSettings(args []string) error {
 			metricsP = &metricsPort
 		case "protocol":
 			protoP = &protocol
+		case "tracing":
+			tr.On = &tracing0
+		case "tracing-endpoint":
+			tr.Endpoint = &tracingEndpoint
+		case "tracing-headers":
+			tr.Headers = &tracingHeaders
 		}
 	})
-	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, metricsP, protoP) })
+	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, metricsP, protoP, &tr) })
 }
 
 // cmdFactoryReset wipes the state directory and starts over. The CLI has no

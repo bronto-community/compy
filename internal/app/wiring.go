@@ -5,6 +5,7 @@ import (
 
 	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/tracing"
 	"github.com/bronto-community/compy/internal/webui"
 )
 
@@ -54,6 +55,15 @@ func (a *App) settingsMap() (map[string]any, error) {
 		"http_port":    s.HTTPPort,
 		"metrics_port": s.MetricsPort,
 		"protocol":     s.EffectiveProtocol(),
+		"tracing":      s.Tracing,
+		// The endpoint is reported RESOLVED — an unset one is compy's own
+		// receiver, and a settings screen showing an empty field would be
+		// lying about where the spans go. tracing_endpoint_set says whether
+		// the user chose it, so the UI can show a placeholder rather than
+		// treating the default as their input.
+		"tracing_endpoint":     tracing.Endpoint(s),
+		"tracing_endpoint_set": s.TracingEndpoint != "",
+		"tracing_headers":      s.TracingHeaders,
 	}, nil
 }
 
@@ -102,8 +112,11 @@ func (a *App) WebUIAPI() webui.API {
 		SetOSEnv: a.SetOSEnv,
 
 		GetSettings: a.settingsMap,
-		PutSettings: a.PutSettings,
-		AdoptPorts:  a.AdoptPorts,
+		PutSettings: func(grpcPort, httpPort, metricsPort *int, protocol *string, tracingOn *bool, tracingEndpoint, tracingHeaders *string) error {
+			return a.PutSettings(grpcPort, httpPort, metricsPort, protocol,
+				&Tracing{On: tracingOn, Endpoint: tracingEndpoint, Headers: tracingHeaders})
+		},
+		AdoptPorts: a.AdoptPorts,
 
 		Health:       a.Health,
 		Apply:        a.Apply,

@@ -796,6 +796,14 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 .srow .lbl .n { font-size: 11.5px; color: var(--dim); }
 .srow.clickable { cursor: pointer; }
 .srow.clickable:hover { background: var(--raise); }
+/* compy's own tracing: a switch row, then — only while it is on — the
+   endpoint and headers it needs. The rows sit inside the same card, so
+   they inherit .srow entirely and add only what a text field needs. */
+.trows { display: contents; }
+.srow.tall { align-items: flex-start; }
+.srow.tall .lbl { padding-top: 4px; }
+.srow .field.wide { width: 320px; max-width: 46%; }
+.srow textarea.field.wide { resize: vertical; min-height: 44px; line-height: 1.45; }
 /* The os-env switch row is a real <button> (keyboard-operable): reset the
    UA button box so it renders exactly like the div rows around it. */
 button.srow {

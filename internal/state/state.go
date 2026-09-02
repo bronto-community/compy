@@ -38,6 +38,23 @@ type Settings struct {
 	// the collector's receivers serve all of them regardless.
 	Protocol string `json:"protocol,omitempty"`
 
+	// Tracing turns on compy's OWN OpenTelemetry tracing — spans over
+	// compy's operations, exported as OTLP. Off by default and free when
+	// off: nothing installs a TracerProvider, so the global stays OTel's
+	// no-op.
+	Tracing bool `json:"tracing,omitempty"`
+
+	// TracingEndpoint is where those spans go. Empty — the default — means
+	// compy's own collector on 127.0.0.1:HTTPPort, so compy's telemetry
+	// travels the path a user's applications do and lands wherever the
+	// active configuration sends it. Set it to reach a backend directly.
+	TracingEndpoint string `json:"tracing_endpoint,omitempty"`
+
+	// TracingHeaders is "Name: value" lines sent with each OTLP export —
+	// how a hosted backend's API key reaches it. Free text rather than a
+	// map so the settings UI can be one field, parsed by tracing.
+	TracingHeaders string `json:"tracing_headers,omitempty"`
+
 	// Recent is the most recently activated configurations, newest first.
 	// Nothing in compy consumes it today (the menu bar went alphabetical);
 	// it stays maintained because /api/status exposes it — a committed part

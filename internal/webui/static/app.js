@@ -3051,6 +3051,7 @@ function screenSettings() {
       el("span", { class: "switch" + (osEnvOn ? " on" : "") }, [el("i")]),
     ]),
     envGuide(),
+    tracingRows(),
   ]));
 
   /* one quiet line under the app card: the running build, and — release
@@ -3312,6 +3313,95 @@ async function savePort(key, raw) {
     await loadCore(); // status carries the (still-running) old ports; refresh anyway
     flashSaved("gvar-" + key);
   } catch (e) { showError(e); try { await loadSettings(); } catch (e2) { /* keep stale */ } }
+  render();
+}
+
+/* compy's own tracing (settings' tracing/tracing_endpoint/tracing_headers).
+   Off by default. The destination defaults to compy's OWN collector, so the
+   spans travel the path a user's apps do and land wherever the active
+   configuration sends them — which is why the endpoint row is a placeholder
+   showing the resolved default rather than an empty box: nothing here is
+   unset, it just isn't overridden. The endpoint and headers only appear
+   once tracing is on; there is nothing to configure about an off switch. */
+function tracingRows() {
+  const st = S.settings || {};
+  const on = !!st.tracing;
+  const rows = [
+    el("button", {
+      class: "srow clickable", on: { click: () => setTracing(!on) },
+      attrs: { type: "button", role: "switch", "aria-checked": on ? "true" : "false" },
+    }, [
+      el("span", { class: "lbl" }, [
+        span("t", "trace compy itself"),
+        el("span", { class: "n sans", text: "compy emits OpenTelemetry spans over its own operations — activations, renders, collector validation. off by default" }),
+      ]),
+      el("span", { class: "grow" }),
+      savedMark("tracing"),
+      el("span", { class: "switch" + (on ? " on" : "") }, [el("i")]),
+    ]),
+  ];
+  if (!on) return el("div", { class: "trows" }, rows);
+
+  rows.push(el("div", { class: "srow" }, [
+    el("span", { class: "lbl" }, [
+      span("t", "traces go to"),
+      el("span", { class: "n sans", text: st.tracing_endpoint_set
+        ? "your endpoint. clear it to send through compy's own collector again"
+        : "compy's own collector, so they follow your active configuration wherever it sends. set an endpoint to bypass it" }),
+    ]),
+    el("span", { class: "grow" }),
+    savedMark("tracing_endpoint"),
+    el("input", {
+      class: "field wide",
+      attrs: {
+        spellcheck: "false", "data-fk": "tracing-endpoint", "aria-label": "tracing endpoint",
+        placeholder: st.tracing_endpoint || "",
+      },
+      props: { value: st.tracing_endpoint_set ? st.tracing_endpoint : "" },
+      on: { change: (e) => saveTracingField("tracing_endpoint", e.target.value) },
+    }),
+  ]));
+  rows.push(el("div", { class: "srow tall" }, [
+    el("span", { class: "lbl" }, [
+      span("t", "headers"),
+      el("span", { class: "n sans", text: "one \"Name: value\" per line — an API key for a hosted backend. stored in settings.json" }),
+    ]),
+    el("span", { class: "grow" }),
+    savedMark("tracing_headers"),
+    el("textarea", {
+      class: "field wide mono",
+      attrs: {
+        spellcheck: "false", rows: "2", "data-fk": "tracing-headers", "aria-label": "tracing headers",
+        placeholder: "Authorization: Bearer …",
+      },
+      props: { value: st.tracing_headers || "" },
+      on: { change: (e) => saveTracingField("tracing_headers", e.target.value) },
+    }),
+  ]));
+  return el("div", { class: "trows" }, rows);
+}
+async function setTracing(on) {
+  clearError();
+  try {
+    S.settings = await apiJSON("/api/settings", "PUT", { tracing: on });
+    flashSaved("tracing");
+    note(on
+      ? "saved. compy traces itself from the next command on — a running tray or window picks it up when it restarts"
+      : "saved. compy no longer traces itself", 4200);
+  } catch (e) { showError(e); }
+  render();
+}
+async function saveTracingField(key, value) {
+  clearError();
+  try {
+    const body = {};
+    body[key] = value;
+    S.settings = await apiJSON("/api/settings", "PUT", body); // the backend 400s a bad URL or header line
+    flashSaved(key);
+  } catch (e) {
+    showError(e);
+    try { await loadSettings(); } catch (e2) { /* keep what we have */ }
+  }
   render();
 }
 
