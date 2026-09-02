@@ -95,9 +95,9 @@ type keyEquiv struct {
 // Ctrl+F8 is macOS's own keyboard path into menu extras): s on Stop/Start,
 // r on Restart (disabled items never fire, so r is inert while stopped),
 // o on Open compy, ⌘Q on Quit. Plain-key equivalents override the menu's
-// type-to-select — accepted trade. Remove from Menu Bar gets no key on
-// purpose: it is the destructive one. The config-row digits are the other
-// half — digitEquivalents, equally static.
+// type-to-select — accepted trade. Nothing destructive is in this menu to
+// need a key withheld: removing the tray moved to settings. The config-row
+// digits are the other half — digitEquivalents, equally static.
 func keyEquivalents(toggle, restart, open, quit *systray.MenuItem) []keyEquiv {
 	return []keyEquiv{
 		{toggle, "s", false},

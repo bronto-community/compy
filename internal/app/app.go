@@ -117,6 +117,11 @@ type Status struct {
 	// — a reboot included — would fail; restarting through compy re-resolves
 	// the binary and heals it.
 	StaleBinary bool `json:"stale_binary,omitempty"`
+	// TrayInstalled is whether the menu-bar item has a login agent on disk —
+	// whether the icon comes back at the next login. A tray quit for this
+	// session still has one. The settings screen offers the removal only
+	// when there is something to remove.
+	TrayInstalled bool `json:"tray_installed"`
 	// MetricsPort is the CONFIGURED telemetry port (settings' metrics_port);
 	// 0 means compy asks the OS for a free one at launch. What the collector
 	// actually bound is reported by the health scrape's own port — which is
@@ -533,6 +538,25 @@ func (a *App) Stop() (err error) {
 // under the word the UI and CLI use for it.
 func (a *App) Start() error { return a.Apply() }
 
+// UninstallTray removes the menu-bar item's login agent: the icon goes
+// away and does not come back at the next login. Reversible — `compy tray
+// install`, or the tray's own installer — which is why it is a plain
+// confirm rather than FactoryReset's type-the-name gate.
+//
+// It used to be a menu item one pixel from Quit, which is how it got
+// clicked by accident (owner, 2026-09-02); the settings screen's danger
+// area is where it lives now.
+func (a *App) UninstallTray() (err error) {
+	_, end := op(context.Background(), "compy.tray.uninstall")
+	defer func() { end(err) }()
+	return launchd.UninstallAgent(launchd.TrayLabel)
+}
+
+// TrayInstalled reports whether the menu-bar item's login agent is on
+// disk, so the settings screen can offer its removal only when there is
+// something to remove.
+func (a *App) TrayInstalled() bool { return launchd.AgentInstalled(launchd.TrayLabel) }
+
 // FactoryReset returns compy to its as-installed state, as if it had never
 // run: the collector's LaunchAgent is uninstalled (tolerating "was not
 // running", like Stop), every entry inside the state directory is deleted —
@@ -664,11 +688,12 @@ func (a *App) Status() (Status, error) {
 		// poll — so that rare run shows one extra port under "actual". The
 		// verdict itself is unaffected: it turns on the OTLP ports alone.
 		// The primary port is whichever the advertised protocol's endpoint uses.
-		MetricsPort:  s.MetricsPort,
-		Conformance:  portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, s.MetricsPort, s.EffectiveProtocol() == "grpc"),
-		CompyVersion: version.String(),
-		CompyUpdate:  a.CompyUpdateAvailable(),
-		StaleBinary:  launchd.StaleBinary(),
+		MetricsPort:   s.MetricsPort,
+		TrayInstalled: a.TrayInstalled(),
+		Conformance:   portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, s.MetricsPort, s.EffectiveProtocol() == "grpc"),
+		CompyVersion:  version.String(),
+		CompyUpdate:   a.CompyUpdateAvailable(),
+		StaleBinary:   launchd.StaleBinary(),
 	}, nil
 }
 

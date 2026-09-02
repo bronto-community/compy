@@ -125,7 +125,10 @@ custom encoder without a new ruling.
   (500): it lives in this leaf package so `cfgstore` and `app` can mark
   errors without importing the HTTP layer back.
 - `tray` — macOS menu-bar icon (status, Open UI, Quit — deliberately no
-  per-backend toggles); non-darwin build is a no-op stub.
+  per-backend toggles, and deliberately no "Remove from Menu Bar": that sat
+  beside Quit, looked like it, and deleted a login item with no confirm, so
+  it moved to the settings screen's danger area, owner ruling 2026-09-02);
+  non-darwin build is a no-op stub.
 - `webui` — localhost-only web UI: JSON API plus an embedded (`go:embed`)
   single-page app; no internal dependencies (it recognises `state`'s
   bad-request marker structurally, by its `BadRequest() bool` method), the

@@ -104,7 +104,8 @@
             "type": "boolean",
             "description": "Whether tracing_endpoint is the user's choice rather than the default, so a UI can show the default as a placeholder instead of treating it as input."
           },
-          "tracing_headers": { "type": "string", "description": "Headers sent with each export, \"Name: value\" per line — how a hosted backend's API key reaches it." }
+          "tracing_headers": { "type": "string", "description": "Headers sent with each export, \"Name: value\" per line — how a hosted backend's API key reaches it." },
+          "tray_installed": { "type": "boolean", "description": "Whether the menu-bar item has a login agent on disk — i.e. whether the icon returns at the next login. A tray quit for this session still has one." }
         }
       },
       "SettingsUpdate": {
@@ -571,6 +572,21 @@
     "/api/factory-reset": {
       "post": {
         "summary": "Reset compy to factory settings: uninstall the collector job, wipe the state directory's contents, and re-create the shipped defaults (the tray's own agent is untouched)",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/tray/uninstall": {
+      "post": {
+        "summary": "Remove the menu-bar item's login agent — the icon goes away and does not return at the next login. Reversible with `compy tray install`. Deliberately not offered by the tray's own menu, where a mis-click cost no confirmation.",
         "responses": {
           "200": {
             "description": "OK",

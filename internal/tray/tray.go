@@ -4,8 +4,10 @@
 // CONFIGURATION list (flat rows of (config, preset) targets — a
 // multi-preset config is N rows titled "name · preset", no submenus; owner
 // ruling 2026-08-30 — alphabetical, "More…" overflow continuing it),
-// "Restart collector", and "Open compy" for everything else, plus "Remove
-// from Menu Bar" (the tray uninstall, run from the menu). The open menu
+// "Restart collector", "Open compy" for everything else, and Quit. Removing
+// the tray for good is deliberately NOT in this menu — it is a destructive,
+// login-item-deleting action and lives in the settings screen's danger area
+// (owner ruling, 2026-09-02, after a mis-click). The open menu
 // carries key equivalents (keys_darwin.go); there is deliberately no global
 // hotkey. Menu bar v5 — docs/design/handoff/README.md § "5. Menu bar" and
 // its amendments, ACCEPTANCE.md C5.
@@ -22,7 +24,6 @@ import (
 	"fyne.io/systray"
 
 	"github.com/bronto-community/compy/internal/app"
-	"github.com/bronto-community/compy/internal/launchd"
 )
 
 // refreshInterval is how often the status line and menu indicator icons are
@@ -141,12 +142,15 @@ func onReady(a *app.App) {
 	m.restart = systray.AddMenuItem("Restart collector", "")
 	systray.AddSeparator()
 	// Tail order (HIG): the primary action first after the separator, the
-	// two get-rid-of-it actions grouped at the end with the app-terminating
-	// Quit last — Apple's own convention for menu extras. Remove from Menu
-	// Bar is the honest removal (boots the login item, gone for good); Quit
-	// by contrast only ends this run and the icon returns at login.
+	// app-terminating Quit last — Apple's own convention for menu extras.
+	// Quit ends this run only; the icon returns at login.
+	//
+	// Removing the tray for good is NOT here. It sat one pixel from Quit,
+	// looked exactly like it, and undid a login item with no confirmation —
+	// one mis-click cost the user their menu bar (owner, 2026-09-02). It
+	// lives in the settings screen's danger area now, where destructive
+	// things belong and where there is room to say what it does.
 	openApp := systray.AddMenuItem("Open compy", "")
-	remove := systray.AddMenuItem("Remove from Menu Bar", "")
 	quit := systray.AddMenuItem("Quit", "")
 	applyKeyEquivalents(append(keyEquivalents(m.toggle, m.restart, openApp, quit), digitEquivalents(m.slots)...))
 
@@ -183,18 +187,6 @@ func onReady(a *app.App) {
 	go m.handleToggle()
 	go m.handleRestart()
 	go handleOpenApp(openApp)
-	go func() {
-		<-remove.ClickedCh
-		// Same machinery as `compy tray uninstall`. When the tray runs
-		// under its LaunchAgent the bootout inside UninstallAgent SIGTERMs
-		// this very process (which removes the icon — the desired end
-		// state); the plist is already gone by then (UninstallAgent removes
-		// it first), and the Quit below only matters for a foreground run.
-		if err := launchd.UninstallAgent(launchd.TrayLabel); err != nil {
-			fmt.Fprintln(os.Stderr, "compy tray: remove from menu bar:", err)
-		}
-		systray.Quit()
-	}()
 	go func() {
 		<-quit.ClickedCh
 		systray.Quit()
