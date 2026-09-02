@@ -10,7 +10,7 @@ import (
 // an exported-but-empty VAR is "set" to the collector and defeats the
 // yaml's own ${env:VAR:-default} fallback.
 func TestActivationEnvOmitsEmptyValues(t *testing.T) {
-	s := state.Settings{GRPCPort: 14317, HTTPPort: 14318, MetricsPort: 8888}
+	s := state.Settings{GRPCPort: 14317, HTTPPort: 14318, MetricsPort: 18888}
 	env := activationEnv(map[string]any{
 		"EMPTY":      "",
 		"WHITESPACE": "  \t ",
@@ -22,7 +22,7 @@ func TestActivationEnvOmitsEmptyValues(t *testing.T) {
 		"REAL":               "value",
 		"COMPY_GRPC_PORT":    "14317",
 		"COMPY_HTTP_PORT":    "14318",
-		"COMPY_METRICS_PORT": "8888",
+		"COMPY_METRICS_PORT": "18888",
 	}
 	if len(env) != len(want) {
 		t.Errorf("activationEnv = %v, want %v", env, want)

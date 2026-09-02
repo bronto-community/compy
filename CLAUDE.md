@@ -185,13 +185,16 @@ via the `COMPY_HOME` env var. `internal/state.Dir()` resolves and creates it
 
 ## Ports
 
-Default OTLP ports: 14317 gRPC, 14318 HTTP (standard ports + 10000).
+Default ports, all standard + 10000: 14317 gRPC, 14318 HTTP, 18888 the
+collector's own telemetry.
 Configurable per-install in `settings.json`, and injected into configs as
 `${env:COMPY_GRPC_PORT}` / `${env:COMPY_HTTP_PORT}`.
 
-A third port is the collector's OWN telemetry — otelcol's `:8888`
-Prometheus endpoint, which `collector.ScrapePorts` reads for the health
-strip. `settings.json`'s `metrics_port` moves it (0 = let the OS pick), but
+The third is the collector's OWN telemetry — otelcol's Prometheus endpoint,
+which `collector.ScrapePorts` reads for the health strip. otelcol defaults
+it to `:8888`; compy moves it to `:18888` so it stops sitting on a port
+other collectors and Prometheus examples routinely claim.
+`settings.json`'s `metrics_port` moves it further (0 = let the OS pick), but
 compy does NOT put it in anybody's config: `collector.OverlayYAML` is
 passed as a SEPARATE `--config` source, ahead of the configuration
 (`app.collectorArgs`). Order is the contract — confmap merges its sources

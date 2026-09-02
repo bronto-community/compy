@@ -55,7 +55,8 @@ service:
 
 // defaultMetricsPortStr keeps the overlay's :-fallback and the scrape's
 // blind default the same number without a fmt call in a const.
-const defaultMetricsPortStr = "8888"
+// TestOverlayYAMLShape enforces that they agree.
+const defaultMetricsPortStr = "18888"
 
 // PortFree reports whether 127.0.0.1:port can be bound right now. It is the
 // pre-flight for the telemetry port: the collector's Prometheus reader does
@@ -99,7 +100,7 @@ var psExe = func(pid int) ([]byte, error) {
 // replace?"
 //
 // Without it, every re-activation would find its own predecessor holding
-// 8888, conclude the port was taken, and drift onto an OS-assigned one — so
+// the port, conclude it was taken, and drift onto an OS-assigned one — so
 // a configured metrics_port would survive exactly one activation.
 //
 // Deliberately NOT answered by asking launchd for the job's pid: the port

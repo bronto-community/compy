@@ -4,10 +4,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/bronto-community/compy/internal/collector"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // TestCollectorArgsOverlayFirst is the whole contract in one assertion. The
@@ -75,5 +77,29 @@ func TestResolveMetricsPort(t *testing.T) {
 	ln.Close()
 	if got := resolveMetricsPort(busy, "/no/such/collector"); got != busy {
 		t.Errorf("resolveMetricsPort(free) = %d, want %d", got, busy)
+	}
+}
+
+// TestMetricsPortDefaultsAgree: three places carry compy's telemetry port —
+// settings' default (what a fresh install runs on), the overlay's :-fallback
+// (what a config with no env var gets), and the scrape's blind fallback
+// (where compy looks when pid detection fails). They live in different
+// packages, and a disagreement means the collector serves its metrics
+// somewhere compy never looks.
+func TestMetricsPortDefaultsAgree(t *testing.T) {
+	t.Setenv("COMPY_HOME", t.TempDir())
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "port: ${env:" + collector.MetricsPortEnv + ":-" + strconv.Itoa(s.MetricsPort) + "}"
+	if !strings.Contains(collector.OverlayYAML, want) {
+		t.Errorf("settings default %d is not the overlay's fallback:\n%s", s.MetricsPort, collector.OverlayYAML)
+	}
+	// And the convention itself: the OTLP ports are the standard ones plus
+	// 10000, and this one follows them.
+	if s.GRPCPort-4317 != 10000 || s.HTTPPort-4318 != 10000 || s.MetricsPort-8888 != 10000 {
+		t.Errorf("port defaults break the +10000 convention: grpc %d, http %d, metrics %d",
+			s.GRPCPort, s.HTTPPort, s.MetricsPort)
 	}
 }

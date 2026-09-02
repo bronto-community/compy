@@ -11,21 +11,21 @@ import (
 	"time"
 )
 
-// defaultMetricsPort is the collector's own telemetry port. otelcol serves
-// /metrics on localhost:8888 with no configuration at all — verified against
-// otelcol 0.135.0, whose startup fails with "binding address localhost:8888
-// for Prometheus exporter" when the port is taken, for a config with no
-// service::telemetry section — so no compy configuration says anything about
-// it and this address is simply where the numbers are. The Collector screen
-// names it on screen for the same reason.
+// defaultMetricsPort is where compy puts the collector's own telemetry:
+// :18888, otelcol's :8888 plus 10000, the same convention as the OTLP ports.
+// Compy's overlay (OverlayYAML) places it there; no compy configuration
+// mentions it, which is why the Collector screen names the address on
+// screen rather than expecting anyone to find it in yaml.
 //
-// Since compy learned to MOVE this port (settings' metrics_port, delivered
-// through OverlayYAML rather than by editing anyone's config), this is only
-// the BLIND fallback, used when pid detection gave no listeners to probe.
-// A moved port — or an OS-assigned one — is found the same way every other
-// listener is: from the collector process itself. A var so tests can aim
-// the default probe away from a real machine's :8888.
-var defaultMetricsPort = 8888
+// This is only the BLIND fallback, used when pid detection gave no
+// listeners to probe. A moved port — or an OS-assigned one, after a busy
+// port fell back — is found the way every other listener is: from the
+// collector process itself. Probing compy's own default rather than
+// otelcol's is also the safer blind guess, since :8888 on a developer's
+// machine is very likely SOMEONE ELSE's collector, and reporting a
+// stranger's numbers as ours would be worse than reporting none. A var so
+// tests can aim it at a closed port.
+var defaultMetricsPort = 18888
 
 // healthTimeout bounds the scrape. It is on the path of a screen the user is
 // looking at, so a collector that is wedged must not hold the page.
@@ -51,7 +51,7 @@ type Health struct {
 	Dropped   int64 `json:"dropped"`
 }
 
-// ScrapePorts reads the running collector's own metrics: :8888 (otelcol's
+// ScrapePorts reads the running collector's own metrics: :18888 (compy's
 // default) first, then — only if the default did not answer — each of the
 // collector's detected listening ports, first success wins. Port records
 // which one answered, so the UI can label it. It never returns an error:
@@ -59,7 +59,7 @@ type Health struct {
 // means the same thing to the caller, "no numbers".
 func ScrapePorts(ports []int) Health {
 	// Pid-bound: when detection gave us the collector's own listeners,
-	// probe ONLY those (:8888 first when present) — a blind default probe
+	// probe ONLY those (the default first when present) — a blind probe
 	// could read some other collector's metrics on this machine. The
 	// default is the fallback only when detection is unavailable.
 	if len(ports) == 0 {
@@ -90,7 +90,7 @@ func ScrapePorts(ports []int) Health {
 // /metrics page.
 //
 // The metric names are otelcol's, verified against a running 0.135.0
-// (`curl localhost:8888/metrics` with traces, metrics and logs flowing):
+// (`curl localhost:18888/metrics` with traces, metrics and logs flowing):
 //
 //	received  otelcol_receiver_accepted_{spans,metric_points,log_records}
 //	exported  otelcol_exporter_sent_{spans,metric_points,log_records}

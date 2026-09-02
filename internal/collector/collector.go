@@ -61,17 +61,20 @@ var bindErrRE = regexp.MustCompile(`listen tcp ([^\s:"]+):(\d+): bind: address a
 
 // BindError scans a log tail for an "address already in use" failure and
 // returns a one-line human sentence naming the busy port — the actionable
-// fact otherwise buried mid-tail — or "" when the tail has none. Port 8888
-// gets the extra context that it is otelcol's own default telemetry port,
-// which a config conflicts with without ever mentioning it.
+// fact otherwise buried mid-tail — or "" when the tail has none. The two
+// telemetry-port numbers get extra context: a config conflicts with them
+// without ever mentioning them (:8888 is otelcol's own default, :18888 is
+// where compy's overlay puts it). Compy pre-flights its own port and falls
+// back rather than letting this happen, so in practice this fires for a
+// config that hardcoded service::telemetry itself.
 func BindError(tail string) string {
 	m := bindErrRE.FindStringSubmatch(tail)
 	if m == nil {
 		return ""
 	}
 	msg := fmt.Sprintf("port %s is already in use by another process", m[2])
-	if m[2] == "8888" {
-		msg += " — :8888 is the collector's own telemetry port; every config uses it unless service::telemetry moves it"
+	if m[2] == "8888" || m[2] == defaultMetricsPortStr {
+		msg += " — :" + m[2] + " is the collector's own telemetry port, which a config uses without naming it; settings' metrics_port moves it"
 	}
 	return msg
 }

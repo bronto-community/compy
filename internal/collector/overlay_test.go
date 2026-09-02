@@ -16,7 +16,7 @@ func TestOverlayYAMLShape(t *testing.T) {
 	for _, want := range []string{
 		"service:", "telemetry:", "metrics:", "readers:", "- pull:", "prometheus:",
 		"host: 127.0.0.1",
-		"port: ${env:" + MetricsPortEnv + ":-8888}",
+		"port: ${env:" + MetricsPortEnv + ":-18888}",
 	} {
 		if !strings.Contains(OverlayYAML, want) {
 			t.Errorf("overlay missing %q:\n%s", want, OverlayYAML)

@@ -2756,7 +2756,7 @@ function metricsPortMoved() {
 }
 function metricsSrcText(stopped, has, h) {
   if (stopped) return "no metrics while stopped";
-  const want = (S.status && S.status.metrics_port) || 8888;
+  const want = (S.status && S.status.metrics_port) || 18888;
   if (!has) return "localhost:" + want + "/metrics · no answer";
   if (metricsPortMoved()) return "localhost:" + h.port + "/metrics · " + want + " was busy";
   return "localhost:" + h.port + "/metrics";
@@ -3253,7 +3253,7 @@ const GLOBAL_VARS = [
   { key: "http_port", name: "COMPY_HTTP_PORT", desc: "otlp/http port — reference it as ${env:COMPY_HTTP_PORT}" },
   {
     key: "metrics_port", name: "COMPY_METRICS_PORT", min: 0,
-    desc: "the collector's own /metrics port (otelcol's 8888). compy supplies it as a config overlay, so it applies to hand-written configs too — 0 lets the OS pick a free one",
+    desc: "the collector's own /metrics port (otelcol's 8888 + 10000, like the OTLP ports). compy supplies it as a config overlay, so it applies to hand-written configs too — 0 lets the OS pick a free one",
   },
 ];
 function globalVars() {

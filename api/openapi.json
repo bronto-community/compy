@@ -429,7 +429,7 @@
     "/api/collector/health": {
       "get": {
         "summary": "The collector's own metrics, scraped from its telemetry endpoint",
-        "description": "Four numbers for the Collector screen. localhost:8888 (otelcol's default) is tried first; if it does not answer, the collector's detected listening ports are probed and the first parsable /metrics wins — `port` names the winner. A stopped or unscrapable collector answers 200 with available:false and zeroes, never an error. Sources (otelcol 0.135, counters matched with or without a _total suffix): received = otelcol_receiver_accepted_{spans,metric_points,log_records}; exported = otelcol_exporter_sent_{spans,metric_points,log_records}; queue = otelcol_exporter_queue_size; dropped = otelcol_receiver_refused_*, otelcol_exporter_send_failed_*, otelcol_exporter_enqueue_failed_*.",
+        "description": "Four numbers for the Collector screen. The collector's detected listening ports are probed (settings' metrics_port first when present) and the first parsable /metrics wins — `port` names the winner, which is how a caller sees that a busy configured port fell back to an OS-assigned one. With no detection available, localhost:18888 (compy's default) is tried blind. A stopped or unscrapable collector answers 200 with available:false and zeroes, never an error. Sources (otelcol 0.135, counters matched with or without a _total suffix): received = otelcol_receiver_accepted_{spans,metric_points,log_records}; exported = otelcol_exporter_sent_{spans,metric_points,log_records}; queue = otelcol_exporter_queue_size; dropped = otelcol_receiver_refused_*, otelcol_exporter_send_failed_*, otelcol_exporter_enqueue_failed_*.",
         "responses": {
           "200": {
             "description": "OK",

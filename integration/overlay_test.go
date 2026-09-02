@@ -145,20 +145,21 @@ func TestTelemetryOverlayIsADefaultNotAnOverride(t *testing.T) {
 	}
 }
 
-// TestTelemetryOverlayDefaultsTo8888 checks the :-fallback: with no
-// COMPY_METRICS_PORT in the environment the overlay must land on otelcol's
-// documented default, which is what the scrape's blind fallback assumes.
-// Skipped when something on this machine already owns :8888 — including a
-// real compy install, which is exactly the situation the overlay exists for.
-func TestTelemetryOverlayDefaultsTo8888(t *testing.T) {
+// TestTelemetryOverlayDefaultsToComPysPort checks the :-fallback: with no
+// COMPY_METRICS_PORT in the environment the overlay must land on compy's
+// default, which is what the scrape's blind fallback assumes. Skipped when
+// something on this machine already owns it — including a real compy
+// install, which is exactly the situation the overlay exists for.
+func TestTelemetryOverlayDefaultsToCompysPort(t *testing.T) {
 	bin := otelcolBin(t)
-	if !collector.PortFree(8888) {
-		t.Skip(":8888 is busy on this machine; the fallback cannot be observed")
+	const want = 18888 // state's defaultMetricsPort, and the overlay's :-fallback
+	if !collector.PortFree(want) {
+		t.Skipf(":%d is busy on this machine; the fallback cannot be observed", want)
 	}
 	dir := t.TempDir()
 	args := []string{"--config", writeOverlay(t, dir), "--config", minimalConfig(t, dir, freePort(t))}
 	out := startCollector(t, bin, args, nil)
-	if !scrapeOK(t, 8888, 15*time.Second) {
-		t.Fatalf("overlay with no env did not land on :8888\noutput:\n%s", out.String())
+	if !scrapeOK(t, want, 15*time.Second) {
+		t.Fatalf("overlay with no env did not land on :%d\noutput:\n%s", want, out.String())
 	}
 }
