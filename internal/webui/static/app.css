@@ -708,6 +708,22 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 .health .m .v.off { color: var(--dim2); }
 .health .m .v.warn { color: var(--accent); }
 .health .src { font-size: 11px; color: var(--dim2); }
+/* What metrics level "detailed" adds under the four aggregates: which
+   signals arrived, and what each backend answered. A non-2xx is the whole
+   point of the row, so it is the only thing here that takes a colour. */
+.health-detail {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 7px 14px; border-bottom: 1px solid var(--divider);
+  background: var(--raise); font-size: 11.5px;
+}
+.health-detail .hint { color: var(--dim); }
+.hd-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.hd-row .l {
+  font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint);
+}
+.hd-items { display: flex; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.hd-item { color: var(--muted); font-variant-numeric: tabular-nums; }
+.hd-item.bad { color: var(--errText); }
 /* The telemetry port moved because the configured one was busy: quiet, but
    not silent — an outside scraper pointed at the old port just broke. */
 .health .src.warn { color: var(--warnText); }
@@ -827,7 +843,13 @@ button.srow:focus-visible { outline: 1px solid var(--border3); outline-offset: -
   border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px;
   white-space: nowrap; overflow-x: auto;
 }
-.seg { display: flex; border: 1px solid var(--border3); border-radius: 5px; overflow: hidden; }
+.seg {
+  display: flex; border: 1px solid var(--border3); border-radius: 5px;
+  overflow: hidden;
+  /* Three options next to a long description overflowed the card: the
+     control is fixed-size, the sentence is what gives way. */
+  flex: 0 0 auto;
+}
 .seg button {
   font-size: 11.5px; padding: 5px 14px; cursor: pointer;
   border: 0; border-left: 1px solid var(--border3); background: transparent;

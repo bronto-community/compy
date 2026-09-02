@@ -27,7 +27,16 @@ type Settings struct {
 	// port changes every restart, so only pid-based discovery finds it.
 	// A missing field (every settings.json written before this existed)
 	// loads as 0, which LoadSettings turns into the default instead.
-	MetricsPort  int    `json:"metrics_port"`
+	MetricsPort int `json:"metrics_port"`
+
+	// MetricsLevel is how verbose that telemetry is: basic, normal
+	// (default), or detailed. Detailed adds the collector's HTTP server and
+	// client instrumentation — per-signal request counts in, and per-backend
+	// HTTP STATUS out, which is where a rejected export names its status
+	// code instead of burying it in the log. It costs roughly 4.5x the
+	// series, bounded by the config rather than by traffic, which is why it
+	// is opt-in. Empty means the default.
+	MetricsLevel string `json:"metrics_level,omitempty"`
 	Distro       string `json:"distro"`        // global default distro, "" = compy's default (contrib)
 	ActiveConfig string `json:"active_config"` // active configuration, "" = none
 	OSEnv        bool   `json:"os_env"`        // OS-level env injection active

@@ -51,11 +51,12 @@ func (a *App) settingsMap() (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"grpc_port":    s.GRPCPort,
-		"http_port":    s.HTTPPort,
-		"metrics_port": s.MetricsPort,
-		"protocol":     s.EffectiveProtocol(),
-		"tracing":      s.Tracing,
+		"grpc_port":     s.GRPCPort,
+		"http_port":     s.HTTPPort,
+		"metrics_port":  s.MetricsPort,
+		"metrics_level": s.MetricsLevel,
+		"protocol":      s.EffectiveProtocol(),
+		"tracing":       s.Tracing,
 		// The endpoint is reported RESOLVED — an unset one is compy's own
 		// receiver, and a settings screen showing an empty field would be
 		// lying about where the spans go. tracing_endpoint_set says whether
@@ -80,6 +81,7 @@ func (a *App) statusMap() (map[string]any, error) {
 		"grpc_port":      st.GRPCPort,
 		"http_port":      st.HTTPPort,
 		"metrics_port":   st.MetricsPort,
+		"metrics_level":  st.MetricsLevel,
 		"tray_installed": st.TrayInstalled,
 		"protocol":       st.Protocol,
 		"endpoint":       fmt.Sprintf("http://127.0.0.1:%d", st.EndpointPort()),
@@ -113,8 +115,8 @@ func (a *App) WebUIAPI() webui.API {
 		SetOSEnv: a.SetOSEnv,
 
 		GetSettings: a.settingsMap,
-		PutSettings: func(grpcPort, httpPort, metricsPort *int, protocol *string, tracingOn *bool, tracingEndpoint, tracingHeaders *string) error {
-			return a.PutSettings(grpcPort, httpPort, metricsPort, protocol,
+		PutSettings: func(grpcPort, httpPort, metricsPort *int, protocol, metricsLevel *string, tracingOn *bool, tracingEndpoint, tracingHeaders *string) error {
+			return a.PutSettings(grpcPort, httpPort, metricsPort, protocol, metricsLevel,
 				&Tracing{On: tracingOn, Endpoint: tracingEndpoint, Headers: tracingHeaders})
 		},
 		AdoptPorts: a.AdoptPorts,
