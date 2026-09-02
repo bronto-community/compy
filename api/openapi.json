@@ -32,6 +32,7 @@
             "type": "integer",
             "description": "The CONFIGURED telemetry port (0 = OS-assigned at launch). What the collector actually bound is the port reported by GET /api/collector/health; the two differing means a busy port fell back."
           },
+          "metrics_level": { "type": "string", "enum": ["basic", "normal", "detailed"], "description": "The collector's internal-telemetry verbosity: basic, normal (default), or detailed. Detailed adds the collector's HTTP server and client instrumentation, which is what fills GET /api/collector/health's `in` and `out`: per-signal request counts on the way in, and the HTTP STATUS each backend answered on the way out. It costs roughly 4.5x the internal time series, bounded by the CONFIG (exporters x signals, processors x signals, routes) and never by traffic or by how many applications send — nothing in the label set identifies a client." },
           "protocol": {
             "type": "string",
             "enum": ["grpc", "http/protobuf", "http/json"],
@@ -90,6 +91,7 @@
           "grpc_port": { "type": "integer" },
           "http_port": { "type": "integer" },
           "metrics_port": { "type": "integer", "description": "The port the collector serves its OWN telemetry on (otelcol's Prometheus /metrics endpoint, what the health strip scrapes). compy supplies it as a separate --config overlay ahead of the configuration, so it applies to hand-written configs too and a config carrying its own service::telemetry still wins. 0 means compy asks the OS for a free port at launch; a configured port that is busy falls back to 0 rather than letting the collector refuse to start." },
+          "metrics_level": { "type": "string", "enum": ["basic", "normal", "detailed"], "description": "The collector's internal-telemetry verbosity: basic, normal (default), or detailed. Detailed adds the collector's HTTP server and client instrumentation, which is what fills GET /api/collector/health's `in` and `out`: per-signal request counts on the way in, and the HTTP STATUS each backend answered on the way out. It costs roughly 4.5x the internal time series, bounded by the CONFIG (exporters x signals, processors x signals, routes) and never by traffic or by how many applications send — nothing in the label set identifies a client." },
           "protocol": {
             "type": "string",
             "enum": ["grpc", "http/protobuf", "http/json"],
@@ -115,6 +117,7 @@
           "grpc_port": { "type": "integer" },
           "http_port": { "type": "integer" },
           "metrics_port": { "type": "integer", "description": "1-65535, or 0 to let the OS pick a free port at launch. Anything else is a 400. Takes effect on the next apply." },
+          "metrics_level": { "type": "string", "enum": ["basic", "normal", "detailed"], "description": "Anything else is a 400. Takes effect on the next apply." },
           "tracing": { "type": "boolean", "description": "Compy's OWN OpenTelemetry tracing: spans over compy's operations (activate, render, validate, launchd install, probe), exported as OTLP/HTTP. Off by default and free when off — no TracerProvider is installed, so the global stays OTel's no-op. Takes effect for processes started after the change; a running tray or window picks it up when it restarts." },
           "tracing_endpoint": { "type": "string", "description": "An http(s) BASE URL — the signal path is appended. The empty string is a real value: it clears a custom endpoint back to compy's own collector. Anything that is not an http(s) URL is a 400." },
           "tracing_headers": { "type": "string", "description": "\"Name: value\" per line; blank lines and #comments ignored. A line without a colon is a 400 naming the line number." },
@@ -443,7 +446,7 @@
     "/api/collector/health": {
       "get": {
         "summary": "The collector's own metrics, scraped from its telemetry endpoint",
-        "description": "Four numbers for the Collector screen. The collector's detected listening ports are probed (settings' metrics_port first when present) and the first parsable /metrics wins — `port` names the winner, which is how a caller sees that a busy configured port fell back to an OS-assigned one. With no detection available, localhost:18888 (compy's default) is tried blind. A stopped or unscrapable collector answers 200 with available:false and zeroes, never an error. Sources (otelcol 0.135, counters matched with or without a _total suffix): received = otelcol_receiver_accepted_{spans,metric_points,log_records}; exported = otelcol_exporter_sent_{spans,metric_points,log_records}; queue = otelcol_exporter_queue_size; dropped = otelcol_receiver_refused_*, otelcol_exporter_send_failed_*, otelcol_exporter_enqueue_failed_*.",
+        "description": "Four numbers for the Collector screen, plus — only at metrics level detailed — `in` (per-OTLP-route request counts and the status compy's receiver answered) and `out` (per-backend counts and the HTTP status that backend answered, which is where a rejected export names its status code). Both are absent at other levels and their absence is not an error. The collector's detected listening ports are probed (settings' metrics_port first when present) and the first parsable /metrics wins — `port` names the winner, which is how a caller sees that a busy configured port fell back to an OS-assigned one. With no detection available, localhost:18888 (compy's default) is tried blind. A stopped or unscrapable collector answers 200 with available:false and zeroes, never an error. Sources (otelcol 0.135, counters matched with or without a _total suffix): received = otelcol_receiver_accepted_{spans,metric_points,log_records}; exported = otelcol_exporter_sent_{spans,metric_points,log_records}; queue = otelcol_exporter_queue_size; dropped = otelcol_receiver_refused_*, otelcol_exporter_send_failed_*, otelcol_exporter_enqueue_failed_*.",
         "responses": {
           "200": {
             "description": "OK",

@@ -2727,7 +2727,7 @@ function healthStrip(stopped) {
     span("l", label),
     el("span", { class: "v" + (has ? (warn ? " warn" : "") : " off"), text: has ? value : "—" }),
   ]);
-  return el("div", { class: "health" }, [
+  const strip = el("div", { class: "health" }, [
     m("received", fmtCount(h.received)),
     m("exported", fmtCount(h.exported)),
     m("queue", fmtCount(h.queue)),
@@ -2741,6 +2741,43 @@ function healthStrip(stopped) {
       text: metricsSrcText(stopped, has, h),
     }),
   ]);
+  if (stopped || !has) return strip;
+  const detail = healthDetail(h);
+  return detail ? el("div", { class: "health-wrap" }, [strip, detail]) : strip;
+}
+
+/* What "detailed" buys, and only "detailed": which signals are actually
+   arriving, and what each backend ANSWERED. The four aggregate numbers
+   above can say telemetry was dropped; only this can say a backend replied
+   401 — the fact that otherwise lives in a stack trace mid-log.
+   Absent at other levels, and that is not a failure: the hint says where
+   the switch is rather than leaving an empty row. */
+function healthDetail(h) {
+  const inRows = h.in || [], outRows = h.out || [];
+  if (!inRows.length && !outRows.length) {
+    if ((S.status && S.status.metrics_level) === "detailed") return null;
+    return el("div", { class: "health-detail" }, [
+      el("span", { class: "hint sans", text: "per-signal counts and backend responses need metrics level detailed" }),
+      el("button", { class: "act", text: "settings", on: { click: () => go("#/settings") } }),
+    ]);
+  }
+  const row = (label, rows, describe) => rows.length ? el("div", { class: "hd-row" }, [
+    span("l", label),
+    el("div", { class: "hd-items" }, rows.map((r) => el("span", {
+      class: "hd-item" + (r.status >= 200 && r.status < 300 ? "" : " bad"),
+      title: describe(r),
+      text: describe(r),
+    }))),
+  ]) : null;
+  return el("div", { class: "health-detail" }, [
+    row("in", inRows, (r) => signalName(r.where) + " " + fmtCount(r.count) + (r.status >= 200 && r.status < 300 ? "" : " · " + r.status)),
+    row("out", outRows, (r) => r.where + " " + r.status + " ×" + fmtCount(r.count)),
+  ]);
+}
+// "/v1/traces" reads as "traces"; anything else stays itself — a receiver
+// may serve paths compy does not know about.
+function signalName(where) {
+  return where.indexOf("/v1/") === 0 ? where.slice(4) : where;
 }
 
 /* The collector's telemetry port is compy's to place (settings' metrics_port,
@@ -3018,6 +3055,15 @@ function screenSettings() {
   }
   const proto = (S.settings && S.settings.protocol) || (S.status && S.status.protocol) || "http/protobuf";
   const pseg = el("div", { class: "seg" });
+  const level = (S.status && S.status.metrics_level) || "normal";
+  const lseg = el("div", { class: "seg" });
+  for (const k of ["basic", "normal", "detailed"]) {
+    lseg.appendChild(el("button", {
+      class: level === k ? "on" : "", text: k,
+      attrs: { "aria-pressed": level === k ? "true" : "false" },
+      on: { click: () => setMetricsLevel(k) },
+    }));
+  }
   for (const p of ["grpc", "http/protobuf", "http/json"]) {
     pseg.appendChild(el("button", {
       class: proto === p ? "on" : "", text: p,
@@ -3037,6 +3083,13 @@ function screenSettings() {
         el("span", { class: "n sans", text: "what the advertised endpoint speaks" }),
       ]),
       el("span", { class: "grow" }), savedMark("protocol"), pseg,
+    ]),
+    el("div", { class: "srow" }, [
+      el("span", { class: "lbl" }, [
+        span("t", "collector telemetry"),
+        el("span", { class: "n sans", text: "detailed adds per-signal counts and each backend's HTTP status to the collector screen, at ~4.5x the internal metrics. applies on the next restart" }),
+      ]),
+      el("span", { class: "grow" }), savedMark("metrics_level"), lseg,
     ]),
     // A real <button> so the switch is keyboard-operable (Enter/Space) for
     // free; role/aria-checked keep it announced as a switch.
@@ -3466,6 +3519,21 @@ async function setOSEnv(on) {
    nothing restarts. With the OS-level toggle on, the backend refreshes the
    injected values; newly launched apps pick them up (the os-env row already
    says so). */
+/* The collector reads this at startup, so — unlike the protocol, which is
+   advertisement only — a change means nothing until the collector restarts.
+   Say so rather than letting the numbers stay stubbornly absent. */
+async function setMetricsLevel(level) {
+  clearError();
+  try {
+    S.settings = await apiJSON("/api/settings", "PUT", { metrics_level: level });
+    await loadCore(); // status carries the level in effect
+    flashSaved("metrics_level");
+    note(nothingActive()
+      ? "saved. applies when the collector starts"
+      : "saved. applies when the collector next restarts", 4000);
+  } catch (e) { showError(e); }
+  render();
+}
 async function setProtocol(p) {
   clearError();
   try {

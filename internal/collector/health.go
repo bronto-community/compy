@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +51,42 @@ type Health struct {
 	Exported  int64 `json:"exported"`
 	Queue     int64 `json:"queue"`
 	Dropped   int64 `json:"dropped"`
+
+	// In and Out come from the HTTP instrumentation that only exists at
+	// metrics level "detailed" (settings' metrics_level). Both are empty
+	// otherwise, and the UI simply shows less — nothing depends on them.
+	//
+	// They answer the two questions the four aggregate numbers above
+	// cannot: WHICH signal is flowing, and WHY an export is failing. A
+	// rejected export names its HTTP status here instead of only in a
+	// stack trace mid-log, which is what made a stale API key take twenty
+	// minutes to find.
+	In  []RouteCount `json:"in,omitempty"`
+	Out []RouteCount `json:"out,omitempty"`
+}
+
+// RouteCount is one (route or destination, HTTP status) tally. For In,
+// Where is the OTLP signal path ("/v1/traces") and the status is what compy's
+// receiver answered a sending application. For Out, Where is the BACKEND
+// (host:port) and the status is what that backend answered compy.
+type RouteCount struct {
+	Where  string `json:"where"`
+	Status int    `json:"status"`
+	Count  int64  `json:"count"`
+}
+
+// OK reports whether this tally is a success — 2xx. Anything else is a
+// rejection worth showing.
+func (r RouteCount) OK() bool { return r.Status >= 200 && r.Status < 300 }
+
+// Signal is In's route rendered as the signal name: "/v1/traces" is
+// "traces". An unrecognised route passes through as-is rather than being
+// hidden — a receiver may serve paths compy does not know.
+func (r RouteCount) Signal() string {
+	if s, ok := strings.CutPrefix(r.Where, "/v1/"); ok && s != "" {
+		return s
+	}
+	return r.Where
 }
 
 // ScrapePorts reads the running collector's own metrics: :18888 (compy's
@@ -114,13 +152,30 @@ func health(url string) Health {
 	}
 
 	h := Health{Available: true}
+	in, out := map[RouteCount]int64{}, map[RouteCount]int64{}
 	scanner := bufio.NewScanner(io.LimitReader(resp.Body, maxMetricsBytes))
 	// A sample line carrying many labels can pass bufio's 64KB default,
 	// which would silently end the scan mid-page.
 	scanner.Buffer(nil, maxLineBytes)
 	for scanner.Scan() {
-		name, value, ok := parseSample(scanner.Text())
+		line := scanner.Text()
+		name, value, ok := parseSample(line)
 		if !ok {
+			continue
+		}
+		// The "_count" series of the duration histogram is the request
+		// tally; the buckets and _sum carry the same labels and would
+		// multiply it, so match only that one.
+		switch name {
+		case "http_server_request_duration_count":
+			if k, ok := routeKey(line, "http_route"); ok {
+				in[k] += value
+			}
+			continue
+		case "http_client_request_duration_count":
+			if k, ok := routeKey(line, "server_address"); ok {
+				out[k] += value
+			}
 			continue
 		}
 		switch {
@@ -136,7 +191,79 @@ func health(url string) Health {
 			h.Dropped += value
 		}
 	}
+	h.In, h.Out = sortedRoutes(in), sortedRoutes(out)
 	return h
+}
+
+// routeKey builds a RouteCount from one sample line's labels: whereLabel
+// names the label holding the route or destination, and the status comes
+// from http_response_status_code. A client-side line also carries
+// server_port, which is joined on so two backends on the same host stay
+// apart. Missing either label means the series is not one we can attribute,
+// and it is skipped rather than lumped under an empty name.
+func routeKey(line, whereLabel string) (RouteCount, bool) {
+	where, ok := labelValue(line, whereLabel)
+	if !ok || where == "" {
+		return RouteCount{}, false
+	}
+	if port, ok := labelValue(line, "server_port"); ok && whereLabel == "server_address" {
+		where = net.JoinHostPort(where, port)
+	}
+	code, ok := labelValue(line, "http_response_status_code")
+	if !ok {
+		return RouteCount{}, false
+	}
+	status, err := strconv.Atoi(code)
+	if err != nil {
+		return RouteCount{}, false
+	}
+	return RouteCount{Where: where, Status: status}, true
+}
+
+// labelValue pulls one label out of a prometheus sample line. Values are
+// quoted and may contain commas (a URL), so the closing quote ends it, not
+// the next separator.
+func labelValue(line, key string) (string, bool) {
+	i := strings.Index(line, key+`="`)
+	if i < 0 {
+		return "", false
+	}
+	rest := line[i+len(key)+2:]
+	end := strings.IndexByte(rest, '"')
+	if end < 0 {
+		return "", false
+	}
+	return rest[:end], true
+}
+
+// sortedRoutes flattens the tally map into a stable order — failures
+// first, then busiest, then by name — so the UI renders the same list every
+// poll and leads with what is wrong.
+func sortedRoutes(m map[RouteCount]int64) []RouteCount {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]RouteCount, 0, len(m))
+	for k, v := range m {
+		k.Count = v
+		out = append(out, k)
+	}
+	slices.SortFunc(out, func(a, b RouteCount) int {
+		if a.OK() != b.OK() {
+			if a.OK() {
+				return 1
+			}
+			return -1
+		}
+		if a.Count != b.Count {
+			return int(b.Count - a.Count)
+		}
+		if c := strings.Compare(a.Where, b.Where); c != 0 {
+			return c
+		}
+		return a.Status - b.Status
+	})
+	return out
 }
 
 // parseSample pulls the metric name and value out of one Prometheus text

@@ -101,7 +101,7 @@ func (a *App) AdoptPorts(grpcP, httpP *int) error {
 			}
 		}
 	}
-	return a.PutSettings(grpcP, httpP, nil, nil, nil)
+	return a.PutSettings(grpcP, httpP, nil, nil, nil, nil)
 }
 
 // classifyCandidates sorts a config's detected non-telemetry listeners into

@@ -231,6 +231,22 @@ and the LAST wins, so overlay-first makes compy's block a DEFAULT a config's
 own `service::telemetry` overrides, and hand-written configs get the
 setting for free. Never edit a configuration to place it.
 
+`metrics_level` (basic | normal | detailed, default normal) rides the same
+overlay as `COMPY_METRICS_LEVEL`. **detailed** is the only level that
+answers two questions the four aggregate health numbers cannot: WHICH
+signal is arriving (`http_server_request_duration` by `http_route`) and
+WHY an export failed (`http_client_request_duration` by
+`http_response_status_code` and `server_address` — a rejected export names
+its 401 instead of burying it in a stack trace). `collector.Health`'s `In`
+and `Out` are parsed from exactly those two `_count` series; they are empty
+at other levels and that is not a failure. Measured cost on a one-backend
+config: 23 series at basic, 50 at normal, 223 at detailed — ~4.5x, 80% of
+it histogram buckets — and it scales with the CONFIG (exporters x signals,
+processors x signals, routes), never with traffic or sender count: nothing
+in the label set identifies a client, so more applications cannot add
+series. Verified by sending from five distinct `service.name`s: 486 series
+before and after.
+
 The Prometheus reader's bind is fatal (contrib/otelconf: plain `net.Listen`,
 error returned, startup aborts), so `resolveMetricsPort` pre-flights the
 port at activation and falls back to 0 rather than letting an unrelated

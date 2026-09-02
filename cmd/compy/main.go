@@ -7,6 +7,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,7 @@ import (
 	"github.com/bronto-community/compy/internal/app"
 	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/cfgstore"
+	"github.com/bronto-community/compy/internal/collector"
 	"github.com/bronto-community/compy/internal/envvars"
 	"github.com/bronto-community/compy/internal/launchd"
 	"github.com/bronto-community/compy/internal/state"
@@ -860,8 +862,9 @@ func cmdSettings(args []string) error {
 					trace += " (compy's own collector)"
 				}
 			}
-			fmt.Printf("grpc-port: %d\nhttp-port: %d\nmetrics-port: %s\nprotocol: %s\ntracing: %s\n",
-				s.GRPCPort, s.HTTPPort, metrics, s.EffectiveProtocol(), trace)
+			fmt.Printf("grpc-port: %d\nhttp-port: %d\nmetrics-port: %s\nmetrics-level: %s\nprotocol: %s\ntracing: %s\n",
+				s.GRPCPort, s.HTTPPort, metrics, cmp.Or(s.MetricsLevel, collector.DefaultMetricsLevel),
+				s.EffectiveProtocol(), trace)
 			return nil
 		})
 	}
@@ -872,11 +875,12 @@ func cmdSettings(args []string) error {
 	var grpcPort, httpPort, metricsPort int
 	var protocol string
 	var tracing0 bool
-	var tracingEndpoint, tracingHeaders string
+	var tracingEndpoint, tracingHeaders, metricsLevel string
 	fs.IntVar(&grpcPort, "grpc-port", 0, "gRPC port")
 	fs.IntVar(&httpPort, "http-port", 0, "HTTP port")
 	fs.IntVar(&metricsPort, "metrics-port", 0, "the collector's own telemetry port (0 = pick a free one at launch)")
 	fs.StringVar(&protocol, "protocol", "", "advertised OTLP protocol: grpc, http/protobuf, or http/json")
+	fs.StringVar(&metricsLevel, "metrics-level", "", "collector internal-telemetry verbosity: basic, normal, or detailed")
 	fs.BoolVar(&tracing0, "tracing", false, "compy's own OpenTelemetry tracing")
 	fs.StringVar(&tracingEndpoint, "tracing-endpoint", "", "where compy's traces go; empty = compy's own collector")
 	fs.StringVar(&tracingHeaders, "tracing-headers", "", `headers for the tracing endpoint, "Name: value" per line`)
@@ -884,7 +888,7 @@ func cmdSettings(args []string) error {
 		return err
 	}
 	var grpcP, httpP, metricsP *int
-	var protoP *string
+	var protoP, levelP *string
 	var tr app.Tracing
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -896,6 +900,8 @@ func cmdSettings(args []string) error {
 			metricsP = &metricsPort
 		case "protocol":
 			protoP = &protocol
+		case "metrics-level":
+			levelP = &metricsLevel
 		case "tracing":
 			tr.On = &tracing0
 		case "tracing-endpoint":
@@ -904,7 +910,7 @@ func cmdSettings(args []string) error {
 			tr.Headers = &tracingHeaders
 		}
 	})
-	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, metricsP, protoP, &tr) })
+	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, metricsP, protoP, levelP, &tr) })
 }
 
 // cmdFactoryReset wipes the state directory and starts over. The CLI has no

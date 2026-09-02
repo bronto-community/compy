@@ -22,7 +22,7 @@ func TestPutSettingsTracing(t *testing.T) {
 	on, off := true, false
 	ep, hd := "https://otlp.example.com", "Authorization: Bearer k"
 
-	if err := a.PutSettings(nil, nil, nil, nil, &app.Tracing{On: &on, Endpoint: &ep, Headers: &hd}); err != nil {
+	if err := a.PutSettings(nil, nil, nil, nil, nil, &app.Tracing{On: &on, Endpoint: &ep, Headers: &hd}); err != nil {
 		t.Fatal(err)
 	}
 	s, _ := state.LoadSettings()
@@ -32,7 +32,7 @@ func TestPutSettingsTracing(t *testing.T) {
 
 	// Partial: flipping the switch leaves the destination alone, which is
 	// what lets the UI's toggle send one field.
-	if err := a.PutSettings(nil, nil, nil, nil, &app.Tracing{On: &off}); err != nil {
+	if err := a.PutSettings(nil, nil, nil, nil, nil, &app.Tracing{On: &off}); err != nil {
 		t.Fatal(err)
 	}
 	if s, _ = state.LoadSettings(); s.Tracing || s.TracingEndpoint != ep {
@@ -41,7 +41,7 @@ func TestPutSettingsTracing(t *testing.T) {
 
 	// Clearing the endpoint is a real value, not a no-op: it means "back to
 	// compy's own collector".
-	if err := a.PutSettings(nil, nil, nil, nil, &app.Tracing{Endpoint: ptr("")}); err != nil {
+	if err := a.PutSettings(nil, nil, nil, nil, nil, &app.Tracing{Endpoint: ptr("")}); err != nil {
 		t.Fatal(err)
 	}
 	if s, _ = state.LoadSettings(); s.TracingEndpoint != "" {
@@ -56,7 +56,7 @@ func TestPutSettingsTracing(t *testing.T) {
 		{"wrong scheme", "http(s) URL", app.Tracing{Endpoint: ptr("ftp://x.example")}},
 		{"header without a colon", "Name: value", app.Tracing{Headers: ptr("Authorization Bearer k")}},
 	} {
-		err := a.PutSettings(nil, nil, nil, nil, &tc.tr)
+		err := a.PutSettings(nil, nil, nil, nil, nil, &tc.tr)
 		if err == nil || !state.IsBadRequest(err) || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want a BadRequest naming %q", tc.name, err, tc.want)
 		}

@@ -1,9 +1,11 @@
 package collector
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -166,5 +168,78 @@ func TestHealthIgnoresJunkSamples(t *testing.T) {
 	h := health(srv.URL)
 	if !h.Available || h.Received != 3 {
 		t.Errorf("health = %+v, want available with Received=3 (NaN/Inf/malformed skipped, timestamp ignored)", h)
+	}
+}
+
+// detailedPage is a real /metrics capture at level "detailed" (otelcol-compy
+// 0.159.0): three OTLP routes answered 200 on the way in, and a backend
+// answering 401 on the way out — a stale API key, the exact failure that
+// used to be visible only as a stack trace mid-log.
+const detailedPage = `# HELP http_server_request_duration Duration of HTTP server requests.
+# TYPE http_server_request_duration histogram
+http_server_request_duration_count{http_request_method="POST",http_response_status_code="200",http_route="/v1/traces",server_address="127.0.0.1",server_port="14318",url_scheme="http"} 20
+http_server_request_duration_bucket{http_request_method="POST",http_response_status_code="200",http_route="/v1/traces",server_address="127.0.0.1",server_port="14318",le="5"} 20
+http_server_request_duration_sum{http_request_method="POST",http_response_status_code="200",http_route="/v1/traces",server_address="127.0.0.1",server_port="14318"} 3.5
+http_server_request_duration_count{http_request_method="POST",http_response_status_code="200",http_route="/v1/logs",server_address="127.0.0.1",server_port="14318",url_scheme="http"} 21
+http_server_request_duration_count{http_request_method="POST",http_response_status_code="415",http_route="/v1/metrics",server_address="127.0.0.1",server_port="14318",url_scheme="http"} 3
+# HELP http_client_request_duration Duration of HTTP client requests.
+# TYPE http_client_request_duration histogram
+http_client_request_duration_count{http_request_method="POST",http_response_status_code="401",server_address="127.0.0.1",server_port="29402",url_scheme="http"} 2
+http_client_request_duration_count{http_request_method="POST",http_response_status_code="200",server_address="ingestion.eu.bronto.io",url_scheme="https"} 95
+otelcol_receiver_accepted_spans{receiver="otlp",transport="http"} 40
+`
+
+// TestHealthDetailedRoutes: at level "detailed" the scrape gains what the
+// four aggregates cannot say — which signal is flowing, and what each
+// backend ANSWERED. Failures sort first so the UI leads with them, and the
+// histogram's _bucket/_sum siblings must not be counted as requests.
+func TestHealthDetailedRoutes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, detailedPage)
+	}))
+	defer srv.Close()
+	h := health(srv.URL)
+	if !h.Available {
+		t.Fatal("scrape failed")
+	}
+	// In: the 415 first (a failure), then by volume. The route is rendered
+	// as a signal name.
+	var in []string
+	for _, r := range h.In {
+		in = append(in, fmt.Sprintf("%s/%d/%d", r.Signal(), r.Status, r.Count))
+	}
+	if want := []string{"metrics/415/3", "logs/200/21", "traces/200/20"}; !reflect.DeepEqual(in, want) {
+		t.Errorf("In = %v, want %v", in, want)
+	}
+	// Out: the 401 first. A non-default port is joined onto the host so two
+	// backends on one host stay apart; a default port is omitted by semconv
+	// and must not become a stray ":".
+	var out []string
+	for _, r := range h.Out {
+		out = append(out, fmt.Sprintf("%s/%d/%d", r.Where, r.Status, r.Count))
+	}
+	if want := []string{"127.0.0.1:29402/401/2", "ingestion.eu.bronto.io/200/95"}; !reflect.DeepEqual(out, want) {
+		t.Errorf("Out = %v, want %v", out, want)
+	}
+	// The aggregates still work alongside.
+	if h.Received != 40 {
+		t.Errorf("Received = %d, want 40", h.Received)
+	}
+}
+
+// TestHealthWithoutDetail: at any other level the HTTP instrumentation does
+// not exist, and its absence is not a failure — the aggregates still land
+// and the detail is simply empty.
+func TestHealthWithoutDetail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "otelcol_receiver_accepted_spans{receiver=\"otlp\"} 7\n")
+	}))
+	defer srv.Close()
+	h := health(srv.URL)
+	if !h.Available || h.Received != 7 {
+		t.Fatalf("health = %+v", h)
+	}
+	if len(h.In) != 0 || len(h.Out) != 0 {
+		t.Errorf("detail present at a non-detailed level: in=%v out=%v", h.In, h.Out)
 	}
 }

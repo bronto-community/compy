@@ -795,7 +795,7 @@ func TestGetPutSettings(t *testing.T) {
 	}
 
 	grpc := 5000
-	if err := a.PutSettings(&grpc, nil, nil, nil, nil); err != nil {
+	if err := a.PutSettings(&grpc, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("PutSettings: %v", err)
 	}
 	s, err = a.GetSettings()
@@ -807,7 +807,7 @@ func TestGetPutSettings(t *testing.T) {
 	}
 
 	bad := 70000
-	if err := a.PutSettings(&bad, nil, nil, nil, nil); err == nil {
+	if err := a.PutSettings(&bad, nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("PutSettings with out-of-range port: want error, got nil")
 	}
 	s, err = a.GetSettings()
@@ -819,7 +819,7 @@ func TestGetPutSettings(t *testing.T) {
 	}
 
 	zero := 0
-	if err := a.PutSettings(nil, &zero, nil, nil, nil); err == nil {
+	if err := a.PutSettings(nil, &zero, nil, nil, nil, nil); err == nil {
 		t.Fatal("PutSettings with port 0: want error, got nil")
 	}
 
@@ -830,7 +830,7 @@ func TestGetPutSettings(t *testing.T) {
 	}
 	for _, p := range []string{"grpc", "http/protobuf", "http/json"} {
 		p := p
-		if err := a.PutSettings(nil, nil, nil, &p, nil); err != nil {
+		if err := a.PutSettings(nil, nil, nil, &p, nil, nil); err != nil {
 			t.Fatalf("PutSettings(protocol=%q): %v", p, err)
 		}
 		s, err = a.GetSettings()
@@ -843,7 +843,7 @@ func TestGetPutSettings(t *testing.T) {
 	}
 	for _, p := range []string{"", "http", "HTTP/PROTOBUF", "grpc "} {
 		p := p
-		err := a.PutSettings(nil, nil, nil, &p, nil)
+		err := a.PutSettings(nil, nil, nil, &p, nil, nil)
 		if err == nil || !state.IsBadRequest(err) {
 			t.Errorf("PutSettings(protocol=%q) = %v, want a BadRequest", p, err)
 		}
@@ -1706,8 +1706,8 @@ func TestUserMistakesAreBadRequests(t *testing.T) {
 		{"AddDistro missing binary", func() error { return a.AddDistro("fresh", missing) }},
 		{"UseDistro unknown", func() error { return a.UseDistro(nosuch) }},
 		{"EnsureDistro unknown", func() error { _, err := a.EnsureDistro(nosuch, nil); return err }},
-		{"PutSettings port out of range", func() error { p := 99999; return a.PutSettings(&p, nil, nil, nil, nil) }},
-		{"PutSettings unknown protocol", func() error { p := "http/proto"; return a.PutSettings(nil, nil, nil, &p, nil) }},
+		{"PutSettings port out of range", func() error { p := 99999; return a.PutSettings(&p, nil, nil, nil, nil, nil) }},
+		{"PutSettings unknown protocol", func() error { p := "http/proto"; return a.PutSettings(nil, nil, nil, &p, nil, nil) }},
 	}
 	for _, tc := range cases {
 		err := tc.fn()
@@ -2811,7 +2811,7 @@ func TestPutSettingsRefreshesOSEnv(t *testing.T) {
 	}
 	*calls = nil
 	port := 25999
-	if err := a.PutSettings(nil, &port, nil, nil, nil); err != nil {
+	if err := a.PutSettings(nil, &port, nil, nil, nil, nil); err != nil {
 		t.Fatalf("PutSettings: %v", err)
 	}
 	if !slices.Contains(*calls, "launchctl setenv OTEL_EXPORTER_OTLP_ENDPOINT http://127.0.0.1:25999") {
@@ -2823,7 +2823,7 @@ func TestPutSettingsRefreshesOSEnv(t *testing.T) {
 	}
 	*calls = nil
 	port = 26000
-	if err := a.PutSettings(nil, &port, nil, nil, nil); err != nil {
+	if err := a.PutSettings(nil, &port, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range *calls {
@@ -2866,7 +2866,7 @@ func TestPutSettingsProtocolSwitchOSEnv(t *testing.T) {
 
 	*calls = nil
 	proto := "grpc"
-	if err := a.PutSettings(nil, nil, nil, &proto, nil); err != nil {
+	if err := a.PutSettings(nil, nil, nil, &proto, nil, nil); err != nil {
 		t.Fatalf("PutSettings(grpc): %v", err)
 	}
 	grpcCalls := append([]string(nil), *calls...)
@@ -2879,7 +2879,7 @@ func TestPutSettingsProtocolSwitchOSEnv(t *testing.T) {
 
 	*calls = nil
 	proto = "http/protobuf"
-	if err := a.PutSettings(nil, nil, nil, &proto, nil); err != nil {
+	if err := a.PutSettings(nil, nil, nil, &proto, nil, nil); err != nil {
 		t.Fatalf("PutSettings(http/protobuf): %v", err)
 	}
 	httpCalls := append([]string(nil), *calls...)
@@ -2927,7 +2927,7 @@ func TestActivateEmptyPresetUsesDefault(t *testing.T) {
 	}
 
 	// activationEnv equivalence: the plist's environment dict holds exactly
-	// compy's three port variables — what a no-preset activation sets.
+	// compy's own variables — what a no-preset activation sets.
 	plist := readPlist(t)
 	i := strings.Index(plist, "<key>EnvironmentVariables</key>")
 	if i < 0 {
@@ -2937,12 +2937,13 @@ func TestActivateEmptyPresetUsesDefault(t *testing.T) {
 	if j := strings.Index(env, "</dict>"); j >= 0 {
 		env = env[:j]
 	}
-	if got := strings.Count(env, "<key>") - 1; got != 3 { // -1 for the dict's own key
-		t.Errorf("env dict has %d keys, want exactly compy's three port variables:\n%s", got, env)
+	if got := strings.Count(env, "<key>") - 1; got != 4 { // -1 for the dict's own key
+		t.Errorf("env dict has %d keys, want exactly compy's own variables:\n%s", got, env)
 	}
 	if !strings.Contains(env, "<key>COMPY_GRPC_PORT</key><string>"+strconv.Itoa(port)+"</string>") ||
 		!strings.Contains(env, "<key>COMPY_HTTP_PORT</key>") ||
-		!strings.Contains(env, "<key>COMPY_METRICS_PORT</key>") {
+		!strings.Contains(env, "<key>COMPY_METRICS_PORT</key>") ||
+		!strings.Contains(env, "<key>COMPY_METRICS_LEVEL</key>") {
 		t.Errorf("env dict missing compy's ports:\n%s", env)
 	}
 }

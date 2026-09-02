@@ -19,10 +19,11 @@ func TestActivationEnvOmitsEmptyValues(t *testing.T) {
 	}, s)
 
 	want := map[string]string{
-		"REAL":               "value",
-		"COMPY_GRPC_PORT":    "14317",
-		"COMPY_HTTP_PORT":    "14318",
-		"COMPY_METRICS_PORT": "18888",
+		"REAL":                "value",
+		"COMPY_GRPC_PORT":     "14317",
+		"COMPY_HTTP_PORT":     "14318",
+		"COMPY_METRICS_PORT":  "18888",
+		"COMPY_METRICS_LEVEL": "normal",
 	}
 	if len(env) != len(want) {
 		t.Errorf("activationEnv = %v, want %v", env, want)
@@ -42,8 +43,8 @@ func TestActivationEnvOmitsEmptyValues(t *testing.T) {
 // A nil preset map still yields compy's port variables.
 func TestActivationEnvNilValues(t *testing.T) {
 	env := activationEnv(nil, state.Settings{GRPCPort: 1, HTTPPort: 2, MetricsPort: 3})
-	if len(env) != 3 || env["COMPY_GRPC_PORT"] != "1" || env["COMPY_HTTP_PORT"] != "2" ||
-		env["COMPY_METRICS_PORT"] != "3" {
-		t.Errorf("activationEnv(nil) = %v, want just the ports", env)
+	if len(env) != 4 || env["COMPY_GRPC_PORT"] != "1" || env["COMPY_HTTP_PORT"] != "2" ||
+		env["COMPY_METRICS_PORT"] != "3" || env["COMPY_METRICS_LEVEL"] != "normal" {
+		t.Errorf("activationEnv(nil) = %v, want just compy's own variables", env)
 	}
 }

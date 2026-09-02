@@ -127,6 +127,10 @@ type Status struct {
 	// actually bound is reported by the health scrape's own port — which is
 	// how the UI notices a fallback and says so.
 	MetricsPort int `json:"metrics_port"`
+	// MetricsLevel is the collector's internal-telemetry verbosity in
+	// effect. The UI needs it to explain an empty per-signal breakdown:
+	// nothing is wrong, those numbers only exist at "detailed".
+	MetricsLevel string `json:"metrics_level"`
 }
 
 // EndpointPort is the port the advertised OTLP endpoint uses: the gRPC port
@@ -214,7 +218,19 @@ func activationEnv(values map[string]any, s state.Settings) map[string]string {
 	env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
 	env["COMPY_HTTP_PORT"] = strconv.Itoa(s.HTTPPort)
 	env[collector.MetricsPortEnv] = strconv.Itoa(s.MetricsPort)
+	env[collector.MetricsLevelEnv] = effectiveMetricsLevel(s)
 	return env
+}
+
+// effectiveMetricsLevel is the level to hand the collector: the setting, or
+// the default when unset. A stored value that is no longer valid falls back
+// rather than refusing to start — PutSettings validates on the way in, so
+// this only fires for a hand-edited settings.json.
+func effectiveMetricsLevel(s state.Settings) string {
+	if collector.ValidMetricsLevel(s.MetricsLevel) {
+		return s.MetricsLevel
+	}
+	return collector.DefaultMetricsLevel
 }
 
 // activationEnvFor computes the LaunchAgent environment for one preset,
@@ -239,6 +255,7 @@ func (a *App) activationEnvFor(info cfgstore.Info, preset string, s state.Settin
 	env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
 	env["COMPY_HTTP_PORT"] = strconv.Itoa(s.HTTPPort)
 	env[collector.MetricsPortEnv] = strconv.Itoa(s.MetricsPort)
+	env[collector.MetricsLevelEnv] = effectiveMetricsLevel(s)
 	return env
 }
 
@@ -689,6 +706,7 @@ func (a *App) Status() (Status, error) {
 		// verdict itself is unaffected: it turns on the OTLP ports alone.
 		// The primary port is whichever the advertised protocol's endpoint uses.
 		MetricsPort:   s.MetricsPort,
+		MetricsLevel:  effectiveMetricsLevel(s),
 		TrayInstalled: a.TrayInstalled(),
 		Conformance:   portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, s.MetricsPort, s.EffectiveProtocol() == "grpc"),
 		CompyVersion:  version.String(),
@@ -967,6 +985,7 @@ func (a *App) writePresetBag(info cfgstore.Info, preset string, bag map[string]a
 		env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
 		env["COMPY_HTTP_PORT"] = strconv.Itoa(s.HTTPPort)
 		env[collector.MetricsPortEnv] = strconv.Itoa(s.MetricsPort)
+		env[collector.MetricsLevelEnv] = effectiveMetricsLevel(s)
 		tmp, err := os.CreateTemp(a.Dir, "validate-*.yaml")
 		if err != nil {
 			return false, err
@@ -1060,7 +1079,7 @@ func (a *App) GetSettings() (state.Settings, error) { return state.LoadSettings(
 // grpcP/httpP must be in 1-65535, protocol one of grpc, http/protobuf,
 // http/json. Port changes take effect on the next Apply/Activate, not
 // immediately; a protocol change is advertisement-only and needs no restart.
-func (a *App) PutSettings(grpcP, httpP, metricsP *int, protocol *string, tr *Tracing) error {
+func (a *App) PutSettings(grpcP, httpP, metricsP *int, protocol, metricsLevel *string, tr *Tracing) error {
 	s, err := state.LoadSettings()
 	if err != nil {
 		return err
@@ -1092,6 +1111,13 @@ func (a *App) PutSettings(grpcP, httpP, metricsP *int, protocol *string, tr *Tra
 			return state.BadRequest(fmt.Errorf("protocol %q is not one of grpc, http/protobuf, http/json", *protocol))
 		}
 		s.Protocol = *protocol
+	}
+	if metricsLevel != nil {
+		if !collector.ValidMetricsLevel(*metricsLevel) {
+			return state.BadRequest(fmt.Errorf("metrics level %q is not one of %s",
+				*metricsLevel, strings.Join(collector.MetricsLevels, ", ")))
+		}
+		s.MetricsLevel = *metricsLevel
 	}
 	if tr != nil {
 		if tr.On != nil {

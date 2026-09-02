@@ -3,6 +3,7 @@ package collector
 import (
 	"net"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -11,6 +12,29 @@ import (
 // COMPY_GRPC_PORT / COMPY_HTTP_PORT as the third port compy injects, and is
 // the only one the user's own config never mentions.
 const MetricsPortEnv = "COMPY_METRICS_PORT"
+
+// MetricsLevelEnv carries the collector's internal-telemetry verbosity
+// through the same overlay. An invalid value is rejected at config load, so
+// settings validates it before it can reach here.
+const MetricsLevelEnv = "COMPY_METRICS_LEVEL"
+
+// MetricsLevels are the verbosity levels compy offers. "normal" is the
+// collector's own default and compy's; "detailed" adds the HTTP server and
+// client instrumentation — per-signal request counts on the way in, and
+// per-destination HTTP STATUS on the way out, which is the only place a
+// rejected export names its status code instead of burying it in a stack
+// trace. It costs cardinality (measured ~4.5x the series on a one-backend
+// config, 80% of it histogram buckets), which is why it is a setting and
+// not the default. The cost is bounded by the CONFIG — exporters x signals,
+// processors x signals, routes — never by traffic or by how many
+// applications send: nothing in the label set identifies a client, so more
+// senders cannot add series.
+var MetricsLevels = []string{"basic", "normal", "detailed"}
+
+// ValidMetricsLevel reports whether s is one compy offers. The collector
+// also accepts "none", which compy does not: it would blank the health
+// strip, and turning telemetry OFF is what stopping the collector is for.
+func ValidMetricsLevel(s string) bool { return slices.Contains(MetricsLevels, s) }
 
 // OverlayYAML is compy's telemetry overlay: the `service::telemetry` block
 // that puts the collector's own Prometheus endpoint on a port compy chose.
@@ -51,7 +75,12 @@ service:
               prometheus:
                 host: 127.0.0.1
                 port: ${env:` + MetricsPortEnv + `:-` + defaultMetricsPortStr + `}
+      level: ${env:` + MetricsLevelEnv + `:-` + DefaultMetricsLevel + `}
 `
+
+// DefaultMetricsLevel is the collector's own default, and compy's: enough
+// for the health strip, without detailed's histograms.
+const DefaultMetricsLevel = "normal"
 
 // defaultMetricsPortStr keeps the overlay's :-fallback and the scrape's
 // blind default the same number without a fmt call in a const.
