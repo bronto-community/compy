@@ -217,7 +217,7 @@ func TestAdoptPortsGRPCPrimary(t *testing.T) {
 		t.Fatal(err)
 	}
 	proto := "grpc"
-	if err := a.PutSettings(nil, nil, &proto); err != nil {
+	if err := a.PutSettings(nil, nil, nil, &proto); err != nil {
 		t.Fatal(err)
 	}
 	grpcPort := listen(t)

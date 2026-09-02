@@ -100,8 +100,23 @@ func TestBindError(t *testing.T) {
 	if !strings.Contains(got, "port 8888 is already in use by another process") {
 		t.Errorf("BindError(telemetry tail) = %q, want the busy port named", got)
 	}
-	if !strings.Contains(got, "telemetry") || !strings.Contains(got, "service::telemetry") {
-		t.Errorf("BindError(telemetry tail) = %q, want the :8888 own-telemetry-port explanation", got)
+	if !strings.Contains(got, "telemetry port") || !strings.Contains(got, "metrics_port") {
+		t.Errorf("BindError(telemetry tail) = %q, want the own-telemetry-port explanation", got)
+	}
+
+	// Compy's own default gets the same explanation: a config that hardcoded
+	// service::telemetry there collides just as invisibly.
+	ourTail := "Error: failed to create telemetry providers: failed to create SDK: binding address localhost:18888 for Prometheus exporter: listen tcp 127.0.0.1:18888: bind: address already in use\n"
+	if got := collector.BindError(ourTail); !strings.Contains(got, "port 18888 is already in use") ||
+		!strings.Contains(got, "metrics_port") {
+		t.Errorf("BindError(compy telemetry port) = %q, want the same explanation", got)
+	}
+
+	// An ordinary OTLP port gets the busy-port line and no telemetry advice.
+	otlpTail := "Error: listen tcp 127.0.0.1:14318: bind: address already in use\n"
+	if got := collector.BindError(otlpTail); !strings.Contains(got, "port 14318 is already in use") ||
+		strings.Contains(got, "metrics_port") {
+		t.Errorf("BindError(otlp port) = %q, want no telemetry advice", got)
 	}
 
 	clean := "2026-08-25T18:00:00.000+0200\tinfo\tservice/service.go:1\tEverything is ready.\n" +

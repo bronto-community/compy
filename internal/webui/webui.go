@@ -31,8 +31,8 @@ type API struct {
 	SetOSEnv func(on bool) error
 
 	GetSettings func() (map[string]any, error)
-	PutSettings func(grpcPort, httpPort *int, protocol *string) error // partial: nil = unchanged
-	AdoptPorts  func(grpcPort, httpPort *int) error                   // both nil = classify the running config's detected ports; explicit values resolve ambiguity
+	PutSettings func(grpcPort, httpPort, metricsPort *int, protocol *string) error // partial: nil = unchanged
+	AdoptPorts  func(grpcPort, httpPort *int) error                                // both nil = classify the running config's detected ports; explicit values resolve ambiguity
 
 	Health       func() (any, error) // collector's own metrics; {"available": false} when stopped
 	Apply        func() error
@@ -457,15 +457,16 @@ func handleGetSettings(api API) http.HandlerFunc {
 func handlePutSettings(api API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			GRPCPort *int    `json:"grpc_port"`
-			HTTPPort *int    `json:"http_port"`
-			Protocol *string `json:"protocol"`
+			GRPCPort    *int    `json:"grpc_port"`
+			HTTPPort    *int    `json:"http_port"`
+			MetricsPort *int    `json:"metrics_port"`
+			Protocol    *string `json:"protocol"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeBodyErr(w, err)
 			return
 		}
-		if err := api.PutSettings(body.GRPCPort, body.HTTPPort, body.Protocol); err != nil {
+		if err := api.PutSettings(body.GRPCPort, body.HTTPPort, body.MetricsPort, body.Protocol); err != nil {
 			writeClosureErr(w, err)
 			return
 		}

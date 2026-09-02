@@ -10,7 +10,7 @@ import (
 // an exported-but-empty VAR is "set" to the collector and defeats the
 // yaml's own ${env:VAR:-default} fallback.
 func TestActivationEnvOmitsEmptyValues(t *testing.T) {
-	s := state.Settings{GRPCPort: 14317, HTTPPort: 14318}
+	s := state.Settings{GRPCPort: 14317, HTTPPort: 14318, MetricsPort: 18888}
 	env := activationEnv(map[string]any{
 		"EMPTY":      "",
 		"WHITESPACE": "  \t ",
@@ -19,9 +19,10 @@ func TestActivationEnvOmitsEmptyValues(t *testing.T) {
 	}, s)
 
 	want := map[string]string{
-		"REAL":            "value",
-		"COMPY_GRPC_PORT": "14317",
-		"COMPY_HTTP_PORT": "14318",
+		"REAL":               "value",
+		"COMPY_GRPC_PORT":    "14317",
+		"COMPY_HTTP_PORT":    "14318",
+		"COMPY_METRICS_PORT": "18888",
 	}
 	if len(env) != len(want) {
 		t.Errorf("activationEnv = %v, want %v", env, want)
@@ -40,8 +41,9 @@ func TestActivationEnvOmitsEmptyValues(t *testing.T) {
 
 // A nil preset map still yields compy's port variables.
 func TestActivationEnvNilValues(t *testing.T) {
-	env := activationEnv(nil, state.Settings{GRPCPort: 1, HTTPPort: 2})
-	if len(env) != 2 || env["COMPY_GRPC_PORT"] != "1" || env["COMPY_HTTP_PORT"] != "2" {
+	env := activationEnv(nil, state.Settings{GRPCPort: 1, HTTPPort: 2, MetricsPort: 3})
+	if len(env) != 3 || env["COMPY_GRPC_PORT"] != "1" || env["COMPY_HTTP_PORT"] != "2" ||
+		env["COMPY_METRICS_PORT"] != "3" {
 		t.Errorf("activationEnv(nil) = %v, want just the ports", env)
 	}
 }

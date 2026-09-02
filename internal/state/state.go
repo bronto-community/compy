@@ -16,8 +16,18 @@ import (
 // (v1's "enabled"/"raw_mode") are ignored on load, and missing fields keep
 // their defaults, so a v1 file loads without error.
 type Settings struct {
-	GRPCPort     int    `json:"grpc_port"`     // default 14317
-	HTTPPort     int    `json:"http_port"`     // default 14318
+	GRPCPort int `json:"grpc_port"` // default 14317
+	HTTPPort int `json:"http_port"` // default 14318
+
+	// MetricsPort is where the collector serves its OWN telemetry (the
+	// Prometheus endpoint compy's health strip scrapes; otelcol's own
+	// default for it is :8888). Compy supplies it through a config overlay rather than by
+	// editing anybody's yaml, so this works for hand-written configs too.
+	// 0 means "let the OS pick a free one": nothing can collide, but the
+	// port changes every restart, so only pid-based discovery finds it.
+	// A missing field (every settings.json written before this existed)
+	// loads as 0, which LoadSettings turns into the default instead.
+	MetricsPort  int    `json:"metrics_port"`
 	Distro       string `json:"distro"`        // global default distro, "" = compy's default (contrib)
 	ActiveConfig string `json:"active_config"` // active configuration, "" = none
 	OSEnv        bool   `json:"os_env"`        // OS-level env injection active
@@ -89,6 +99,13 @@ type Distro struct {
 const (
 	defaultGRPCPort = 14317
 	defaultHTTPPort = 14318
+	// defaultMetricsPort follows the same convention as the OTLP ports:
+	// the standard port plus 10000. otelcol's own telemetry default is
+	// :8888, and 8888 is a popular port — Prometheus examples, other
+	// collectors, whatever else is on a developer's machine — so sitting on
+	// it by default invites exactly the collision this port became
+	// configurable for. :18888 is compy's, the way :14317/:14318 are.
+	defaultMetricsPort = 18888
 )
 
 // badRequestErr marks an error as the caller's mistake — a bad name, an
@@ -271,7 +288,10 @@ func saveJSON(name string, v any) error {
 // LoadSettings loads settings.json from the state dir. A missing file
 // yields defaults (ports set, rest zero).
 func LoadSettings() (Settings, error) {
-	defaults := Settings{GRPCPort: defaultGRPCPort, HTTPPort: defaultHTTPPort}
+	defaults := Settings{GRPCPort: defaultGRPCPort, HTTPPort: defaultHTTPPort, MetricsPort: defaultMetricsPort}
+	// loadJSON unmarshals INTO the defaults, so a settings.json written
+	// before metrics_port existed picks up the default, while an explicit
+	// "metrics_port": 0 means what it says.
 	return loadJSON("settings.json", defaults)
 }
 

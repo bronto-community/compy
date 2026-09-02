@@ -708,6 +708,9 @@ button.tf-sechead[disabled] { cursor: default; opacity: 1; }
 .health .m .v.off { color: var(--dim2); }
 .health .m .v.warn { color: var(--accent); }
 .health .src { font-size: 11px; color: var(--dim2); }
+/* The telemetry port moved because the configured one was busy: quiet, but
+   not silent — an outside scraper pointed at the old port just broke. */
+.health .src.warn { color: var(--warnText); }
 .logbar {
   display: flex; align-items: center; gap: 10px; padding: 10px 24px;
   border-bottom: 1px solid var(--divider);
