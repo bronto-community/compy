@@ -6,12 +6,12 @@ receivers:
       http:
         endpoint: 127.0.0.1:${env:COMPY_HTTP_PORT:-14318}  # compy's local HTTP port
 exporters:
-  otlphttp:
+  otlp_http:
     endpoint: ${env:OTLP_ENDPOINT:-http://127.0.0.1:4318}  # where to send (base URL; the collector appends /v1/traces etc.)
     headers:
       Authorization: Bearer ${env:OTLP_KEY:-}  # the backend's API key; empty sends an empty header
 service:
   pipelines:
-    traces: {receivers: [otlp], exporters: [otlphttp]}
-    metrics: {receivers: [otlp], exporters: [otlphttp]}
-    logs: {receivers: [otlp], exporters: [otlphttp]}
+    traces: {receivers: [otlp], exporters: [otlp_http]}
+    metrics: {receivers: [otlp], exporters: [otlp_http]}
+    logs: {receivers: [otlp], exporters: [otlp_http]}

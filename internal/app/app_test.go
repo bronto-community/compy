@@ -2961,7 +2961,7 @@ func TestActivateOmitsEmptyPresetValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	yaml := "exporters:\n  otlphttp:\n    endpoint: ${env:BRONTO_ENDPOINT:-https://ingestion.eu.bronto.io}\n"
+	yaml := "exporters:\n  otlp_http:\n    endpoint: ${env:BRONTO_ENDPOINT:-https://ingestion.eu.bronto.io}\n"
 	if err := a.CreateConfig("mine", yaml); err != nil {
 		t.Fatal(err)
 	}

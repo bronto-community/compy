@@ -450,7 +450,7 @@ func TestActivateRendersSelectedPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, yaml, _ := a.Config("mine")
-	if !strings.Contains(yaml, "otlphttp/hc") || strings.Contains(yaml, "otlphttp/second") {
+	if !strings.Contains(yaml, "otlp_http/hc") || strings.Contains(yaml, "otlp_http/second") {
 		t.Errorf("default-preset render wrong:\n%s", yaml)
 	}
 
@@ -458,7 +458,7 @@ func TestActivateRendersSelectedPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, yaml, _ = a.Config("mine")
-	if !strings.Contains(yaml, "otlphttp/second") {
+	if !strings.Contains(yaml, "otlp_http/second") {
 		t.Errorf("two-preset render did not switch structure:\n%s", yaml)
 	}
 
@@ -466,7 +466,7 @@ func TestActivateRendersSelectedPreset(t *testing.T) {
 	if err := a.Activate("mine", "default"); err != nil {
 		t.Fatal(err)
 	}
-	if _, yaml, _ = a.Config("mine"); strings.Contains(yaml, "otlphttp/second") {
+	if _, yaml, _ = a.Config("mine"); strings.Contains(yaml, "otlp_http/second") {
 		t.Errorf("switching back kept the other preset's structure:\n%s", yaml)
 	}
 }

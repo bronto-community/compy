@@ -128,20 +128,20 @@ func TestRenderShippedOTLPForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"  otlphttp/eu-prod:\n    endpoint: https://api.example.com\n    headers:\n      Authorization: Bearer ${env:EU_PROD_API_KEY:-}  # EU prod auth value\n",
-		"  otlphttp/vendor-two:\n    endpoint: https://otlp.example.net\n    headers:\n      x-example-key: ${env:VENDOR_TWO_API_KEY:-}  # vendor two auth value\n",
-		"  otlphttp/local-tap:\n    endpoint: http://10.0.0.5:4318\n",
+		"  otlp_http/eu-prod:\n    endpoint: https://api.example.com\n    headers:\n      Authorization: Bearer ${env:EU_PROD_API_KEY:-}  # EU prod auth value\n",
+		"  otlp_http/vendor-two:\n    endpoint: https://otlp.example.net\n    headers:\n      x-example-key: ${env:VENDOR_TWO_API_KEY:-}  # vendor two auth value\n",
+		"  otlp_http/local-tap:\n    endpoint: http://10.0.0.5:4318\n",
 		"  memory_limiter:\n    check_interval: 1s",
 		"  batch:\n    send_batch_size: 1024",
-		"    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/eu-prod, otlphttp/vendor-two, otlphttp/local-tap]\n",
-		"    metrics:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/eu-prod, otlphttp/vendor-two, otlphttp/local-tap]\n",
-		"    logs:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlphttp/eu-prod, otlphttp/vendor-two, otlphttp/local-tap]\n",
+		"    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlp_http/eu-prod, otlp_http/vendor-two, otlp_http/local-tap]\n",
+		"    metrics:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlp_http/eu-prod, otlp_http/vendor-two, otlp_http/local-tap]\n",
+		"    logs:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlp_http/eu-prod, otlp_http/vendor-two, otlp_http/local-tap]\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render missing:\n%s\nin:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "otlphttp/local-tap:\n    endpoint: http://10.0.0.5:4318\n    headers") {
+	if strings.Contains(out, "otlp_http/local-tap:\n    endpoint: http://10.0.0.5:4318\n    headers") {
 		t.Errorf("emptied auth header still rendered headers:\n%s", out)
 	}
 	if strings.Contains(out, "x-example-key: Bearer") {
@@ -160,7 +160,7 @@ func TestRenderShippedOTLPForward(t *testing.T) {
 	if strings.Contains(out, "processors") {
 		t.Errorf("processors rendered with every toggle off:\n%s", out)
 	}
-	if !strings.Contains(out, "    traces:\n      receivers: [otlp]\n      exporters: [otlphttp/eu-prod") {
+	if !strings.Contains(out, "    traces:\n      receivers: [otlp]\n      exporters: [otlp_http/eu-prod") {
 		t.Errorf("bare pipeline missing with toggles off:\n%s", out)
 	}
 	// The offline queue brings the extension and the per-exporter queue.
@@ -342,7 +342,7 @@ func TestRowLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "otlphttp/us-prod:") {
+	if !strings.Contains(out, "otlp_http/us-prod:") {
 		t.Errorf("rename did not move the exporter id:\n%s", out)
 	}
 }
@@ -1210,7 +1210,7 @@ fields:
 {{- if .memory_limiter}}{{$procs = append $procs "memory_limiter"}}{{end -}}
 {{- if .batch}}{{$procs = append $procs "batch"}}{{end -}}
 {{- $exp := list -}}
-{{- range .backends}}{{$exp = append $exp (printf "otlphttp/%s" ._slug)}}{{end -}}
+{{- range .backends}}{{$exp = append $exp (printf "otlp_http/%s" ._slug)}}{{end -}}
 {{- if .debug_tee}}{{$exp = append $exp "debug"}}{{end -}}
 receivers:
   otlp:
@@ -1223,7 +1223,7 @@ receivers:
 {{- end}}
 exporters:
 {{- range .backends}}
-  otlphttp/{{._slug}}:
+  otlp_http/{{._slug}}:
     endpoint: {{.endpoint}}
 {{- if .auth_header}}
     headers:

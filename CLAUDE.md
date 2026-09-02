@@ -98,6 +98,11 @@ ruling 2026-08-29 — the OTel ecosystem itself runs on it).
   last-good restore rolls a bad update back. `contrib` is the implicit
   default: an empty `settings.Distro` resolves to it, auto-downloaded by
   the first operation that needs a collector binary (`app.DefaultDistro`).
+  Every pinned distro is on the same collector version, which is what lets
+  the shipped configs use current component names — the exporter is
+  `otlp_http`, not the deprecated `otlphttp` alias (renamed in collector
+  v0.144.0; the alias still works but warns on every start). A user-managed
+  binary older than that is the one case where they would not load.
 - `envvars` — computes the `OTEL_*` vars compy exposes; emits them as shell
   scripts (`compy env`), subprocess environments (`compy run`), or OS-level
   (`launchctl setenv`) settings.

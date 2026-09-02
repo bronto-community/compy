@@ -17,7 +17,7 @@ processors:
     timeout: 200ms
 
 exporters:
-  otlphttp/eu-prod:
+  otlp_http/eu-prod:
     endpoint: https://api.example.com
     headers:
       Authorization: Bearer ${env:EU_PROD_API_KEY:-}  # EU prod auth value
@@ -25,7 +25,7 @@ exporters:
       storage: file_storage  # survives restarts and offline stretches
     retry_on_failure:
       max_elapsed_time: 0  # retry forever; the queue holds telemetry until the backend answers
-  otlphttp/vendor-two:
+  otlp_http/vendor-two:
     endpoint: https://otlp.example.net
     headers:
       x-example-key: ${env:VENDOR_TWO_API_KEY:-}  # vendor two auth value
@@ -45,12 +45,12 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/eu-prod, otlphttp/vendor-two]
+      exporters: [otlp_http/eu-prod, otlp_http/vendor-two]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/eu-prod, otlphttp/vendor-two]
+      exporters: [otlp_http/eu-prod, otlp_http/vendor-two]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/eu-prod, otlphttp/vendor-two]
+      exporters: [otlp_http/eu-prod, otlp_http/vendor-two]
