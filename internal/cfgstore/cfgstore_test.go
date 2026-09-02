@@ -1511,7 +1511,7 @@ func TestMaterializeTemplatedDefaults(t *testing.T) {
 	if row[catalog.LabelKey] != "backend 1" || row["auth_header"] != "Authorization" {
 		t.Errorf("seeded row = %v, want the schema defaults", row)
 	}
-	for _, want := range []string{"otlphttp/backend-1", "${env:BACKEND_1_API_KEY:-}", "memory_limiter"} {
+	for _, want := range []string{"otlp_http/backend-1", "${env:BACKEND_1_API_KEY:-}", "memory_limiter"} {
 		if !strings.Contains(yaml, want) {
 			t.Errorf("rendered yaml missing %q:\n%s", want, yaml)
 		}
@@ -1550,7 +1550,7 @@ func TestMaterializeUpgradesPlainShippedToTemplated(t *testing.T) {
 	if !info.HasTemplate || info.Provenance != "shipped" || info.Modified {
 		t.Fatalf("upgraded otlp-forward = %+v, want an unmodified shipped templated config", info)
 	}
-	if !strings.Contains(yaml, "otlphttp/backend-1") {
+	if !strings.Contains(yaml, "otlp_http/backend-1") {
 		t.Errorf("upgrade did not re-render:\n%s", yaml)
 	}
 	for _, preset := range []string{"default", "prod"} {

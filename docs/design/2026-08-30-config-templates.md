@@ -717,7 +717,7 @@ feature of the SCHEMA.
 - **Bodies assemble their own lists** with three new template funcs beside
   `upper`/`slug`: `list`, `append`, `join`.
 
-      {{$e := list}}{{range .backends}}{{$e = append $e (printf "otlphttp/%s" ._slug)}}{{end}}
+      {{$e := list}}{{range .backends}}{{$e = append $e (printf "otlp_http/%s" ._slug)}}{{end}}
       exporters: [{{join $e ", "}}]
 
   That is the whole replacement for `TracesExps` and friends — and it works

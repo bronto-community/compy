@@ -149,7 +149,7 @@ func userErrf(format string, a ...any) error {
 // behind it — a processor order, an exporter set — without any knowledge of
 // what the group is called:
 //
-//	{{$e := list}}{{range .backends}}{{$e = append $e (printf "otlphttp/%s" ._slug)}}{{end}}
+//	{{$e := list}}{{range .backends}}{{$e = append $e (printf "otlp_http/%s" ._slug)}}{{end}}
 //	exporters: [{{join $e ", "}}]
 var funcs = template.FuncMap{
 	"upper": strings.ToUpper,

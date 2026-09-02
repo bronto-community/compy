@@ -47,7 +47,7 @@ fields:
 {{- if .memory_limiter}}{{$procs = append $procs "memory_limiter"}}{{end -}}
 {{- if .batch}}{{$procs = append $procs "batch"}}{{end -}}
 {{- $exp := list -}}
-{{- range .backends}}{{$exp = append $exp (printf "otlphttp/%s" ._slug)}}{{end -}}
+{{- range .backends}}{{$exp = append $exp (printf "otlp_http/%s" ._slug)}}{{end -}}
 receivers:
   otlp:
     protocols:
@@ -72,7 +72,7 @@ processors:
 {{end}}
 exporters:
 {{- range .backends}}
-  otlphttp/{{._slug}}:
+  otlp_http/{{._slug}}:
     endpoint: {{.endpoint}}
 {{- if .auth_header}}
     headers:
