@@ -94,7 +94,18 @@
             "type": "string",
             "enum": ["grpc", "http/protobuf", "http/json"],
             "description": "The advertised OTLP protocol (default http/protobuf)."
-          }
+          },
+          "tracing": { "type": "boolean", "description": "Compy's OWN OpenTelemetry tracing: spans over compy's operations (activate, render, validate, launchd install, probe), exported as OTLP/HTTP. Off by default and free when off — no TracerProvider is installed, so the global stays OTel's no-op." },
+          "tracing_endpoint": {
+            "type": "string",
+            "description": "Where those spans go, RESOLVED: the configured endpoint, or compy's own collector (http://127.0.0.1:<http_port>) when none is set. Always a real destination, never empty — a settings screen showing a blank field would be lying about where the spans go. The signal path (/v1/traces) is appended by compy."
+          },
+          "tracing_endpoint_set": {
+            "type": "boolean",
+            "description": "Whether tracing_endpoint is the user's choice rather than the default, so a UI can show the default as a placeholder instead of treating it as input."
+          },
+          "tracing_headers": { "type": "string", "description": "Headers sent with each export, \"Name: value\" per line — how a hosted backend's API key reaches it." },
+          "tray_installed": { "type": "boolean", "description": "Whether the menu-bar item has a login agent on disk — i.e. whether the icon returns at the next login. A tray quit for this session still has one." }
         }
       },
       "SettingsUpdate": {
@@ -104,6 +115,9 @@
           "grpc_port": { "type": "integer" },
           "http_port": { "type": "integer" },
           "metrics_port": { "type": "integer", "description": "1-65535, or 0 to let the OS pick a free port at launch. Anything else is a 400. Takes effect on the next apply." },
+          "tracing": { "type": "boolean", "description": "Compy's OWN OpenTelemetry tracing: spans over compy's operations (activate, render, validate, launchd install, probe), exported as OTLP/HTTP. Off by default and free when off — no TracerProvider is installed, so the global stays OTel's no-op. Takes effect for processes started after the change; a running tray or window picks it up when it restarts." },
+          "tracing_endpoint": { "type": "string", "description": "An http(s) BASE URL — the signal path is appended. The empty string is a real value: it clears a custom endpoint back to compy's own collector. Anything that is not an http(s) URL is a 400." },
+          "tracing_headers": { "type": "string", "description": "\"Name: value\" per line; blank lines and #comments ignored. A line without a colon is a 400 naming the line number." },
           "protocol": {
             "type": "string",
             "enum": ["grpc", "http/protobuf", "http/json"],
@@ -558,6 +572,21 @@
     "/api/factory-reset": {
       "post": {
         "summary": "Reset compy to factory settings: uninstall the collector job, wipe the state directory's contents, and re-create the shipped defaults (the tray's own agent is untouched)",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "500": {
+            "description": "Error",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/api/tray/uninstall": {
+      "post": {
+        "summary": "Remove the menu-bar item's login agent — the icon goes away and does not return at the next login. Reversible with `compy tray install`. Deliberately not offered by the tray's own menu, where a mis-click cost no confirmation.",
         "responses": {
           "200": {
             "description": "OK",

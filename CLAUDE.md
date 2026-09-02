@@ -54,9 +54,20 @@ part of the gates above; run it when the manifest changes.
 Stdlib only, except `fyne.io/systray` (tray icon; darwin-only build, stubbed
 out on other GOOS in `internal/tray`), `github.com/wailsapp/wails/v2`
 (native window, used as a library — no wails CLI, wails.json, or node;
-darwin-only build, stubbed out on other GOOS in `internal/window`), and
+darwin-only build, stubbed out on other GOOS in `internal/window`),
 `gopkg.in/yaml.v3` (YAML front matter in tier-3 config sources; owner
-ruling 2026-08-29 — the OTel ecosystem itself runs on it).
+ruling 2026-08-29 — the OTel ecosystem itself runs on it), and the
+**OpenTelemetry Go SDK** (`go.opentelemetry.io/otel`, `otel/sdk`,
+`exporters/otlp/otlptrace/otlptracehttp`) for compy's own tracing.
+
+The OTel ruling is owner-made and deliberate (2026-09-02), against a
+measured alternative: the stock OTLP/HTTP exporter is protobuf, so it drags
+in grpc, protobuf, grpc-gateway and x/net — **+17.5 MB**, roughly doubling
+the binary, versus +5.4 MB for the same SDK behind a hand-written OTLP/JSON
+exporter. The owner chose the stock exporter: an OpenTelemetry tool should
+ship the OpenTelemetry SDK unmodified, and nothing in compy is hand-rolled
+where upstream has the real thing. Do not "optimise" this back into a
+custom encoder without a new ruling.
 
 ## Module layout (`internal/*`)
 
@@ -114,13 +125,26 @@ ruling 2026-08-29 — the OTel ecosystem itself runs on it).
   (500): it lives in this leaf package so `cfgstore` and `app` can mark
   errors without importing the HTTP layer back.
 - `tray` — macOS menu-bar icon (status, Open UI, Quit — deliberately no
-  per-backend toggles); non-darwin build is a no-op stub.
+  per-backend toggles, and deliberately no "Remove from Menu Bar": that sat
+  beside Quit, looked like it, and deleted a login item with no confirm, so
+  it moved to the settings screen's danger area, owner ruling 2026-09-02);
+  non-darwin build is a no-op stub.
 - `webui` — localhost-only web UI: JSON API plus an embedded (`go:embed`)
   single-page app; no internal dependencies (it recognises `state`'s
   bad-request marker structurally, by its `BadRequest() bool` method), the
   caller wires behavior in via a closure struct. A 5xx is the only thing
   the page appends a collector log tail to, so a user mistake answered 500
   buries its own message — mark it.
+- `tracing` — compy's OWN OpenTelemetry tracing (opt-in, off by default):
+  builds the global TracerProvider from settings and returns the flush the
+  entry point defers. The default destination is compy's own collector, so
+  compy's spans travel the path a user's applications do and land wherever
+  the active configuration sends them; an endpoint + headers in settings
+  bypasses it. Off installs nothing, so `internal/app`'s `op()` calls run
+  unguarded on OTel's no-op global — nothing in compy may depend on a span
+  existing. Export timeout and shutdown are short and retry is OFF: the
+  default destination is a collector the user can stop, and a CLI command
+  must not wait on it.
 - `window` — the native window wrapper `compy window` runs.
 
 ## api/

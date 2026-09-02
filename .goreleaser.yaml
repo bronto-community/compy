@@ -130,8 +130,8 @@ homebrew_casks:
 
         compy tray install
 
-      It then starts at login. Remove it with "Remove from Menu Bar" in its
-      menu, or `compy tray uninstall`.
+      It then starts at login. Remove it from the danger area in compy's
+      settings screen, or with `compy tray uninstall`.
     # No goreleaser field maps to `depends_on`, and custom_block is injected
     # at the top of the cask. brew style relocates it (and rewrites the value
     # to `macos: :big_sur`); the tap normalizes style on main, so the emitted

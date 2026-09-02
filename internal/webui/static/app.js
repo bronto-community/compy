@@ -169,6 +169,8 @@ const S = {
   settings: null,          // { grpc_port, http_port }
   portsSaved: false,       // "applies on the next restart" line showing
   resetArm: false,         // factory-reset inline confirm showing
+  trayArm: false,          // remove-from-menu-bar inline confirm showing
+  trayBusy: false,
   resetTyped: "",          // what's in its type-compy-to-confirm field
   resetBusy: false,        // reset request in flight
 
@@ -862,7 +864,7 @@ function screenConfigs() {
 const HELP_COPY = {
   configs: "pick a config that ships with compy, add a preset with your endpoint and key (the + button), then press play. activating restarts the collector. new configuration adds your own: paste yaml, fetch it from a url, paste an otelbin.io share link, or copy a template and edit its options as a form in the editor.",
   collector: "these numbers are the collector's own, scraped from its telemetry endpoint, and listening shows only ports the process actually has open. the log below is the collector's output, grouped by level and filterable. restart and stop live here; the configurations screen picks what runs.",
-  settings: "appearance, and how apps find compy: the advertised endpoint, its protocol, and the system-wide OTEL_* toggle. global variables are values every configuration's yaml can reference; the collector table downloads, updates, or replaces the binary every config runs on. the danger area at the bottom deletes everything compy manages.",
+  settings: "appearance, and how apps find compy: the advertised endpoint, its protocol, and the system-wide OTEL_* toggle. global variables are values every configuration's yaml can reference; the collector table downloads, updates, or replaces the binary every config runs on. the danger area at the bottom removes compy from the menu bar, or deletes everything compy manages.",
   editor: "a configuration is one whole collector config.yaml plus its presets. a preset holds all of a config's values; activating a config runs it with the selected preset's. configs built in to compy or fetched from a url guard their yaml; editing makes it yours, and it stops updating from its source. a config whose text opens with a schema block is templated: the form edits the selected preset's values, the source below describes them, and one save carries both. cmd+s saves, and the save button shows amber while anything is unsaved.",
 };
 function helpButton(page) {
@@ -3051,6 +3053,7 @@ function screenSettings() {
       el("span", { class: "switch" + (osEnvOn ? " on" : "") }, [el("i")]),
     ]),
     envGuide(),
+    tracingRows(),
   ]));
 
   /* one quiet line under the app card: the running build, and — release
@@ -3099,17 +3102,63 @@ function screenSettings() {
   ]));
   wrap.appendChild(table);
 
-  // Factory reset lives at the very bottom, quietly set apart as the one
-  // danger area: muted err styling, and a stronger confirm than delete —
-  // this deletes user data wholesale, so the verb stays disabled until
-  // "compy" is typed.
+  // The danger area at the very bottom, quietly set apart: muted err
+  // styling and a confirm on every verb. Removing the menu-bar item is
+  // here rather than in the tray's own menu, where it sat beside Quit and
+  // got clicked by accident (owner, 2026-09-02). Factory reset is last and
+  // is the only one gated on typing the name — it is the only one that
+  // destroys data.
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
     span("title", "danger"),
   ]));
+  wrap.appendChild(trayRemoveCard());
   wrap.appendChild(factoryResetCard());
 
   if (lastError) wrap.appendChild(errorStrip());
   return wrap;
+}
+
+/* Remove the menu bar item: a login agent goes away, nothing else. It is
+   reversible (`compy tray install`), so it gets an ordinary inline confirm
+   rather than the reset's type-the-name gate — but it IS destructive
+   enough to belong down here and to be worth one question. */
+function trayRemoveCard() {
+  const installed = !!(S.status && S.status.tray_installed);
+  const card = el("div", { class: "card danger-card", attrs: { style: "margin-bottom:8px" } });
+  card.appendChild(el("div", { class: "srow" }, [
+    el("span", { class: "lbl" }, [
+      span("t", "remove compy from the menu bar"),
+      el("span", { class: "n sans", text: installed
+        ? "the icon goes away and does not come back at the next login. everything else — your configurations and the running collector — is untouched. `compy tray install` puts it back."
+        : "not in the menu bar. `compy tray install` adds it." }),
+    ]),
+    el("span", { class: "grow" }),
+    !installed || S.trayArm ? null : el("button", {
+      class: "btn quiet", text: "remove…",
+      on: { click: () => { S.trayArm = true; render(); } },
+    }),
+  ]));
+  if (installed && S.trayArm) {
+    card.appendChild(confirmBar(
+      "remove the menu bar item? the collector keeps running; only the icon and its login item go.",
+      S.trayBusy ? "removing…" : "remove it", "danger",
+      doRemoveTray,
+      () => { S.trayArm = false; render(); },
+      { cls: "reset-confirm", cancel: "keep it" }));
+  }
+  return card;
+}
+async function doRemoveTray() {
+  if (S.trayBusy) return;
+  S.trayBusy = true; clearError(); render();
+  try {
+    await apiJSON("/api/tray/uninstall", "POST", {});
+    S.trayArm = false;
+    await loadCore(); // status.tray_installed flips the row to its "not there" state
+    note("removed from the menu bar. `compy tray install` puts it back", 5000);
+  } catch (e) { showError(e); }
+  S.trayBusy = false;
+  render();
 }
 
 function factoryResetCard() {
@@ -3312,6 +3361,95 @@ async function savePort(key, raw) {
     await loadCore(); // status carries the (still-running) old ports; refresh anyway
     flashSaved("gvar-" + key);
   } catch (e) { showError(e); try { await loadSettings(); } catch (e2) { /* keep stale */ } }
+  render();
+}
+
+/* compy's own tracing (settings' tracing/tracing_endpoint/tracing_headers).
+   Off by default. The destination defaults to compy's OWN collector, so the
+   spans travel the path a user's apps do and land wherever the active
+   configuration sends them — which is why the endpoint row is a placeholder
+   showing the resolved default rather than an empty box: nothing here is
+   unset, it just isn't overridden. The endpoint and headers only appear
+   once tracing is on; there is nothing to configure about an off switch. */
+function tracingRows() {
+  const st = S.settings || {};
+  const on = !!st.tracing;
+  const rows = [
+    el("button", {
+      class: "srow clickable", on: { click: () => setTracing(!on) },
+      attrs: { type: "button", role: "switch", "aria-checked": on ? "true" : "false" },
+    }, [
+      el("span", { class: "lbl" }, [
+        span("t", "trace compy itself"),
+        el("span", { class: "n sans", text: "compy emits OpenTelemetry spans over its own operations — activations, renders, collector validation. off by default" }),
+      ]),
+      el("span", { class: "grow" }),
+      savedMark("tracing"),
+      el("span", { class: "switch" + (on ? " on" : "") }, [el("i")]),
+    ]),
+  ];
+  if (!on) return el("div", { class: "trows" }, rows);
+
+  rows.push(el("div", { class: "srow" }, [
+    el("span", { class: "lbl" }, [
+      span("t", "traces go to"),
+      el("span", { class: "n sans", text: st.tracing_endpoint_set
+        ? "your endpoint. clear it to send through compy's own collector again"
+        : "compy's own collector, so they follow your active configuration wherever it sends. set an endpoint to bypass it" }),
+    ]),
+    el("span", { class: "grow" }),
+    savedMark("tracing_endpoint"),
+    el("input", {
+      class: "field wide",
+      attrs: {
+        spellcheck: "false", "data-fk": "tracing-endpoint", "aria-label": "tracing endpoint",
+        placeholder: st.tracing_endpoint || "",
+      },
+      props: { value: st.tracing_endpoint_set ? st.tracing_endpoint : "" },
+      on: { change: (e) => saveTracingField("tracing_endpoint", e.target.value) },
+    }),
+  ]));
+  rows.push(el("div", { class: "srow tall" }, [
+    el("span", { class: "lbl" }, [
+      span("t", "headers"),
+      el("span", { class: "n sans", text: "one \"Name: value\" per line — an API key for a hosted backend. stored in settings.json" }),
+    ]),
+    el("span", { class: "grow" }),
+    savedMark("tracing_headers"),
+    el("textarea", {
+      class: "field wide mono",
+      attrs: {
+        spellcheck: "false", rows: "2", "data-fk": "tracing-headers", "aria-label": "tracing headers",
+        placeholder: "Authorization: Bearer …",
+      },
+      props: { value: st.tracing_headers || "" },
+      on: { change: (e) => saveTracingField("tracing_headers", e.target.value) },
+    }),
+  ]));
+  return el("div", { class: "trows" }, rows);
+}
+async function setTracing(on) {
+  clearError();
+  try {
+    S.settings = await apiJSON("/api/settings", "PUT", { tracing: on });
+    flashSaved("tracing");
+    note(on
+      ? "saved. compy traces itself from the next command on — a running tray or window picks it up when it restarts"
+      : "saved. compy no longer traces itself", 4200);
+  } catch (e) { showError(e); }
+  render();
+}
+async function saveTracingField(key, value) {
+  clearError();
+  try {
+    const body = {};
+    body[key] = value;
+    S.settings = await apiJSON("/api/settings", "PUT", body); // the backend 400s a bad URL or header line
+    flashSaved(key);
+  } catch (e) {
+    showError(e);
+    try { await loadSettings(); } catch (e2) { /* keep what we have */ }
+  }
   render();
 }
 

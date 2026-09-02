@@ -136,3 +136,60 @@ dashboard.
    Which Bronto org/collection does this land in?
 3. Hand-rolled OTLP JSON (recommended, keeps the stdlib rule) or an
    OTel Go SDK dependency ruling?
+
+---
+
+## Amendment 1 — what actually shipped (owner-directed, 2026-09-02)
+
+The proposal above is PRODUCT telemetry: compy phoning home to Bronto so we
+learn how it is used. What the owner asked to build first is a different
+thing wearing the same words — **observability of compy, for the person
+running compy** — and it resolves most of the ⚖ decisions by removing them.
+
+Shipped:
+
+- **A toggle** (`settings.json` `tracing`, a switch on the settings screen,
+  `compy settings set --tracing`). Off by default.
+- **OpenTelemetry tracing**, real spans from the real SDK, over compy's own
+  operations: `compy.activate` with `compy.render`, `compy.validate`,
+  `compy.launchd.install` and `compy.probe` beneath it, plus `compy.apply`
+  and `compy.stop`. Instrumented in `internal/app`, so the same spans
+  appear whether the operation came from the CLI, the tray, or the web UI;
+  `compy.surface` on the resource says which.
+- **Default destination: compy's own collector** (`127.0.0.1:<http_port>`).
+  Compy's telemetry travels the path a user's applications do and lands
+  wherever their active configuration sends it. An endpoint + headers in
+  settings bypasses it for a backend directly.
+
+What that changes about the decisions above:
+
+1. **Consent** is no longer a question. Nothing is collected until the user
+   turns it on, and what is collected goes to THEIR pipeline, on their
+   machine, by default. There is no first-run prompt to design because
+   there is no default collection. `TELEMETRY.md` is not needed for this;
+   it would be needed for the Bronto-facing proposal, which is untouched.
+2. **The embedded ingestion key** is moot for this feature: there is no
+   compy-owned destination. It stays open for the product-telemetry
+   proposal, if that is ever built.
+3. **The wire format** was ruled: the stock OTel Go SDK with its OTLP/HTTP
+   protobuf exporter, +17.5 MB, over a hand-written JSON exporter at
+   +5.4 MB (see CLAUDE.md's Dependencies). An OpenTelemetry tool ships the
+   OpenTelemetry SDK.
+
+Deliberately still absent: metrics and logs (traces first), sampling
+configuration (a local tool at this volume does not need it), and any
+attribute carrying a config's contents, endpoints, or values — a span says
+WHICH configuration by name and nothing about what is in it.
+
+The two failure modes worth knowing:
+
+- The default destination is a collector the user can stop, and compy
+  traces its own `compy stop`. Export timeout and shutdown are short
+  (2s/3s) and retry is OFF, so a stopped collector costs a dropped span,
+  never a hanging CLI. The OTLP defaults — 10s timeout, 5s initial backoff,
+  retry on — would have put a ten-second pause on every command.
+- `otlptracehttp.WithEndpointURL` takes its URL literally. The setting is a
+  BASE (like otlp-forward's endpoint field), so `tracing.TracesURL` appends
+  `/v1/traces`; without it every span POSTs to `/`, gets a 404, and
+  disappears silently. Caught only by asserting the path in a test — the
+  first end-to-end run "passed" against a handler that accepted anything.

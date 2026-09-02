@@ -166,10 +166,10 @@ func Uninstall() error {
 }
 
 // UninstallAgent removes the plist file for label and unloads its job
-// (ignoring bootout errors — it may not be loaded). Plist FIRST: the tray's
-// "Remove from Menu Bar" calls this from inside the very process the
-// bootout SIGTERMs, and the old bootout-first order could kill the caller
-// with the plist still on disk — resurrecting the agent at next login.
+// (ignoring bootout errors — it may not be loaded). Plist FIRST: this can
+// be called from inside the very process the bootout SIGTERMs — the tray
+// removing itself — and the old bootout-first order could kill the caller
+// with the plist still on disk, resurrecting the agent at next login.
 // bootout targets the loaded job by label, not the file, so the order is
 // free for every other caller.
 func UninstallAgent(label string) error {
@@ -182,6 +182,19 @@ func UninstallAgent(label string) error {
 	}
 	_, _ = Exec("bootout", guiTarget()+"/"+label)
 	return nil
+}
+
+// AgentInstalled reports whether label's plist is on disk. The plist IS
+// the login item: a tray that was quit for this session still has one, and
+// comes back at the next login, so this answers "will it return", not "is
+// it on screen".
+func AgentInstalled(label string) bool {
+	path, err := agentPlistPath(label)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
 }
 
 // InstalledBinary returns the collector binary path baked into the

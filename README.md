@@ -38,9 +38,9 @@ the repository and trusts that one cask on its own.
 The install brings the compy binary, its bundled collector distribution
 (`otelcol-compy`) and the `compy.app` identity for the native window. The
 menu bar item — compy's main interface — is a login item, so adding it is
-that second command rather than something `brew install` does for you. Take it
-out again with "Remove from Menu Bar" in its menu, or `compy tray
-uninstall`.
+that second command rather than something `brew install` does for you. Take
+it out again from the danger area at the bottom of the window's settings
+screen, or with `compy tray uninstall`.
 
 Building from source instead is covered in
 [CONTRIBUTING.md](CONTRIBUTING.md); `compy tray install` works the same way

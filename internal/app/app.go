@@ -5,15 +5,19 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/bronto-community/compy/internal/catalog"
 	"github.com/bronto-community/compy/internal/cfgstore"
@@ -22,6 +26,7 @@ import (
 	"github.com/bronto-community/compy/internal/envvars"
 	"github.com/bronto-community/compy/internal/launchd"
 	"github.com/bronto-community/compy/internal/state"
+	"github.com/bronto-community/compy/internal/tracing"
 	"github.com/bronto-community/compy/internal/version"
 )
 
@@ -70,6 +75,15 @@ type App struct {
 	downloads map[string]download
 }
 
+// Tracing is a partial update to compy's own tracing settings: a nil field
+// leaves that one unchanged, so the UI can flip the toggle without
+// resending the endpoint and headers.
+type Tracing struct {
+	On       *bool
+	Endpoint *string
+	Headers  *string
+}
+
 // Status is the machine-readable service summary (`compy status --json`).
 type Status struct {
 	Running  bool     `json:"running"`
@@ -103,6 +117,11 @@ type Status struct {
 	// — a reboot included — would fail; restarting through compy re-resolves
 	// the binary and heals it.
 	StaleBinary bool `json:"stale_binary,omitempty"`
+	// TrayInstalled is whether the menu-bar item has a login agent on disk —
+	// whether the icon comes back at the next login. A tray quit for this
+	// session still has one. The settings screen offers the removal only
+	// when there is something to remove.
+	TrayInstalled bool `json:"tray_installed"`
 	// MetricsPort is the CONFIGURED telemetry port (settings' metrics_port);
 	// 0 means compy asks the OS for a free one at launch. What the collector
 	// actually bound is reported by the health scrape's own port — which is
@@ -332,7 +351,11 @@ func (a *App) restorePrevious() (string, error) {
 // reactivating caller (WriteConfigYAML, Sync, UseDistro, the preset writes)
 // persists the user's intent BEFORE re-activating, so a snapshot taken here
 // would capture the very edit that is about to fail and "restore" it.
-func (a *App) Activate(name, preset string) error {
+func (a *App) Activate(name, preset string) (err error) {
+	ctx, end := op(context.Background(), "compy.activate",
+		attribute.String("compy.config", name), attribute.String("compy.preset", preset))
+	defer func() { end(err) }()
+
 	info, prevYAML, err := cfgstore.Get(a.Dir, name)
 	if err != nil {
 		return err
@@ -357,7 +380,9 @@ func (a *App) Activate(name, preset string) error {
 	// the preset's values being wrong: 400, nothing changed.
 	rerendered := false
 	if info.HasTemplate {
+		_, rend := op(ctx, "compy.render", attribute.String("compy.config", name))
 		rendered, rerr := a.renderPreset(info, preset)
+		rend(rerr)
 		if rerr != nil {
 			return rerr
 		}
@@ -378,11 +403,14 @@ func (a *App) Activate(name, preset string) error {
 	// fault of ours: 400, and the collector's own diagnostics are the whole
 	// answer (a log tail from the previous run would only bury them). A
 	// rejected activation changes nothing, so a fresh render goes back too.
-	if err := collector.Validate(bin, args, env); err != nil {
+	_, vend := op(ctx, "compy.validate", attribute.String("compy.collector.bin", bin))
+	verr := collector.Validate(bin, args, env)
+	vend(verr)
+	if verr != nil {
 		if rerendered {
 			_ = cfgstore.WriteRendered(a.Dir, name, prevYAML)
 		}
-		return state.BadRequest(err)
+		return state.BadRequest(verr)
 	}
 
 	if preset != info.Meta.ActivePreset {
@@ -394,8 +422,11 @@ func (a *App) Activate(name, preset string) error {
 	if err := state.SaveSettings(s); err != nil {
 		return err
 	}
-	if err := a.launch(name, preset); err != nil {
-		return err
+	_, lend := op(ctx, "compy.launchd.install")
+	lerr := a.launch(name, preset)
+	lend(lerr)
+	if lerr != nil {
+		return lerr
 	}
 	// The probe is only the settle/wait: it retries until there is evidence
 	// the collector is up or the timeout passes. launchd is the authority
@@ -404,7 +435,9 @@ func (a *App) Activate(name, preset string) error {
 	// configuration owns its receivers and may bind nowhere near compy's
 	// ports — so the job counts as started only when launchd confirms it
 	// (a launchctl error counts as not-up either way).
+	_, pend := op(ctx, "compy.probe", attribute.Int("compy.probe.port", s.GRPCPort))
 	probeErr := settle(s.GRPCPort, probeTimeout)
+	pend(probeErr)
 	if running, rerr := launchd.Running(); rerr != nil || !running {
 		if probeErr == nil {
 			probeErr = errors.New("something else answers the probe port, but launchd reports the job is not running")
@@ -495,11 +528,34 @@ func (a *App) remember(name string) error {
 // Start reinstalls it. Nothing is recorded: a stopped collector is simply one
 // whose job is absent, and the active configuration stays named so the window
 // can show it dimmed rather than forget it.
-func (a *App) Stop() error { return launchd.Uninstall() }
+func (a *App) Stop() (err error) {
+	_, end := op(context.Background(), "compy.stop")
+	defer func() { end(err) }()
+	return launchd.Uninstall()
+}
 
 // Start runs the active configuration again — the same operation as Apply,
 // under the word the UI and CLI use for it.
 func (a *App) Start() error { return a.Apply() }
+
+// UninstallTray removes the menu-bar item's login agent: the icon goes
+// away and does not come back at the next login. Reversible — `compy tray
+// install`, or the tray's own installer — which is why it is a plain
+// confirm rather than FactoryReset's type-the-name gate.
+//
+// It used to be a menu item one pixel from Quit, which is how it got
+// clicked by accident (owner, 2026-09-02); the settings screen's danger
+// area is where it lives now.
+func (a *App) UninstallTray() (err error) {
+	_, end := op(context.Background(), "compy.tray.uninstall")
+	defer func() { end(err) }()
+	return launchd.UninstallAgent(launchd.TrayLabel)
+}
+
+// TrayInstalled reports whether the menu-bar item's login agent is on
+// disk, so the settings screen can offer its removal only when there is
+// something to remove.
+func (a *App) TrayInstalled() bool { return launchd.AgentInstalled(launchd.TrayLabel) }
 
 // FactoryReset returns compy to its as-installed state, as if it had never
 // run: the collector's LaunchAgent is uninstalled (tolerating "was not
@@ -536,7 +592,10 @@ func (a *App) FactoryReset() error {
 }
 
 // Apply re-activates the current configuration and preset.
-func (a *App) Apply() error {
+func (a *App) Apply() (err error) {
+	_, end := op(context.Background(), "compy.apply")
+	defer func() { end(err) }()
+
 	name, _, err := a.activeName()
 	if err != nil {
 		return err
@@ -629,11 +688,12 @@ func (a *App) Status() (Status, error) {
 		// poll — so that rare run shows one extra port under "actual". The
 		// verdict itself is unaffected: it turns on the OTLP ports alone.
 		// The primary port is whichever the advertised protocol's endpoint uses.
-		MetricsPort:  s.MetricsPort,
-		Conformance:  portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, s.MetricsPort, s.EffectiveProtocol() == "grpc"),
-		CompyVersion: version.String(),
-		CompyUpdate:  a.CompyUpdateAvailable(),
-		StaleBinary:  launchd.StaleBinary(),
+		MetricsPort:   s.MetricsPort,
+		TrayInstalled: a.TrayInstalled(),
+		Conformance:   portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, s.MetricsPort, s.EffectiveProtocol() == "grpc"),
+		CompyVersion:  version.String(),
+		CompyUpdate:   a.CompyUpdateAvailable(),
+		StaleBinary:   launchd.StaleBinary(),
 	}, nil
 }
 
@@ -1000,7 +1060,7 @@ func (a *App) GetSettings() (state.Settings, error) { return state.LoadSettings(
 // grpcP/httpP must be in 1-65535, protocol one of grpc, http/protobuf,
 // http/json. Port changes take effect on the next Apply/Activate, not
 // immediately; a protocol change is advertisement-only and needs no restart.
-func (a *App) PutSettings(grpcP, httpP, metricsP *int, protocol *string) error {
+func (a *App) PutSettings(grpcP, httpP, metricsP *int, protocol *string, tr *Tracing) error {
 	s, err := state.LoadSettings()
 	if err != nil {
 		return err
@@ -1032,6 +1092,29 @@ func (a *App) PutSettings(grpcP, httpP, metricsP *int, protocol *string) error {
 			return state.BadRequest(fmt.Errorf("protocol %q is not one of grpc, http/protobuf, http/json", *protocol))
 		}
 		s.Protocol = *protocol
+	}
+	if tr != nil {
+		if tr.On != nil {
+			s.Tracing = *tr.On
+		}
+		if tr.Endpoint != nil {
+			e := strings.TrimSpace(*tr.Endpoint)
+			if e != "" {
+				u, uerr := url.Parse(e)
+				if uerr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+					return state.BadRequest(fmt.Errorf("tracing endpoint %q is not an http(s) URL", e))
+				}
+			}
+			s.TracingEndpoint = e
+		}
+		if tr.Headers != nil {
+			// Parsed here so a malformed line is a 400 naming it, rather
+			// than silently dropping headers at the next process start.
+			if _, herr := tracing.ParseHeaders(*tr.Headers); herr != nil {
+				return herr
+			}
+			s.TracingHeaders = *tr.Headers
+		}
 	}
 	if err := state.SaveSettings(s); err != nil {
 		return err

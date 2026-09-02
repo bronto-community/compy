@@ -22,15 +22,18 @@ func fakeAPI() API {
 		SetOSEnv: func(on bool) error { return nil },
 
 		GetSettings: func() (map[string]any, error) { return map[string]any{}, nil },
-		PutSettings: func(grpcPort, httpPort, metricsPort *int, protocol *string) error { return nil },
-		AdoptPorts:  func(grpcPort, httpPort *int) error { return nil },
+		PutSettings: func(grpcPort, httpPort, metricsPort *int, protocol *string, tracingOn *bool, tracingEndpoint, tracingHeaders *string) error {
+			return nil
+		},
+		AdoptPorts: func(grpcPort, httpPort *int) error { return nil },
 
-		Health:       func() (any, error) { return map[string]any{"available": false}, nil },
-		Apply:        func() error { return nil },
-		Stop:         func() error { return nil },
-		Start:        func() error { return nil },
-		Validate:     func() error { return nil },
-		FactoryReset: func() error { return nil },
+		Health:        func() (any, error) { return map[string]any{"available": false}, nil },
+		Apply:         func() error { return nil },
+		Stop:          func() error { return nil },
+		Start:         func() error { return nil },
+		Validate:      func() error { return nil },
+		FactoryReset:  func() error { return nil },
+		UninstallTray: func() error { return nil },
 
 		CreateConfig:            func(name, yaml string) error { return nil },
 		CreateFromURL:           func(name, url string) error { return nil },
@@ -294,7 +297,7 @@ func TestPutSettingsRoute(t *testing.T) {
 	api := fakeAPI()
 	var gotGRPC, gotHTTP *int
 	var gotProto *string
-	api.PutSettings = func(grpcPort, httpPort, metricsPort *int, protocol *string) error {
+	api.PutSettings = func(grpcPort, httpPort, metricsPort *int, protocol *string, tracingOn *bool, tracingEndpoint, tracingHeaders *string) error {
 		gotGRPC, gotHTTP, gotProto = grpcPort, httpPort, protocol
 		return nil
 	}
@@ -330,7 +333,7 @@ func TestPutSettingsRoute(t *testing.T) {
 		t.Fatalf("malformed body status = %d, want 400", rec.Code)
 	}
 
-	api.PutSettings = func(grpcPort, httpPort, metricsPort *int, protocol *string) error {
+	api.PutSettings = func(grpcPort, httpPort, metricsPort *int, protocol *string, tracingOn *bool, tracingEndpoint, tracingHeaders *string) error {
 		return errWithMessage("port out of range")
 	}
 	rec = call(handlePutSettings(api), http.MethodPut, `{"grpc_port":0}`, nil)
@@ -1182,15 +1185,19 @@ func recordingAPI(rec *[]string, errFn func() error) API {
 		SetOSEnv: func(on bool) error { r("SetOSEnv"); return errFn() },
 
 		GetSettings: func() (map[string]any, error) { r("GetSettings"); return map[string]any{}, errFn() },
-		PutSettings: func(grpcPort, httpPort, metricsPort *int, protocol *string) error { r("PutSettings"); return errFn() },
-		AdoptPorts:  func(grpcPort, httpPort *int) error { r("AdoptPorts"); return errFn() },
+		PutSettings: func(grpcPort, httpPort, metricsPort *int, protocol *string, tracingOn *bool, tracingEndpoint, tracingHeaders *string) error {
+			r("PutSettings")
+			return errFn()
+		},
+		AdoptPorts: func(grpcPort, httpPort *int) error { r("AdoptPorts"); return errFn() },
 
-		Health:       func() (any, error) { r("Health"); return map[string]any{}, errFn() },
-		Apply:        func() error { r("Apply"); return errFn() },
-		Stop:         func() error { r("Stop"); return errFn() },
-		Start:        func() error { r("Start"); return errFn() },
-		Validate:     func() error { r("Validate"); return errFn() },
-		FactoryReset: func() error { r("FactoryReset"); return errFn() },
+		Health:        func() (any, error) { r("Health"); return map[string]any{}, errFn() },
+		Apply:         func() error { r("Apply"); return errFn() },
+		Stop:          func() error { r("Stop"); return errFn() },
+		Start:         func() error { r("Start"); return errFn() },
+		Validate:      func() error { r("Validate"); return errFn() },
+		FactoryReset:  func() error { r("FactoryReset"); return errFn() },
+		UninstallTray: func() error { r("UninstallTray"); return errFn() },
 
 		Configs:       func() (any, error) { r("Configs"); return []any{}, errFn() },
 		CreateConfig:  func(name, yaml string) error { r("CreateConfig"); return errFn() },
@@ -1277,6 +1284,7 @@ func TestRouteTableSmoke(t *testing.T) {
 		"POST /api/service/start":       {"Start", false},
 		"POST /api/service/validate":    {"Validate", false},
 		"POST /api/factory-reset":       {"FactoryReset", false},
+		"POST /api/tray/uninstall":      {"UninstallTray", false},
 
 		"GET /api/configs":                                 {"Configs", false},
 		"POST /api/configs":                                {"CreateConfig", true},
