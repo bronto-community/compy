@@ -186,4 +186,25 @@ via the `COMPY_HOME` env var. `internal/state.Dir()` resolves and creates it
 ## Ports
 
 Default OTLP ports: 14317 gRPC, 14318 HTTP (standard ports + 10000).
-Configurable per-install in `settings.json`.
+Configurable per-install in `settings.json`, and injected into configs as
+`${env:COMPY_GRPC_PORT}` / `${env:COMPY_HTTP_PORT}`.
+
+A third port is the collector's OWN telemetry — otelcol's `:8888`
+Prometheus endpoint, which `collector.ScrapePorts` reads for the health
+strip. `settings.json`'s `metrics_port` moves it (0 = let the OS pick), but
+compy does NOT put it in anybody's config: `collector.OverlayYAML` is
+passed as a SEPARATE `--config` source, ahead of the configuration
+(`app.collectorArgs`). Order is the contract — confmap merges its sources
+and the LAST wins, so overlay-first makes compy's block a DEFAULT a config's
+own `service::telemetry` overrides, and hand-written configs get the
+setting for free. Never edit a configuration to place it.
+
+The Prometheus reader's bind is fatal (contrib/otelconf: plain `net.Listen`,
+error returned, startup aborts), so `resolveMetricsPort` pre-flights the
+port at activation and falls back to 0 rather than letting an unrelated
+process on `:8888` take the collector down. Our own collector holding the
+port is not "busy" (`collector.PortHeldBy`) — without that, every
+re-activation would drift onto an OS-assigned port. A fallback is visible:
+`/api/status`'s `metrics_port` (configured) differing from
+`/api/collector/health`'s `port` (actual) is what the collector screen
+turns amber.

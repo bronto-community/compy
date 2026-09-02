@@ -50,9 +50,10 @@ func (a *App) settingsMap() (map[string]any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"grpc_port": s.GRPCPort,
-		"http_port": s.HTTPPort,
-		"protocol":  s.EffectiveProtocol(),
+		"grpc_port":    s.GRPCPort,
+		"http_port":    s.HTTPPort,
+		"metrics_port": s.MetricsPort,
+		"protocol":     s.EffectiveProtocol(),
 	}, nil
 }
 
@@ -64,17 +65,18 @@ func (a *App) statusMap() (map[string]any, error) {
 		return nil, err
 	}
 	m := map[string]any{
-		"running":   st.Running,
-		"distro":    st.Distro,
-		"grpc_port": st.GRPCPort,
-		"http_port": st.HTTPPort,
-		"protocol":  st.Protocol,
-		"endpoint":  fmt.Sprintf("http://127.0.0.1:%d", st.EndpointPort()),
-		"config":    st.Config,
-		"preset":    st.Preset,
-		"os_env":    st.OSEnv,
-		"recent":    st.Recent,
-		"listening": st.Listening,
+		"running":      st.Running,
+		"distro":       st.Distro,
+		"grpc_port":    st.GRPCPort,
+		"http_port":    st.HTTPPort,
+		"metrics_port": st.MetricsPort,
+		"protocol":     st.Protocol,
+		"endpoint":     fmt.Sprintf("http://127.0.0.1:%d", st.EndpointPort()),
+		"config":       st.Config,
+		"preset":       st.Preset,
+		"os_env":       st.OSEnv,
+		"recent":       st.Recent,
+		"listening":    st.Listening,
 
 		"compy_version": st.CompyVersion,
 	}

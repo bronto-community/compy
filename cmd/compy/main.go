@@ -808,7 +808,12 @@ func cmdSettings(args []string) error {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("grpc-port: %d\nhttp-port: %d\nprotocol: %s\n", s.GRPCPort, s.HTTPPort, s.EffectiveProtocol())
+			metrics := strconv.Itoa(s.MetricsPort)
+			if s.MetricsPort == 0 {
+				metrics = "0 (a free port, chosen at launch)"
+			}
+			fmt.Printf("grpc-port: %d\nhttp-port: %d\nmetrics-port: %s\nprotocol: %s\n",
+				s.GRPCPort, s.HTTPPort, metrics, s.EffectiveProtocol())
 			return nil
 		})
 	}
@@ -816,15 +821,16 @@ func cmdSettings(args []string) error {
 		return fmt.Errorf("settings: unknown subcommand %q", args[0])
 	}
 	fs := flag.NewFlagSet("settings set", flag.ContinueOnError)
-	var grpcPort, httpPort int
+	var grpcPort, httpPort, metricsPort int
 	var protocol string
 	fs.IntVar(&grpcPort, "grpc-port", 0, "gRPC port")
 	fs.IntVar(&httpPort, "http-port", 0, "HTTP port")
+	fs.IntVar(&metricsPort, "metrics-port", 0, "the collector's own telemetry port (0 = pick a free one at launch)")
 	fs.StringVar(&protocol, "protocol", "", "advertised OTLP protocol: grpc, http/protobuf, or http/json")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	var grpcP, httpP *int
+	var grpcP, httpP, metricsP *int
 	var protoP *string
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -832,11 +838,13 @@ func cmdSettings(args []string) error {
 			grpcP = &grpcPort
 		case "http-port":
 			httpP = &httpPort
+		case "metrics-port":
+			metricsP = &metricsPort
 		case "protocol":
 			protoP = &protocol
 		}
 	})
-	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, protoP) })
+	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, metricsP, protoP) })
 }
 
 // cmdFactoryReset wipes the state directory and starts over. The CLI has no

@@ -16,8 +16,19 @@ import (
 // (v1's "enabled"/"raw_mode") are ignored on load, and missing fields keep
 // their defaults, so a v1 file loads without error.
 type Settings struct {
-	GRPCPort     int    `json:"grpc_port"`     // default 14317
-	HTTPPort     int    `json:"http_port"`     // default 14318
+	GRPCPort int `json:"grpc_port"` // default 14317
+	HTTPPort int `json:"http_port"` // default 14318
+
+	// MetricsPort is where the collector serves its OWN telemetry
+	// (otelcol's :8888 Prometheus endpoint — what compy's health strip
+	// scrapes). Compy supplies it through a config overlay rather than by
+	// editing anybody's yaml, so this works for hand-written configs too.
+	// 0 means "let the OS pick a free one": nothing can collide, but the
+	// port changes every restart, so only pid-based discovery finds it.
+	// A missing field (every settings.json written before this existed)
+	// loads as 0, which LoadSettings turns into the 8888 default — the
+	// behaviour those files already had.
+	MetricsPort  int    `json:"metrics_port"`
 	Distro       string `json:"distro"`        // global default distro, "" = compy's default (contrib)
 	ActiveConfig string `json:"active_config"` // active configuration, "" = none
 	OSEnv        bool   `json:"os_env"`        // OS-level env injection active
@@ -89,6 +100,10 @@ type Distro struct {
 const (
 	defaultGRPCPort = 14317
 	defaultHTTPPort = 14318
+	// defaultMetricsPort is otelcol's own :8888. Keeping it as the default
+	// preserves the documented `localhost:8888/metrics` for everyone who
+	// never hits a conflict.
+	defaultMetricsPort = 8888
 )
 
 // badRequestErr marks an error as the caller's mistake — a bad name, an
@@ -271,7 +286,10 @@ func saveJSON(name string, v any) error {
 // LoadSettings loads settings.json from the state dir. A missing file
 // yields defaults (ports set, rest zero).
 func LoadSettings() (Settings, error) {
-	defaults := Settings{GRPCPort: defaultGRPCPort, HTTPPort: defaultHTTPPort}
+	defaults := Settings{GRPCPort: defaultGRPCPort, HTTPPort: defaultHTTPPort, MetricsPort: defaultMetricsPort}
+	// loadJSON unmarshals INTO the defaults, so a settings.json written
+	// before metrics_port existed keeps 8888 — the port those installs were
+	// already using — while an explicit "metrics_port": 0 means what it says.
 	return loadJSON("settings.json", defaults)
 }
 

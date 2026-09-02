@@ -15,10 +15,16 @@ import (
 // /metrics on localhost:8888 with no configuration at all — verified against
 // otelcol 0.135.0, whose startup fails with "binding address localhost:8888
 // for Prometheus exporter" when the port is taken, for a config with no
-// service::telemetry section — so compy's shipped configurations say nothing
-// about it and this address is simply where the numbers are. The Collector
-// screen names it on screen for the same reason. A var so tests can aim the
-// default probe away from a real machine's :8888.
+// service::telemetry section — so no compy configuration says anything about
+// it and this address is simply where the numbers are. The Collector screen
+// names it on screen for the same reason.
+//
+// Since compy learned to MOVE this port (settings' metrics_port, delivered
+// through OverlayYAML rather than by editing anyone's config), this is only
+// the BLIND fallback, used when pid detection gave no listeners to probe.
+// A moved port — or an OS-assigned one — is found the same way every other
+// listener is: from the collector process itself. A var so tests can aim
+// the default probe away from a real machine's :8888.
 var defaultMetricsPort = 8888
 
 // healthTimeout bounds the scrape. It is on the path of a screen the user is

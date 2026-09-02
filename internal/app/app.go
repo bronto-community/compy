@@ -103,6 +103,11 @@ type Status struct {
 	// — a reboot included — would fail; restarting through compy re-resolves
 	// the binary and heals it.
 	StaleBinary bool `json:"stale_binary,omitempty"`
+	// MetricsPort is the CONFIGURED telemetry port (settings' metrics_port);
+	// 0 means compy asks the OS for a free one at launch. What the collector
+	// actually bound is reported by the health scrape's own port — which is
+	// how the UI notices a fallback and says so.
+	MetricsPort int `json:"metrics_port"`
 }
 
 // EndpointPort is the port the advertised OTLP endpoint uses: the gRPC port
@@ -189,6 +194,7 @@ func activationEnv(values map[string]any, s state.Settings) map[string]string {
 	}
 	env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
 	env["COMPY_HTTP_PORT"] = strconv.Itoa(s.HTTPPort)
+	env[collector.MetricsPortEnv] = strconv.Itoa(s.MetricsPort)
 	return env
 }
 
@@ -213,7 +219,50 @@ func (a *App) activationEnvFor(info cfgstore.Info, preset string, s state.Settin
 	}
 	env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
 	env["COMPY_HTTP_PORT"] = strconv.Itoa(s.HTTPPort)
+	env[collector.MetricsPortEnv] = strconv.Itoa(s.MetricsPort)
 	return env
+}
+
+// overlayFile is compy's telemetry overlay, in the state dir next to
+// settings.json — compy's own file, rewritten on every launch, never a
+// configuration.
+const overlayFile = "telemetry.yaml"
+
+// collectorArgs is the collector command line for one config file: compy's
+// telemetry overlay FIRST, then configPath. The order is load-bearing —
+// confmap merges its sources and the LAST wins, so overlay-first makes
+// compy's telemetry block a default the user's own service::telemetry
+// overrides. See collector.OverlayYAML.
+//
+// Every path that runs or validates a config goes through here, so what
+// `validate` checks is exactly what launchd will run.
+func (a *App) collectorArgs(configPath string) ([]string, error) {
+	overlay := filepath.Join(a.Dir, overlayFile)
+	if err := state.WriteFileAtomic(overlay, []byte(collector.OverlayYAML), 0o600); err != nil {
+		return nil, err
+	}
+	return []string{"--config", overlay, "--config", configPath}, nil
+}
+
+// resolveMetricsPort turns the configured telemetry port into the one to
+// hand the collector. 0 already means "let the OS pick". A configured port
+// that is free is used as-is. A configured port that is BUSY falls back to
+// 0 rather than letting the collector abort: its Prometheus reader treats a
+// failed bind as fatal, so an unrelated process on :8888 would otherwise
+// take the whole collector down — which is a terrible trade for a metrics
+// endpoint.
+//
+// The port our OWN collector currently holds does not count as busy: launch
+// replaces that process, so the port is about to be released. Without that,
+// every re-activation would find its predecessor and drift onto an
+// OS-assigned port, and a configured metrics_port would survive exactly one
+// activation. bin is the collector binary about to run — the same one the
+// old process is running, which is what makes the holder recognisable.
+func resolveMetricsPort(want int, bin string) int {
+	if want == 0 || collector.PortFree(want) || collector.PortHeldBy(want, bin) {
+		return want
+	}
+	return 0
 }
 
 // launch (re)installs the collector LaunchAgent for configuration name with
@@ -237,7 +286,12 @@ func (a *App) launch(name, preset string) error {
 		return err
 	}
 	env := a.activationEnvFor(info, preset, s)
-	return launchd.Install(bin, []string{"--config", a.ConfigPath(name)}, a.LogPath(), env)
+	env[collector.MetricsPortEnv] = strconv.Itoa(resolveMetricsPort(s.MetricsPort, bin))
+	args, err := a.collectorArgs(a.ConfigPath(name))
+	if err != nil {
+		return err
+	}
+	return launchd.Install(bin, args, a.LogPath(), env)
 }
 
 // restorePrevious puts back the last setup that actually started — the
@@ -315,7 +369,10 @@ func (a *App) Activate(name, preset string) error {
 		}
 	}
 	env := a.activationEnvFor(info, preset, s)
-	args := []string{"--config", a.ConfigPath(name)}
+	args, err := a.collectorArgs(a.ConfigPath(name))
+	if err != nil {
+		return err
+	}
 
 	// A config the collector rejects is the user's YAML being wrong, not a
 	// fault of ours: 400, and the collector's own diagnostics are the whole
@@ -526,7 +583,11 @@ func (a *App) ValidateConfig(name string) error {
 		return err
 	}
 	env := a.activationEnvFor(info, info.Meta.ActivePreset, s)
-	if err := collector.Validate(bin, []string{"--config", a.ConfigPath(name)}, env); err != nil {
+	args, err := a.collectorArgs(a.ConfigPath(name))
+	if err != nil {
+		return err
+	}
+	if err := collector.Validate(bin, args, env); err != nil {
 		return state.BadRequest(err)
 	}
 	return nil
@@ -561,10 +622,15 @@ func (a *App) Status() (Status, error) {
 		OSEnv:     s.OSEnv,
 		Recent:    s.Recent,
 		Listening: listening,
-		// The telemetry port (otelcol's :8888 default, health's knowledge)
-		// is excluded from the verdict's OTLP candidates. The primary port is
-		// whichever the advertised protocol's endpoint uses.
-		Conformance:  portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, collector.TelemetryPort(), s.EffectiveProtocol() == "grpc"),
+		// The telemetry port is excluded from the verdict's OTLP candidates.
+		// It is the CONFIGURED one: with metrics_port 0, or after a busy port
+		// fell back to an OS-assigned one, the actual telemetry listener is
+		// knowable only from a scrape, which Status must not spend on every
+		// poll — so that rare run shows one extra port under "actual". The
+		// verdict itself is unaffected: it turns on the OTLP ports alone.
+		// The primary port is whichever the advertised protocol's endpoint uses.
+		MetricsPort:  s.MetricsPort,
+		Conformance:  portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, s.MetricsPort, s.EffectiveProtocol() == "grpc"),
 		CompyVersion: version.String(),
 		CompyUpdate:  a.CompyUpdateAvailable(),
 		StaleBinary:  launchd.StaleBinary(),
@@ -840,6 +906,7 @@ func (a *App) writePresetBag(info cfgstore.Info, preset string, bag map[string]a
 		env := t.EnvFor(norm)
 		env["COMPY_GRPC_PORT"] = strconv.Itoa(s.GRPCPort)
 		env["COMPY_HTTP_PORT"] = strconv.Itoa(s.HTTPPort)
+		env[collector.MetricsPortEnv] = strconv.Itoa(s.MetricsPort)
 		tmp, err := os.CreateTemp(a.Dir, "validate-*.yaml")
 		if err != nil {
 			return false, err
@@ -852,7 +919,11 @@ func (a *App) writePresetBag(info cfgstore.Info, preset string, bag map[string]a
 		if err := tmp.Close(); err != nil {
 			return false, err
 		}
-		if verr := collector.Validate(bin, []string{"--config", tmp.Name()}, env); verr != nil {
+		args, aerr := a.collectorArgs(tmp.Name())
+		if aerr != nil {
+			return false, aerr
+		}
+		if verr := collector.Validate(bin, args, env); verr != nil {
 			return false, state.BadRequest(verr)
 		}
 	}
@@ -929,7 +1000,7 @@ func (a *App) GetSettings() (state.Settings, error) { return state.LoadSettings(
 // grpcP/httpP must be in 1-65535, protocol one of grpc, http/protobuf,
 // http/json. Port changes take effect on the next Apply/Activate, not
 // immediately; a protocol change is advertisement-only and needs no restart.
-func (a *App) PutSettings(grpcP, httpP *int, protocol *string) error {
+func (a *App) PutSettings(grpcP, httpP, metricsP *int, protocol *string) error {
 	s, err := state.LoadSettings()
 	if err != nil {
 		return err
@@ -946,6 +1017,15 @@ func (a *App) PutSettings(grpcP, httpP *int, protocol *string) error {
 			return state.BadRequest(fmt.Errorf("http port %d out of range 1-65535", *httpP))
 		}
 		s.HTTPPort = *httpP
+	}
+	if metricsP != nil {
+		// 0 is legal here and nowhere else: it means "let the OS pick a free
+		// port at launch", the escape hatch for a machine where something
+		// else owns 8888.
+		if *metricsP != 0 && !validPort(*metricsP) {
+			return state.BadRequest(fmt.Errorf("metrics port %d out of range 0-65535 (0 = pick a free one)", *metricsP))
+		}
+		s.MetricsPort = *metricsP
 	}
 	if protocol != nil {
 		if !state.ValidProtocol(*protocol) {

@@ -28,6 +28,10 @@
           "distro": { "type": "string" },
           "grpc_port": { "type": "integer" },
           "http_port": { "type": "integer" },
+          "metrics_port": {
+            "type": "integer",
+            "description": "The CONFIGURED telemetry port (0 = OS-assigned at launch). What the collector actually bound is the port reported by GET /api/collector/health; the two differing means a busy port fell back."
+          },
           "protocol": {
             "type": "string",
             "enum": ["grpc", "http/protobuf", "http/json"],
@@ -85,6 +89,7 @@
         "properties": {
           "grpc_port": { "type": "integer" },
           "http_port": { "type": "integer" },
+          "metrics_port": { "type": "integer", "description": "The port the collector serves its OWN telemetry on (otelcol's Prometheus /metrics endpoint, what the health strip scrapes). compy supplies it as a separate --config overlay ahead of the configuration, so it applies to hand-written configs too and a config carrying its own service::telemetry still wins. 0 means compy asks the OS for a free port at launch; a configured port that is busy falls back to 0 rather than letting the collector refuse to start." },
           "protocol": {
             "type": "string",
             "enum": ["grpc", "http/protobuf", "http/json"],
@@ -98,6 +103,7 @@
         "properties": {
           "grpc_port": { "type": "integer" },
           "http_port": { "type": "integer" },
+          "metrics_port": { "type": "integer", "description": "1-65535, or 0 to let the OS pick a free port at launch. Anything else is a 400. Takes effect on the next apply." },
           "protocol": {
             "type": "string",
             "enum": ["grpc", "http/protobuf", "http/json"],

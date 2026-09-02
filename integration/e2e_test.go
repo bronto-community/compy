@@ -65,24 +65,24 @@ func TestE2E(t *testing.T) {
 		t.Fatalf("MaterializeDefaults: %v", err)
 	}
 
-	grpcPort, httpPort := freePort(t), freePort(t)
+	grpcPort, httpPort, metricsPort := freePort(t), freePort(t), freePort(t)
 	env := map[string]string{
-		"COMPY_GRPC_PORT": strconv.Itoa(grpcPort),
-		"COMPY_HTTP_PORT": strconv.Itoa(httpPort),
+		"COMPY_GRPC_PORT":        strconv.Itoa(grpcPort),
+		"COMPY_HTTP_PORT":        strconv.Itoa(httpPort),
+		collector.MetricsPortEnv: strconv.Itoa(metricsPort),
 	}
 	configPath := filepath.Join(cfgstore.Dir(root), "debug", "config.yaml")
-	args := []string{"--config", configPath}
+	// Exactly what app.collectorArgs builds: compy's telemetry overlay
+	// first, the configuration second. It also keeps this test off :8888,
+	// which a real compy install on the same machine may already own — the
+	// reason this used to need a --set hack.
+	args := []string{"--config", writeOverlay(t, root), "--config", configPath}
 
 	if err := collector.Validate(bin, args, env); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 
-	// --set disables the collector's own self-telemetry metrics server
-	// (default :8888): a real compy install may already have a collector
-	// running on this machine bound to it, and this test has no business
-	// with self-telemetry either way.
-	runArgs := append(append([]string{}, args...), "--set=service.telemetry.metrics.level=none")
-	cmd := exec.Command(bin, runArgs...)
+	cmd := exec.Command(bin, args...)
 	cmd.Env = os.Environ()
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)

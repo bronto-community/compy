@@ -2732,10 +2732,34 @@ function healthStrip(stopped) {
     m("dropped", fmtCount(h.dropped), h.dropped > 0),
     el("span", { class: "grow" }),
     el("span", {
-      class: "src", title: "the collector's own prometheus endpoint",
-      text: stopped ? "no metrics while stopped" : has ? "localhost:" + (h.port || 8888) + "/metrics" : "localhost:8888/metrics · no answer",
+      class: "src" + (metricsPortMoved() ? " warn" : ""),
+      title: metricsPortMoved()
+        ? "port " + S.status.metrics_port + " was busy, so compy asked the OS for a free one — set metrics_port in settings to pin a different fixed port"
+        : "the collector's own prometheus endpoint",
+      text: metricsSrcText(stopped, has, h),
     }),
   ]);
+}
+
+/* The collector's telemetry port is compy's to place (settings' metrics_port,
+   delivered as a --config overlay). A configured port that was busy falls
+   back to an OS-assigned one rather than taking the collector down with it —
+   quietly, unless we say so: anything scraping the old port from outside
+   would otherwise just break. Configured 0 is not a fallback, it IS the
+   ask. */
+function metricsPortMoved() {
+  // From status, not settings: settings are only loaded on their own
+  // screen, and this line lives on the collector screen.
+  const want = S.status && S.status.metrics_port;
+  const got = S.health && S.health.port;
+  return !!(want && got && want !== got);
+}
+function metricsSrcText(stopped, has, h) {
+  if (stopped) return "no metrics while stopped";
+  const want = (S.status && S.status.metrics_port) || 8888;
+  if (!has) return "localhost:" + want + "/metrics · no answer";
+  if (metricsPortMoved()) return "localhost:" + h.port + "/metrics · " + want + " was busy";
+  return "localhost:" + h.port + "/metrics";
 }
 
 // The drop diagnosis under the health numbers it derives from: the dropped
@@ -3227,6 +3251,10 @@ function distroRow(b) {
 const GLOBAL_VARS = [
   { key: "grpc_port", name: "COMPY_GRPC_PORT", desc: "otlp/grpc port — reference it as ${env:COMPY_GRPC_PORT}" },
   { key: "http_port", name: "COMPY_HTTP_PORT", desc: "otlp/http port — reference it as ${env:COMPY_HTTP_PORT}" },
+  {
+    key: "metrics_port", name: "COMPY_METRICS_PORT", min: 0,
+    desc: "the collector's own /metrics port (otelcol's 8888). compy supplies it as a config overlay, so it applies to hand-written configs too — 0 lets the OS pick a free one",
+  },
 ];
 function globalVars() {
   const st = S.settings;
@@ -3244,7 +3272,7 @@ function globalVars() {
         el("input", {
           class: "field",
           attrs: {
-            type: "number", min: "1", max: "65535", spellcheck: "false",
+            type: "number", min: String(g.min == null ? 1 : g.min), max: "65535", spellcheck: "false",
             "data-fk": "gvar-" + g.key, "aria-label": g.name,
           },
           props: { value: st && st[g.key] != null ? String(st[g.key]) : "" },
@@ -3271,7 +3299,10 @@ function globalVars() {
 }
 async function savePort(key, raw) {
   const n = parseInt(raw, 10);
-  if (!n) { render(); return; } // empty or junk: put the saved value back
+  // 0 is junk for the OTLP ports and a real value for metrics_port ("let
+  // the OS pick"), so only that one accepts it; empty or non-numeric always
+  // puts the saved value back.
+  if (isNaN(n) || (!n && key !== "metrics_port")) { render(); return; }
   clearError();
   try {
     const body = {};

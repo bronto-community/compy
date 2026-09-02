@@ -503,7 +503,7 @@ func TestActivationEnvSplitTier3(t *testing.T) {
 	envKeys := regexp.MustCompile(`<key>([^<]+)</key>`).FindAllStringSubmatch(envDict, -1)
 	for _, m := range envKeys {
 		switch m[1] {
-		case "HC_API_KEY", "COMPY_GRPC_PORT", "COMPY_HTTP_PORT":
+		case "HC_API_KEY", "COMPY_GRPC_PORT", "COMPY_HTTP_PORT", "COMPY_METRICS_PORT":
 		default:
 			t.Errorf("non-secret value exported as env: %s", m[1])
 		}
