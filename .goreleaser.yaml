@@ -132,6 +132,10 @@ homebrew_casks:
 
       It then starts at login. Remove it from the danger area in compy's
       settings screen, or with `compy tray uninstall`.
+
+      Uninstalling: `brew uninstall --zap compy` removes everything,
+      including compy's login items. A plain `brew uninstall` leaves them
+      behind; run `compy stop` and `compy tray uninstall` first.
     # No goreleaser field maps to `depends_on`, and custom_block is injected
     # at the top of the cask. brew style relocates it (and rewrites the value
     # to `macos: :big_sur`); the tap normalizes style on main, so the emitted
@@ -168,14 +172,20 @@ homebrew_casks:
       owner: bronto-community
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    # brew uninstall boots both jobs out of launchd; the plists themselves
-    # (and, zap-only, the state dir with the user's configurations) are
-    # user-created files, so per Homebrew convention they go under zap.
-    uninstall:
+    # The launchd jobs are zap-only, deliberately NOT under uninstall:
+    # `brew upgrade` runs the old version's uninstall stanza before
+    # installing the new one, and Homebrew's `uninstall launchctl:` both
+    # removes the job AND deletes ~/Library/LaunchAgents/<label>.plist
+    # (cask/artifact/abstract_uninstall.rb). Under uninstall, every upgrade
+    # stopped the collector and deleted the tray's login item. Homebrew
+    # offers no way to skip it on upgrade (`on_upgrade` covers `signal`
+    # only). The cost: a plain `brew uninstall` leaves both jobs behind —
+    # the caveat says to use --zap, or `compy stop` / `compy tray uninstall`
+    # first.
+    zap:
       launchctl:
         - io.bronto.compy.tray
         - io.bronto.compy.collector
-    zap:
       trash:
         - "~/Library/LaunchAgents/io.bronto.compy.tray.plist"
         - "~/Library/LaunchAgents/io.bronto.compy.collector.plist"
