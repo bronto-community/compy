@@ -42,3 +42,33 @@ with any rasterizer that preserves alpha, then repackage:
     cp X-16.png compy-X.iconset/icon_16x16.png
     cp X-32.png compy-X.iconset/icon_16x16@2x.png
     iconutil -c icns compy-X.iconset -o X.icns
+
+## Coloured states (opt-in, `tray_colors`)
+
+HANDOFF.md's "never a red dot" is about TEMPLATE images, where colour is
+discarded. The `tray_colors` setting (`off` / `errors` / `warnings`, default
+`warnings`) colours the icon by `app.Trouble`'s level, as two NON-template
+states on top of the shape-only three:
+
+- red — the attention glyph: the collector crashed, is crash-looping, or
+  launchd cannot start it (shown even while the process is down; a crash
+  must not look like a deliberate stop). With colours `off` it is the
+  attention glyph uncoloured.
+- yellow — the running glyph (`warnings` mode only): running, but losing
+  data, mis-advertised (ports mismatch), or needing a restart. A telemetry
+  port other than the configured one is NOT yellow: there is nothing for
+  the user to do about it (owner ruling 2026-10-02).
+
+Why the icon is coloured is never left to guesswork: each reason is its own
+menu line under the status block (✕ red, ⚠ yellow; clicking one opens
+compy) and the icon's hover tooltip lists them all — the same sentences the
+web UI sidebar shows.
+
+Collector log lines feed neither: a long-running collector keeps every
+transient error in its log, and real damage shows up as a crash or a
+rising dropped counter anyway.
+
+They are not committed rasters: `icons.go` tints the committed 16/32 PNGs
+at runtime (alpha kept, so the geometry is the designed glyph's) and packs
+them as icp4 + ic11 .icns. The plain states stay templates, so they keep
+following the menu bar's appearance; `off` is the original design exactly.

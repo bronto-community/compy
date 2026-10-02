@@ -64,6 +64,7 @@ func (a *App) settingsMap() (map[string]any, error) {
 		"tracing_endpoint":     tracing.Endpoint(s),
 		"tracing_endpoint_set": s.TracingEndpoint != "",
 		"tracing_headers":      s.TracingHeaders,
+		"tray_colors":          s.EffectiveTrayColors(),
 	}, nil
 }
 
@@ -100,6 +101,10 @@ func (a *App) statusMap() (map[string]any, error) {
 	if st.Conformance != nil {
 		m["conformance"] = st.Conformance
 	}
+	if st.Crash != nil {
+		m["crash"] = st.Crash
+	}
+	m["trouble"] = a.Trouble(st)
 	return m, nil
 }
 
@@ -113,9 +118,9 @@ func (a *App) WebUIAPI() webui.API {
 		SetOSEnv: a.SetOSEnv,
 
 		GetSettings: a.settingsMap,
-		PutSettings: func(grpcPort, httpPort, metricsPort *int, protocol *string, tracingOn *bool, tracingEndpoint, tracingHeaders *string) error {
+		PutSettings: func(grpcPort, httpPort, metricsPort *int, protocol *string, tracingOn *bool, tracingEndpoint, tracingHeaders, trayColors *string) error {
 			return a.PutSettings(grpcPort, httpPort, metricsPort, protocol,
-				&Tracing{On: tracingOn, Endpoint: tracingEndpoint, Headers: tracingHeaders})
+				&Tracing{On: tracingOn, Endpoint: tracingEndpoint, Headers: tracingHeaders}, trayColors)
 		},
 		AdoptPorts: a.AdoptPorts,
 
