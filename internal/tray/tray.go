@@ -24,12 +24,17 @@ import (
 	"fyne.io/systray"
 
 	"github.com/bronto-community/compy/internal/app"
+	"github.com/bronto-community/compy/internal/state"
 )
 
 // refreshInterval is how often the status line and menu indicator icons are
 // re-synced with the state directory (which the CLI or window may have
 // changed behind our back).
 const refreshInterval = 5 * time.Second
+
+// defaultTooltip is the menu-bar icon's hover text while nothing is wrong;
+// trouble replaces it with the reasons (tooltipFor).
+const defaultTooltip = "compy — local OpenTelemetry Collector manager"
 
 // maxInline is how many (config, preset) rows appear directly in the menu
 // before the rest overflow into the "More…" submenu (ACCEPTANCE C5.3).
@@ -58,6 +63,15 @@ type menu struct {
 	updatesLine      string
 	compyUpdates     *systray.MenuItem
 	compyUpdatesLine string
+
+	// reasons are the "why" lines under the status block — one per
+	// app.Trouble reason, hidden while there are none — and reasonTexts
+	// what each shows (the same cache discipline). Clicking one opens
+	// compy, where every reason has its details and fixes. tooltip caches
+	// the icon's hover text, which carries the same reasons.
+	reasons     []*systray.MenuItem
+	reasonTexts []string
+	tooltip     string
 
 	slots       []*systray.MenuItem // pre-created inline rows (fixed menu position)
 	slotTargets []presetTarget      // slotTargets[i] = the (config, preset) slots[i] activates, zero = hidden
@@ -102,12 +116,13 @@ func onReady(a *app.App) {
 	// shows (on hovering the icon). Menu ITEM tooltips are invisible in a
 	// status menu, so every item below passes "" — anything that mattered
 	// in one has been moved into visible text (2026-08-29 HIG audit).
-	systray.SetTooltip("compy — local OpenTelemetry Collector manager")
+	systray.SetTooltip(defaultTooltip)
 
 	m := &menu{
 		a:         a,
 		moreItems: map[presetTarget]*systray.MenuItem{},
 		itemIcons: map[*systray.MenuItem]itemState{},
+		tooltip:   defaultTooltip,
 	}
 
 	m.status = systray.AddMenuItem("...", "")
@@ -120,6 +135,14 @@ func onReady(a *app.App) {
 	m.compyUpdates = systray.AddMenuItem("", "")
 	m.compyUpdates.Disable()
 	m.compyUpdates.Hide()
+	// Enabled, unlike the lines above: a click opens compy, where the
+	// reason has its details and the fix.
+	m.reasonTexts = make([]string, maxReasonLines)
+	for i := 0; i < maxReasonLines; i++ {
+		r := systray.AddMenuItem("", "")
+		r.Hide()
+		m.reasons = append(m.reasons, r)
+	}
 	systray.AddSeparator()
 	header := systray.AddMenuItem("CONFIGURATION", "")
 	header.Disable()
@@ -186,7 +209,7 @@ func onReady(a *app.App) {
 	}()
 	go m.handleToggle()
 	go m.handleRestart()
-	go handleOpenApp(openApp)
+	go handleOpenApp(append([]*systray.MenuItem{openApp}, m.reasons...)...)
 	go func() {
 		<-quit.ClickedCh
 		systray.Quit()
@@ -201,20 +224,42 @@ func (m *menu) sync() {
 		m.status.SetTitle("status: " + err.Error())
 		return
 	}
-	// Menu bar counts warn-level lines only (controller ruling D2); the
-	// error count feeds the icon's attention state instead of this line.
-	errs, warns, _ := m.a.LogStats(500) // best-effort: a log-read error just omits the tail
+	// Menu bar counts warn-level lines only (controller ruling D2). Log
+	// lines are informational here and nowhere else: the icon colours by
+	// app.Trouble, which deliberately ignores them.
+	_, warns, _ := m.a.LogStats(500) // best-effort: a log-read error just omits the tail
 	configs, cfgErr := m.a.Configs()
-	line1, line2 := statusLines(st, warns, len(m.a.DropDiagnosis()) > 0)
+	// m.a is this process's one App, so Trouble's drop history builds up
+	// across syncs — "dropping" means the counter rose recently.
+	tr := m.a.Trouble(st)
+	line1, line2 := statusLines(st, warns)
 	m.status.SetTitle(line1)
 	m.statusLine2.SetTitle(line2)
-	m.setIcon(iconFor(st.Running, errs))
+	lines := reasonLines(tr)
+	for i, item := range m.reasons {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
+		}
+		syncNoticeItem(item, &m.reasonTexts[i], line)
+	}
+	if tip := tooltipFor(tr); tip != m.tooltip {
+		m.tooltip = tip
+		systray.SetTooltip(tip)
+	}
+	// Re-read every sync, so a change from the settings screen or the CLI
+	// shows within one tick. An unreadable settings.json already failed
+	// Status above; the zero value resolves to the default anyway.
+	settings, _ := state.LoadSettings()
+	m.setIcon(iconFor(st.Running, tr.Level, settings.EffectiveTrayColors()))
 	m.syncUpdatesLine()
 	m.last = st
-	m.toggle.SetTitle(toggleTitle(st.Running))
+	// A crashed collector launchd keeps retrying is "live": Stop ends the
+	// loop, Restart re-applies (which also heals a stale binary).
+	m.toggle.SetTitle(toggleTitle(live(st)))
 	// Restarting a stopped collector makes no sense — the toggle's Start is
 	// the way up.
-	if st.Running {
+	if live(st) {
 		m.restart.Enable()
 	} else {
 		m.restart.Disable()
@@ -312,7 +357,13 @@ func (m *menu) setIcon(s iconState) {
 		return
 	}
 	m.icon = s
-	systray.SetTemplateIcon(s.data(), s.data())
+	// The coloured states must NOT be templates — AppKit would discard the
+	// colour — and systray.SetIcon clears the template flag on darwin.
+	if s.template() {
+		systray.SetTemplateIcon(s.data(), s.data())
+	} else {
+		systray.SetIcon(s.data())
+	}
 }
 
 // setItemIcon paints one row's indicator when — and
@@ -399,7 +450,7 @@ func (m *menu) handleToggle() {
 	for range m.toggle.ClickedCh {
 		m.mu.Lock()
 		marks := toggleMarks(m.last)
-		if m.last.Running {
+		if live(m.last) {
 			m.doAct(toggleBusyLine(true), marks, func() error { return m.a.Stop() })
 		} else {
 			m.doAct(toggleBusyLine(false), marks, func() error { return m.a.Start() })
@@ -446,10 +497,20 @@ func (m *menu) doAct(note string, marks swapMarks, fn func() error) {
 // handleOpenApp opens the standalone window: spawned as its own process —
 // systray owns this process's main thread, and the webview needs one of its
 // own — but at most one at a time. Clicking again raises the window that is
-// already open (see openWindow).
-func handleOpenApp(item *systray.MenuItem) {
+// already open (see openWindow). items are every menu item that opens it
+// ("Open compy" and the reason lines), fanned in so they share that one
+// window.
+func handleOpenApp(items ...*systray.MenuItem) {
+	clicks := make(chan struct{})
+	for _, it := range items {
+		go func() {
+			for range it.ClickedCh {
+				clicks <- struct{}{}
+			}
+		}()
+	}
 	var cur *windowProc
-	for range item.ClickedCh {
+	for range clicks {
 		next, err := openWindow(cur, spawnWindow, raiseWindow)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "compy tray: open window:", err)

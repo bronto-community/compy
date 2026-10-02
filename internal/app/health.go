@@ -2,6 +2,7 @@ package app
 
 import (
 	"strings"
+	"time"
 
 	"github.com/bronto-community/compy/internal/cfgstore"
 	"github.com/bronto-community/compy/internal/collector"
@@ -25,6 +26,10 @@ func (a *App) Health() (any, error) {
 	// (:8888 first when it is among them); the blind default probe exists
 	// only as a fallback when port detection is unavailable.
 	h := collector.ScrapePorts(collector.ListeningPorts(pid))
+	if h.Available {
+		// More readings, finer drop history: the collector screen polls this.
+		a.drops.observe(h.Dropped, time.Now())
+	}
 	view := healthView{Health: h}
 	if vars := dropDiagnosis(true, h.Dropped, a.activeMissing()); len(vars) > 0 {
 		view.Dropping = &dropping{Vars: vars}

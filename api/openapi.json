@@ -30,7 +30,7 @@
           "http_port": { "type": "integer" },
           "metrics_port": {
             "type": "integer",
-            "description": "The CONFIGURED telemetry port (0 = OS-assigned at launch). What the collector actually bound is the port reported by GET /api/collector/health; the two differing means a busy port fell back."
+            "description": "The CONFIGURED telemetry port (0 = OS-assigned at launch). What the collector actually bound is the port reported by GET /api/collector/health; the two differing means a busy port fell back, or the collector was started before the setting changed (a restart moves it)."
           },
           "protocol": {
             "type": "string",
@@ -66,8 +66,40 @@
           "stale_binary": {
             "type": "boolean",
             "description": "Present (true) when the installed LaunchAgent names a collector binary that no longer exists — what `brew upgrade` leaves behind. A running collector survives on the deleted inode but any launchd restart would fail; restarting through compy re-resolves the binary and heals it."
-          }
+          },
+          "crash": { "$ref": "#/components/schemas/Crash" },
+          "restarts": { "type": "integer", "description": "Times launchd restarted the collector on its own since compy last started it. History, not trouble: a collector that crashed and runs again is fine, and nothing colours by this. Absent when zero." },
+          "last_exit": { "type": "string", "description": "How the latest of the collector's runs ended, as launchd words it: an exit code (\"1\", \"78: EX_CONFIG\") or a signal (\"Killed: 9\"). Absent while it never exited." },
+          "trouble": { "$ref": "#/components/schemas/Trouble" }
         }
+      },
+      "Crash": {
+        "type": "object",
+        "description": "Present while launchd cannot keep the collector up — down between its KeepAlive restarts, or unable to start it at all. Absent for a collector the user stopped (compy unloads that job, so launchd is not trying) and for one launchd restarted that runs again (see restarts).",
+        "properties": {
+          "last_exit": { "type": "string", "description": "How the previous run ended, as launchd words it: an exit code (\"1\", \"78: EX_CONFIG\") or a signal (\"Killed: 9\")." },
+          "reason": { "type": "string", "description": "One human sentence; the actionable cause when compy can name it (a busy port, an upgraded-away binary)." }
+        },
+        "required": ["reason"]
+      },
+      "Trouble": {
+        "type": "object",
+        "description": "How wrong the collector is right now — what the menu-bar icon colours by (settings' tray_colors). error: not running when it should be — crashed and not back yet, crash-looping, or cannot start. warning: running, but losing data, mis-advertised, or needing a restart. Collector log lines are deliberately not an input.",
+        "properties": {
+          "level": { "type": "string", "enum": ["ok", "warning", "error"] },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": { "type": "string", "enum": ["crashed", "dropping", "ports_mismatch", "restart_needed"] },
+                "text": { "type": "string" }
+              },
+              "required": ["code", "text"]
+            }
+          }
+        },
+        "required": ["level"]
       },
       "PortsVerdict": {
         "type": "object",
@@ -105,6 +137,11 @@
             "description": "Whether tracing_endpoint is the user's choice rather than the default, so a UI can show the default as a placeholder instead of treating it as input."
           },
           "tracing_headers": { "type": "string", "description": "Headers sent with each export, \"Name: value\" per line — how a hosted backend's API key reaches it." },
+          "tray_colors": {
+            "type": "string",
+            "enum": ["off", "errors", "warnings"],
+            "description": "How the menu-bar icon colours the collector's trouble level (Status.trouble), RESOLVED (never empty; default warnings). off: shapes only, the template icon. errors: red while the collector has crashed or cannot start. warnings: that, plus yellow while it runs but is losing data, its ports mismatch the advertisement, or it needs a restart."
+          },
           "tray_installed": { "type": "boolean", "description": "Whether the menu-bar item has a login agent on disk — i.e. whether the icon returns at the next login. A tray quit for this session still has one." }
         }
       },
@@ -118,6 +155,11 @@
           "tracing": { "type": "boolean", "description": "Compy's OWN OpenTelemetry tracing: spans over compy's operations (activate, render, validate, launchd install, probe), exported as OTLP/HTTP. Off by default and free when off — no TracerProvider is installed, so the global stays OTel's no-op. Takes effect for processes started after the change; a running tray or window picks it up when it restarts." },
           "tracing_endpoint": { "type": "string", "description": "An http(s) BASE URL — the signal path is appended. The empty string is a real value: it clears a custom endpoint back to compy's own collector. Anything that is not an http(s) URL is a 400." },
           "tracing_headers": { "type": "string", "description": "\"Name: value\" per line; blank lines and #comments ignored. A line without a colon is a 400 naming the line number." },
+          "tray_colors": {
+            "type": "string",
+            "enum": ["off", "errors", "warnings"],
+            "description": "Menu-bar icon colouring. Any other value is a 400. The tray picks it up on its next refresh (within 5s); nothing restarts."
+          },
           "protocol": {
             "type": "string",
             "enum": ["grpc", "http/protobuf", "http/json"],

@@ -73,6 +73,9 @@ type App struct {
 
 	mu        sync.Mutex
 	downloads map[string]download
+
+	// drops is the dropped-counter history behind Trouble's "dropping".
+	drops dropWatch
 }
 
 // Tracing is a partial update to compy's own tracing settings: a nil field
@@ -127,6 +130,17 @@ type Status struct {
 	// actually bound is reported by the health scrape's own port — which is
 	// how the UI notices a fallback and says so.
 	MetricsPort int `json:"metrics_port"`
+	// Crash is set while launchd cannot keep the collector up — down
+	// between its restarts, or unable to start it at all. nil otherwise,
+	// including a collector the user stopped (compy unloads that job, so
+	// launchd is not trying) and one launchd restarted that runs again.
+	Crash *Crash `json:"crash,omitempty"`
+	// Restarts is how many times launchd restarted the collector on its own
+	// since compy last started it, and LastExit how the latest of those
+	// runs ended — history, not trouble: a collector that crashed and came
+	// back is fine now, and nothing colours by this.
+	Restarts int    `json:"restarts,omitempty"`
+	LastExit string `json:"last_exit,omitempty"`
 }
 
 // EndpointPort is the port the advertised OTLP endpoint uses: the gRPC port
@@ -658,8 +672,14 @@ func (a *App) Status() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	// An error here means the job is not loaded, i.e. not running.
-	running, pid, _ := launchd.Info()
+	// An error here means the job is not loaded, i.e. not running — and
+	// not crashed either: a job compy stopped is not loaded.
+	job, jerr := launchd.Inspect()
+	if jerr != nil {
+		job = launchd.Job{}
+	}
+	running, pid := job.Running(), job.PID
+	stale := launchd.StaleBinary()
 	preset := ""
 	if s.ActiveConfig != "" {
 		if info, _, err := cfgstore.Get(a.Dir, s.ActiveConfig); err == nil {
@@ -693,7 +713,10 @@ func (a *App) Status() (Status, error) {
 		Conformance:   portsVerdict(running, listening, s.GRPCPort, s.HTTPPort, s.MetricsPort, s.EffectiveProtocol() == "grpc"),
 		CompyVersion:  version.String(),
 		CompyUpdate:   a.CompyUpdateAvailable(),
-		StaleBinary:   launchd.StaleBinary(),
+		StaleBinary:   stale,
+		Crash:         a.crashFor(job, stale),
+		Restarts:      job.Restarts(),
+		LastExit:      job.LastExit,
 	}, nil
 }
 
@@ -1060,7 +1083,7 @@ func (a *App) GetSettings() (state.Settings, error) { return state.LoadSettings(
 // grpcP/httpP must be in 1-65535, protocol one of grpc, http/protobuf,
 // http/json. Port changes take effect on the next Apply/Activate, not
 // immediately; a protocol change is advertisement-only and needs no restart.
-func (a *App) PutSettings(grpcP, httpP, metricsP *int, protocol *string, tr *Tracing) error {
+func (a *App) PutSettings(grpcP, httpP, metricsP *int, protocol *string, tr *Tracing, trayColors *string) error {
 	s, err := state.LoadSettings()
 	if err != nil {
 		return err
@@ -1115,6 +1138,14 @@ func (a *App) PutSettings(grpcP, httpP, metricsP *int, protocol *string, tr *Tra
 			}
 			s.TracingHeaders = *tr.Headers
 		}
+	}
+	if trayColors != nil {
+		// The tray re-reads settings on its 5s sync, so this takes effect
+		// without restarting anything.
+		if !state.ValidTrayColors(*trayColors) {
+			return state.BadRequest(fmt.Errorf("tray colors %q is not one of off, errors, warnings", *trayColors))
+		}
+		s.TrayColors = *trayColors
 	}
 	if err := state.SaveSettings(s); err != nil {
 		return err
