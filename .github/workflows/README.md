@@ -61,8 +61,16 @@ immediately). The collector job is deliberately left alone — its plist
 bakes the resolved (versioned Caskroom) binary path, so after an upgrade
 compy surfaces "restart the collector to run the new version"
 (`stale_binary` in `/api/status`) and the next restart re-resolves it.
-`uninstall` boots both launchd labels out; `zap` additionally trashes the
-two LaunchAgents plists and `~/Library/Application Support/compy`.
+
+Both launchd labels are **zap-only**. `brew upgrade` runs the old
+version's `uninstall` stanza first, and Homebrew's `uninstall launchctl:`
+removes the job *and deletes its plist* — when the labels sat under
+`uninstall`, every upgrade stopped the collector and deleted the tray's
+login item, contradicting both paragraphs above. Homebrew cannot skip it
+on upgrade (`on_upgrade` covers `signal` only). So `zap` boots both labels
+out and trashes their plists and `~/Library/Application Support/compy`,
+while a plain `brew uninstall` leaves the jobs behind; the caveat says to
+use `--zap`, or `compy stop` and `compy tray uninstall` first.
 
 CI renders and checks the cask on every PR (the `cask` job in ci.yml), so
 a template change cannot reach the tap unchecked. To inspect the rendered

@@ -221,8 +221,17 @@ function isRunningCfg(name) {
   return !!(S.status && S.status.running && S.status.config === name);
 }
 function nothingActive() { return !(S.status && S.status.running); }
+/* status.crash: launchd holds the collector but cannot keep it up —
+   crash-looping, or unable to start it at all. Not running, but not
+   stopped either: the active setup is failing, so it keeps its name. */
+function crashedDown() { return !!(S.status && S.status.crash); }
+/* status.trouble's reasons with one of codes (backend: app.Trouble). */
+function troubleReasons(...codes) {
+  const t = S.status && S.status.trouble;
+  return t && t.reasons ? t.reasons.filter((r) => codes.includes(r.code)) : [];
+}
 function activeName() {
-  if (nothingActive() || !S.status.config) return "nothing active";
+  if ((nothingActive() && !crashedDown()) || !S.status.config) return "nothing active";
   return S.status.config;
 }
 function isSecret(key) { return /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH/i.test(key); }
@@ -654,9 +663,10 @@ function renderSidebar() {
   const box = document.getElementById("side-status");
   clear(box);
   const stopped = nothingActive();
+  const crashed = crashedDown();
   const busy = !!S.busyId || S.restarting;
-  const word = stopped && !busy ? "stopped" : busy ? "restarting…" : "running";
-  const dotColor = busy ? "var(--accent)" : stopped ? "var(--dim2)" : "var(--ok)";
+  const word = busy ? "restarting…" : crashed ? "crashed" : stopped ? "stopped" : "running";
+  const dotColor = busy ? "var(--accent)" : crashed ? "var(--err)" : stopped ? "var(--dim2)" : "var(--ok)";
   box.appendChild(el("div", { class: "line1" }, [
     el("span", { class: "dot5", attrs: { style: "background: " + dotColor } }),
     span("", word),
@@ -664,8 +674,19 @@ function renderSidebar() {
   box.appendChild(span("name", activeName()));
   // Stopped, the card already says "nothing active"; naming the preset that
   // is not running next to it just contradicts the line above. Running, the
-  // preset is always a real one (every config keeps at least one).
-  box.appendChild(span("preset", "preset · " + (stopped ? "—" : (S.status && S.status.preset) || "—")));
+  // preset is always a real one (every config keeps at least one). Crashed
+  // names it too: it is the setup that is failing.
+  box.appendChild(span("preset", "preset · " + (stopped && !crashed ? "—" : (S.status && S.status.preset) || "—")));
+  // A crash (launchd cannot keep it up) leads the
+  // warnings: it is the one thing here that means "not doing its job".
+  for (const r of troubleReasons("crashed")) {
+    box.appendChild(el("div", { class: "portwarn" }, [
+      el("div", { class: "pw-line" }, [
+        el("span", { class: "dot5", attrs: { style: "background: var(--err)" } }),
+        span("", r.text),
+      ]),
+    ]));
+  }
   // Only detected ports are claimed; stopped or nothing detected shows no
   // ports line at all. (The collector in use lives in settings, not here.)
   const ports = detectedPorts();
@@ -700,6 +721,17 @@ function renderSidebar() {
       ]),
       el("button", { class: "act adopt", text: "add values", on: { click: openDroppingEditor } }),
     ]));
+  } else if (!stopped) {
+    // Dropping with every value set: the counter rose recently, cause
+    // unknown to compy — say so, and point at the log.
+    for (const r of troubleReasons("dropping")) {
+      box.appendChild(el("div", { class: "portwarn" }, [
+        el("div", { class: "pw-line" }, [
+          el("span", { class: "dot5", attrs: { style: "background: var(--accent)" } }),
+          span("", r.text),
+        ]),
+      ]));
+    }
   }
 
   /* the brew-upgrade window (status.stale_binary): the LaunchAgent still
@@ -707,7 +739,10 @@ function renderSidebar() {
      inode (or already failed after a reboot). One quiet line; restart (the
      collector screen's button, or activating) re-resolves and heals it. */
   if (S.status && S.status.stale_binary) {
-    box.appendChild(span("pw-soft", "compy was upgraded — restart the collector to run the new version"));
+    // Running, it is a trouble reason (the icon's yellow): use its words,
+    // so the sidebar says exactly what the menu bar and tooltip say.
+    const r = troubleReasons("restart_needed")[0];
+    box.appendChild(span("pw-soft", r ? r.text : "compy was upgraded — restart the collector to run the new version"));
   }
 
   /* the build itself, quietly at the sidebar's very bottom: "compy 0.1.0" /
@@ -2653,26 +2688,30 @@ async function saveAnyway(info) {
 /* ── screen 3: collector ──────────────────────────────────────────── */
 function screenCollector() {
   const stopped = nothingActive();
+  const crashed = crashedDown();
   const busy = S.restarting;
   const wrap = el("div", { class: "screen" });
 
-  const dot = busy ? "var(--accent)" : stopped ? "var(--dim2)" : "var(--ok)";
-  const stateWord = busy ? "restarting…" : stopped ? "stopped" : "running";
+  const dot = busy ? "var(--accent)" : crashed ? "var(--err)" : stopped ? "var(--dim2)" : "var(--ok)";
+  const stateWord = busy ? "restarting…" : crashed ? "crashed" : stopped ? "stopped" : "running";
   wrap.appendChild(el("div", { class: "col-head" }, [
     el("div", { class: "col-line" }, [
       el("span", { class: "dot8", attrs: { style: "background: " + dot } }),
       el("span", { class: "col-state" + (busy ? " " : ""), text: stateWord }),
       // pid and uptime are not in /api/status; "no process" is, and is the
       // half that carries meaning.
-      span("col-meta", stopped ? "no process" : ""),
+      // A crash launchd recovered from is history, not trouble: said
+      // quietly here, coloured nowhere.
+      span("col-meta", crashed ? "launchd keeps retrying" : stopped ? "no process" : restartsText()),
       el("span", { class: "grow" }),
       helpButton("collector"),
       el("button", {
-        class: "btn", text: busy ? "restarting…" : stopped ? "start" : "restart",
+        class: "btn", text: busy ? "restarting…" : stopped && !crashed ? "start" : "restart",
         attrs: busy ? { disabled: "" } : null,
         on: { click: restartCollector },
       }),
-      !stopped && !busy ? el("button", {
+      // Crashed, stop is how the retry loop ends.
+      (!stopped || crashed) && !busy ? el("button", {
         class: "btn quiet", text: "stop",
         title: "stop the collector. it receives nothing until you activate a config again.",
         on: { click: stopCollector },
@@ -2688,6 +2727,8 @@ function screenCollector() {
   const cn = noteStrip();
   if (cn) wrap.appendChild(cn);
   wrap.appendChild(el("div", { class: "tiles-wrap" }, [tiles(stopped)]));
+  const crash = crashStrip();
+  if (crash) wrap.appendChild(crash);
   wrap.appendChild(healthStrip(stopped));
   const drop = droppingStrip();
   if (drop) wrap.appendChild(drop);
@@ -2760,7 +2801,9 @@ function metricsSrcText(stopped, has, h) {
   if (stopped) return "no metrics while stopped";
   const want = (S.status && S.status.metrics_port) || 18888;
   if (!has) return "localhost:" + want + "/metrics · no answer";
-  if (metricsPortMoved()) return "localhost:" + h.port + "/metrics · " + want + " was busy";
+  // Moved: :want was busy at launch, or this collector predates the
+  // setting — the screen can't tell which, so it states the fact and the fix.
+  if (metricsPortMoved()) return "localhost:" + h.port + "/metrics · not the configured :" + want + ", a restart moves it";
   return "localhost:" + h.port + "/metrics";
 }
 
@@ -2768,9 +2811,38 @@ function metricsSrcText(stopped, has, h) {
 // counter is climbing AND the active preset is missing required values —
 // the state "activate anyway" accepted, now with runtime evidence. Absent
 // whenever either leg is (drops with values present get no vars blamed).
+/* The crash, in full (status.crash's reason, via trouble): why launchd
+   cannot keep the collector up. */
+function restartsText() {
+  const st = S.status || {};
+  if (!st.restarts) return "";
+  return "restarted " + st.restarts + "× after a crash" + (st.last_exit ? " (last: " + st.last_exit + ")" : "");
+}
+function crashStrip() {
+  const r = troubleReasons("crashed")[0];
+  if (!r) return null;
+  return el("div", { class: "strip-wrap" }, [el("div", { class: "errbar" }, [
+    el("div", { class: "failbar" }, [
+      el("span", { class: "dot6", attrs: { style: "background: var(--err)" } }),
+      span("msg", r.text),
+    ]),
+  ])]);
+}
+
 function droppingStrip() {
   const dvars = nothingActive() ? [] : droppingVars();
-  if (!dvars.length) return null;
+  if (!dvars.length) {
+    // Dropping with every value set (trouble's "dropping" without the
+    // diagnosis): no fix to offer, only the fact and where to look.
+    const r = nothingActive() ? null : troubleReasons("dropping")[0];
+    if (!r) return null;
+    return el("div", { class: "strip-wrap" }, [el("div", { class: "errbar" }, [
+      el("div", { class: "failbar" }, [
+        el("span", { class: "dot6", attrs: { style: "background: var(--accent)" } }),
+        span("msg", r.text),
+      ]),
+    ])]);
+  }
   return el("div", { class: "strip-wrap" }, [el("div", { class: "errbar" }, [
     el("div", { class: "failbar" }, [
       el("span", { class: "dot6", attrs: { style: "background: var(--err)" } }),
@@ -3025,11 +3097,27 @@ function screenSettings() {
       on: { click: () => setProtocol(p) },
     }));
   }
+  const trayColors = (S.settings && S.settings.tray_colors) || "warnings";
+  const tseg = el("div", { class: "seg" });
+  for (const [k, label] of [["off", "off"], ["errors", "errors"], ["warnings", "errors + warnings"]]) {
+    tseg.appendChild(el("button", {
+      class: trayColors === k ? "on" : "", text: label,
+      attrs: { "aria-pressed": trayColors === k ? "true" : "false" },
+      on: { click: () => setTrayColors(k) },
+    }));
+  }
   const osEnvOn = !!(S.status && S.status.os_env);
   wrap.appendChild(el("div", { class: "card" }, [
     el("div", { class: "srow" }, [
       el("span", { class: "lbl" }, [span("t", "appearance"), el("span", { class: "n sans", text: themeNote })]),
       el("span", { class: "grow" }), seg,
+    ]),
+    el("div", { class: "srow" }, [
+      el("span", { class: "lbl" }, [
+        span("t", "menu bar icon colour"),
+        el("span", { class: "n sans", text: TRAY_COLORS_NOTE[trayColors] || "" }),
+      ]),
+      el("span", { class: "grow" }), savedMark("tray_colors"), tseg,
     ]),
     el("div", { class: "srow" }, [
       el("span", { class: "lbl" }, [
@@ -3461,6 +3549,22 @@ async function setOSEnv(on) {
     flashSaved("osenv");
     note(on ? "saved. OTEL_* variables set system-wide" : "saved. OTEL_* variables cleared", 3000);
   } catch (e) { showError(e); }
+}
+/* The menu-bar icon colouring (settings' tray_colors). The tray re-reads
+   settings on its 5s refresh, so nothing restarts. */
+const TRAY_COLORS_NOTE = {
+  off: "shape only: a crash changes the icon's shape, never its colour",
+  errors: "red when the collector crashes or cannot start",
+  warnings: "red when it crashes or cannot start; yellow when it runs but drops data, misses its ports, or needs a restart",
+};
+async function setTrayColors(c) {
+  clearError();
+  try {
+    S.settings = await apiJSON("/api/settings", "PUT", { tray_colors: c });
+    flashSaved("tray_colors");
+    note("saved. the menu bar icon follows within a few seconds", 3000);
+  } catch (e) { showError(e); }
+  render();
 }
 /* Advertisement only — the collector serves every protocol regardless, so
    nothing restarts. With the OS-level toggle on, the backend refreshes the

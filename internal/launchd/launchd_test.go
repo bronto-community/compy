@@ -296,3 +296,36 @@ func TestPlistPath(t *testing.T) {
 		t.Fatalf("got %s want %s", path, want)
 	}
 }
+
+// TestParseJob pins the launchd states compy tells apart, each from output
+// shaped like launchd's own (captured from a throwaway KeepAlive agent):
+// the job's own state is the FIRST state line — nested endpoint sections
+// print "state = active" after it.
+func TestParseJob(t *testing.T) {
+	print := func(state, extra string) string {
+		return "gui/501/io.bronto.compy.collector = {\n\tactive count = 1\n\tstate = " + state + "\n" + extra +
+			"\tendpoints = {\n\t\t\"x\" = {\n\t\t\tstate = active\n\t\t}\n\t}\n}\n"
+	}
+	cases := []struct {
+		name          string
+		out           string
+		running, down bool
+		restarts      int
+		lastExit      string
+	}{
+		{"healthy", print("running", "\truns = 1\n\tpid = 53484\n\tlast exit code = (never exited)\n"), true, false, 0, ""},
+		{"crash loop", print("spawn scheduled", "\truns = 3\n\tlast exit code = 1\n"), false, true, 2, "1"},
+		{"killed, between restarts", print("spawn scheduled", "\truns = 1\n\tlast terminating signal = Killed: 9\n"), false, true, 0, "Killed: 9"},
+		{"recovered after a kill", print("running", "\truns = 2\n\tpid = 87058\n\tlast terminating signal = Killed: 9\n"), true, false, 1, "Killed: 9"},
+		{"binary missing", print("spawn scheduled", "\truns = 1\n\tlast exit code = 78: EX_CONFIG\n"), false, true, 0, "78: EX_CONFIG"},
+		{"starting", print("xpcproxy", "\truns = 1\n\tpid = 86637\n\tlast exit code = (never exited)\n"), false, false, 0, ""},
+		{"not loaded (no output)", "", false, false, 0, ""},
+	}
+	for _, c := range cases {
+		j := parseJob(c.out)
+		if j.Running() != c.running || j.Down() != c.down || j.Restarts() != c.restarts || j.LastExit != c.lastExit {
+			t.Errorf("%s: running=%v down=%v restarts=%d lastExit=%q, want %v %v %d %q",
+				c.name, j.Running(), j.Down(), j.Restarts(), j.LastExit, c.running, c.down, c.restarts, c.lastExit)
+		}
+	}
+}

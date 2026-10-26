@@ -55,6 +55,16 @@ type Settings struct {
 	// map so the settings UI can be one field, parsed by tracing.
 	TracingHeaders string `json:"tracing_headers,omitempty"`
 
+	// TrayColors is how far the menu-bar icon goes beyond its shape-only
+	// states, by app.Trouble's level: "off" (shapes only — the designed
+	// template icon), "errors" (red while the collector has crashed or
+	// cannot start), or "warnings" (that, plus yellow while it runs but is
+	// losing data, mis-advertised, or needs a restart). "" means the
+	// default, "warnings". A coloured icon is a non-template image — AppKit
+	// stops tinting it for the menu bar's appearance — which is exactly why
+	// the plain states stay template.
+	TrayColors string `json:"tray_colors,omitempty"`
+
 	// Recent is the most recently activated configurations, newest first.
 	// Nothing in compy consumes it today (the menu bar went alphabetical);
 	// it stays maintained because /api/status exposes it — a committed part
@@ -105,6 +115,24 @@ func (s Settings) EffectiveProtocol() string {
 		return DefaultProtocol
 	}
 	return s.Protocol
+}
+
+// DefaultTrayColors is the menu-bar icon colouring unless settings say
+// otherwise: red and yellow. Log lines feed neither colour (app.Trouble),
+// so yellow only ever means something a user would want to fix.
+const DefaultTrayColors = "warnings"
+
+// ValidTrayColors reports whether c is a menu-bar colouring compy knows.
+func ValidTrayColors(c string) bool {
+	return c == "off" || c == "errors" || c == "warnings"
+}
+
+// EffectiveTrayColors resolves the empty default to "warnings".
+func (s Settings) EffectiveTrayColors() string {
+	if s.TrayColors == "" {
+		return DefaultTrayColors
+	}
+	return s.TrayColors
 }
 
 // Distro describes a selectable collector distribution.

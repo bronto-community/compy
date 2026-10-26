@@ -313,11 +313,18 @@ func cmdStatus(args []string) error {
 		if err != nil {
 			return err
 		}
+		trouble := a.Trouble(st)
 		if *asJSON {
-			return json.NewEncoder(os.Stdout).Encode(st)
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				app.Status
+				Trouble app.Trouble `json:"trouble"`
+			}{st, trouble})
 		}
 		running := "stopped"
-		if st.Running {
+		switch {
+		case st.Crash != nil:
+			running = "crashed — launchd keeps retrying"
+		case st.Running:
 			running = "running"
 		}
 		config := st.Config
@@ -348,6 +355,20 @@ func cmdStatus(args []string) error {
 		}
 		if len(st.Listening) > 0 {
 			fmt.Printf("listening: %s\n", app.PortList(st.Listening))
+		}
+		// History, not trouble: it crashed, launchd brought it back.
+		if st.Restarts > 0 && st.Crash == nil {
+			fmt.Printf("note:     launchd restarted it %d× since compy started it (last: %s)\n", st.Restarts, st.LastExit)
+		}
+		// Trouble's own lines, minus the two this output already words in
+		// its own way (the stale-binary note, the ports verdict below).
+		for _, r := range trouble.Reasons {
+			switch r.Code {
+			case "crashed":
+				fmt.Printf("error:   %s\n", r.Text)
+			case "dropping":
+				fmt.Printf("warning: %s\n", r.Text)
+			}
 		}
 		// The verdict warns when an app following compy's advertised env
 		// would miss this collector; the secondary port missing alone is
@@ -860,8 +881,8 @@ func cmdSettings(args []string) error {
 					trace += " (compy's own collector)"
 				}
 			}
-			fmt.Printf("grpc-port: %d\nhttp-port: %d\nmetrics-port: %s\nprotocol: %s\ntracing: %s\n",
-				s.GRPCPort, s.HTTPPort, metrics, s.EffectiveProtocol(), trace)
+			fmt.Printf("grpc-port: %d\nhttp-port: %d\nmetrics-port: %s\nprotocol: %s\ntracing: %s\ntray-colors: %s\n",
+				s.GRPCPort, s.HTTPPort, metrics, s.EffectiveProtocol(), trace, s.EffectiveTrayColors())
 			return nil
 		})
 	}
@@ -872,7 +893,7 @@ func cmdSettings(args []string) error {
 	var grpcPort, httpPort, metricsPort int
 	var protocol string
 	var tracing0 bool
-	var tracingEndpoint, tracingHeaders string
+	var tracingEndpoint, tracingHeaders, trayColors string
 	fs.IntVar(&grpcPort, "grpc-port", 0, "gRPC port")
 	fs.IntVar(&httpPort, "http-port", 0, "HTTP port")
 	fs.IntVar(&metricsPort, "metrics-port", 0, "the collector's own telemetry port (0 = pick a free one at launch)")
@@ -880,11 +901,12 @@ func cmdSettings(args []string) error {
 	fs.BoolVar(&tracing0, "tracing", false, "compy's own OpenTelemetry tracing")
 	fs.StringVar(&tracingEndpoint, "tracing-endpoint", "", "where compy's traces go; empty = compy's own collector")
 	fs.StringVar(&tracingHeaders, "tracing-headers", "", `headers for the tracing endpoint, "Name: value" per line`)
+	fs.StringVar(&trayColors, "tray-colors", "", "menu-bar icon colour: off, errors (red), or warnings (red + yellow)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	var grpcP, httpP, metricsP *int
-	var protoP *string
+	var protoP, trayP *string
 	var tr app.Tracing
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -902,9 +924,11 @@ func cmdSettings(args []string) error {
 			tr.Endpoint = &tracingEndpoint
 		case "tracing-headers":
 			tr.Headers = &tracingHeaders
+		case "tray-colors":
+			trayP = &trayColors
 		}
 	})
-	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, metricsP, protoP, &tr) })
+	return withApp(func(a *app.App) error { return a.PutSettings(grpcP, httpP, metricsP, protoP, &tr, trayP) })
 }
 
 // cmdFactoryReset wipes the state directory and starts over. The CLI has no
