@@ -118,7 +118,10 @@ custom encoder without a new ruling.
   scripts (`compy env`), subprocess environments (`compy run`), or OS-level
   (`launchctl setenv`) settings.
 - `launchd` — macOS LaunchAgent management: renders the plist, installs /
-  uninstalls / kickstarts / inspects it via `launchctl`.
+  uninstalls / kickstarts / inspects it via `launchctl`. `Inspect` reads
+  the job's state, runs and last exit: compy's Stop UNLOADS the job, so a
+  job launchd still holds but that is not running is a crash (KeepAlive
+  retrying every ~10s), never a stop — `Status.Crash`.
 - `state` — on-disk state: settings, distros, state directory layout
   (`COMPY_HOME`, below). Also home to `BadRequest`/`IsBadRequest`, the
   marker that says an error is the caller's mistake (400) rather than ours
@@ -128,6 +131,11 @@ custom encoder without a new ruling.
   per-backend toggles, and deliberately no "Remove from Menu Bar": that sat
   beside Quit, looked like it, and deleted a login item with no confirm, so
   it moved to the settings screen's danger area, owner ruling 2026-09-02);
+  the icon's state is shape (template images), COLOURED by default via
+  settings' `tray_colors` from `app.Trouble` — red when the collector
+  crashed / can't start, yellow when it runs but drops data, is
+  mis-advertised or needs a restart; log lines deliberately feed neither —
+  as non-template images tinted at runtime (icons/README.md);
   non-darwin build is a no-op stub.
 - `webui` — localhost-only web UI: JSON API plus an embedded (`go:embed`)
   single-page app; no internal dependencies (it recognises `state`'s

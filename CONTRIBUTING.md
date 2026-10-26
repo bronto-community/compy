@@ -10,7 +10,7 @@ go test ./...
 ./compy-dev status
 ```
 
-The untagged build needs nothing but Go 1.25+ and works fully except
+The untagged build needs nothing but Go 1.26+ and works fully except
 `compy window`, which errors at runtime by design of Wails (the
 native-window library). The full native build is:
 

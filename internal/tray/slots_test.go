@@ -136,7 +136,6 @@ func TestStatusLines(t *testing.T) {
 		name      string
 		st        app.Status
 		warns     int
-		dropping  bool
 		wantLine1 string
 		wantLine2 string
 	}{
@@ -163,13 +162,12 @@ func TestStatusLines(t *testing.T) {
 			wantLine2: "no listeners",
 		},
 		{
-			// The brew-upgrade window: the plist names a deleted binary while
-			// the process survives on the inode — only a restart runs the new
-			// version, so the warnings segment says so.
-			name:      "stale binary appends restart needed while running",
+			// The brew-upgrade window while running is a trouble reason now,
+			// on a line of its own (TestReasonLines) — not on this one.
+			name:      "stale binary while running leaves the ports line alone",
 			st:        app.Status{Running: true, Config: "prod", Preset: "p", Listening: []int{14317}, StaleBinary: true},
 			wantLine1: "● Running · prod · p",
-			wantLine2: ":14317 · restart needed",
+			wantLine2: ":14317",
 		},
 		{
 			// Rebooted (or stopped) inside the upgrade window: launchd's
@@ -215,14 +213,13 @@ func TestStatusLines(t *testing.T) {
 			wantLine2: "5 ports open · 2 warnings",
 		},
 		{
-			// Nonconforming ports append to the warnings segment, in the
-			// status line's own lowercase style.
-			name: "nonconforming appends ports mismatch",
+			// Nonconforming ports are a reason line now, not a chip here.
+			name: "nonconforming leaves the ports line alone",
 			st: app.Status{Running: true, Config: "odd", Preset: "p", Listening: []int{6000, 6001},
 				Conformance: &app.PortsVerdict{Conforming: false, MissingHTTP: true, Actual: []int{6000, 6001}}},
 			warns:     1,
 			wantLine1: "● Running · odd · p",
-			wantLine2: ":6000 :6001 · 1 warnings · ports mismatch",
+			wantLine2: ":6000 :6001 · 1 warnings",
 		},
 		{
 			// A conforming verdict — even with the grpc port missing — adds
@@ -234,25 +231,18 @@ func TestStatusLines(t *testing.T) {
 			wantLine2: ":14318",
 		},
 		{
-			// The drop diagnosis joins the warnings segment: the collector
-			// runs but silently drops because required values are missing.
-			name:      "drop diagnosis appends dropping data",
-			st:        app.Status{Running: true, Config: "bronto", Preset: "default", Listening: []int{14317, 14318}},
-			warns:     2,
-			dropping:  true,
-			wantLine1: "● Running · bronto · default",
-			wantLine2: ":14317 :14318 · 2 warnings · dropping data",
-		},
-		{
-			name:      "drop diagnosis alone is the whole tail",
-			st:        app.Status{Running: true, Config: "bronto", Preset: "default"},
-			dropping:  true,
-			wantLine1: "● Running · bronto · default",
-			wantLine2: "dropping data",
+			// launchd cannot keep it up: neither running nor stopped. Why
+			// is the first reason line; line 2 says launchd is on it.
+			name: "crashed names the setup",
+			st: app.Status{Running: false, Config: "prod", Preset: "p", Listening: []int{14317},
+				Crash: &app.Crash{Reason: "port 4318 is already in use by another process"}},
+			warns:     3,
+			wantLine1: "✕ Crashed · prod · p",
+			wantLine2: "launchd keeps retrying",
 		},
 	}
 	for _, c := range cases {
-		line1, line2 := statusLines(c.st, c.warns, c.dropping)
+		line1, line2 := statusLines(c.st, c.warns)
 		if line1 != c.wantLine1 || line2 != c.wantLine2 {
 			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, line1, line2, c.wantLine1, c.wantLine2)
 		}
@@ -540,5 +530,70 @@ func TestUpdateLines(t *testing.T) {
 		if l1 != c.want1 || l2 != c.want2 {
 			t.Errorf("%s: updateLines(%q, %q) = %q, %q; want %q, %q", c.name, c.collector, c.compy, l1, l2, c.want1, c.want2)
 		}
+	}
+}
+
+// TestReasonLines: each trouble reason is its own menu line — the same
+// sentence the web UI shows, capitalized, marked ✕ for red and ⚠ for
+// yellow, cut to fit; past the room, the last line counts the rest.
+func TestReasonLines(t *testing.T) {
+	r := func(code, text string) app.Reason { return app.Reason{Code: code, Text: text} }
+	if got := reasonLines(app.Trouble{Level: "ok"}); len(got) != 0 {
+		t.Errorf("no trouble: %q, want no lines", got)
+	}
+	got := reasonLines(app.Trouble{Reasons: []app.Reason{
+		r("crashed", "port 4318 is already in use by another process"),
+		r("ports_mismatch", "ports mismatch: apps following compy's settings can't reach this collector"),
+	}})
+	want := []string{
+		"✕ Port 4318 is already in use by another process",
+		"⚠ Ports mismatch: apps following compy's settings can't reach this collector",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("reasonLines = %q, want %q", got, want)
+	}
+	if got := reasonLines(app.Trouble{Reasons: []app.Reason{r("crashed", strings.Repeat("x", 100))}}); got[0] != "✕ X"+strings.Repeat("x", 79)+"…" {
+		t.Errorf("long reason = %q, want it cut at 80 runes", got[0])
+	}
+	many := app.Trouble{Reasons: []app.Reason{r("a", "one"), r("b", "two"), r("c", "three"), r("d", "four")}}
+	if got := reasonLines(many); len(got) != maxReasonLines || got[maxReasonLines-1] != "…and 2 more — open compy" {
+		t.Errorf("overflow = %q, want %d lines ending in the count", got, maxReasonLines)
+	}
+	exactly := app.Trouble{Reasons: many.Reasons[:maxReasonLines]}
+	if got := reasonLines(exactly); got[maxReasonLines-1] != "⚠ Three" {
+		t.Errorf("exactly full = %q, want every reason, no count line", got)
+	}
+}
+
+// TestTooltipFor: the icon's hover says why it is coloured, every reason
+// (no room limit there), and goes back to the description when all is well.
+func TestTooltipFor(t *testing.T) {
+	if got := tooltipFor(app.Trouble{Level: "ok"}); got != defaultTooltip {
+		t.Errorf("ok tooltip = %q, want the default", got)
+	}
+	tr := app.Trouble{Level: "error", Reasons: []app.Reason{
+		{Code: "crashed", Text: "the collector keeps exiting (exit code 1); the log says why"},
+		{Code: "dropping", Text: "dropping data: KEY not set in the active preset"},
+	}}
+	want := "compy — ✕ The collector keeps exiting (exit code 1); the log says why\n⚠ Dropping data: KEY not set in the active preset"
+	if got := tooltipFor(tr); got != want {
+		t.Errorf("tooltip = %q, want %q", got, want)
+	}
+}
+
+// TestCrashedIsLive: a crash launchd keeps retrying offers Stop (ending the
+// loop) and Restart, and the toggle marks the row going down — the same as
+// a running collector; a plain stop offers neither.
+func TestCrashedIsLive(t *testing.T) {
+	crashed := app.Status{Config: "acme", Preset: "eu", Crash: &app.Crash{Reason: "x"}}
+	acmeEU := presetTarget{config: "acme", preset: "eu"}
+	if !live(crashed) || live(app.Status{Config: "acme"}) {
+		t.Fatalf("live(crashed) = %v, live(stopped) = %v; want true, false", live(crashed), live(app.Status{Config: "acme"}))
+	}
+	if got, want := toggleMarks(crashed), (swapMarks{down: acmeEU}); got != want {
+		t.Errorf("stop while crashed: toggleMarks = %+v, want %+v", got, want)
+	}
+	if got, want := restartMarks(crashed), (swapMarks{up: acmeEU}); got != want {
+		t.Errorf("restart while crashed: restartMarks = %+v, want %+v", got, want)
 	}
 }

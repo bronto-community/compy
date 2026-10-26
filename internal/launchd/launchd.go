@@ -273,18 +273,88 @@ func Running() (bool, error) {
 // pid, both parsed from `launchctl print gui/<uid>/<Label>`. pid is 0 when
 // the job is not running or launchd printed no "pid = N" line.
 func Info() (running bool, pid int, err error) {
+	j, err := Inspect()
+	return j.Running(), j.PID, err
+}
+
+// Job is what launchd knows about the collector job, from one
+// `launchctl print`. Verified against launchd's own output (macOS 26) for
+// each case it has to tell apart, using a throwaway KeepAlive agent:
+//
+//	healthy:          state = running,         last exit code = (never exited)
+//	crash loop:       state = spawn scheduled, last exit code = 1, runs +1 per ~10s throttle
+//	killed by signal: state = spawn scheduled, last terminating signal = Killed: 9
+//	                  (then state = running again, runs = 2, the signal line kept)
+//	binary missing:   state = spawn scheduled, last exit code = 78: EX_CONFIG, forever
+//	starting:         state = xpcproxy, briefly, before running
+//
+// A job compy stopped is not loaded at all (Stop boots it out and removes
+// the plist), so launchd printing a job that is not running means launchd
+// is trying, and failing, to keep it up.
+type Job struct {
+	// State is launchd's top-level state ("running", "spawn scheduled",
+	// "xpcproxy", ...); "" when launchd printed none — the job is not
+	// loaded, or the output was not launchd's.
+	State string
+	PID   int
+	// Runs is how many times launchd has started the job since it was
+	// loaded. compy loads it afresh on every start and activation, so
+	// anything past 1 is launchd restarting it on its own: a crash.
+	Runs int
+	// LastExit is how the previous run ended: "1", "78: EX_CONFIG", or a
+	// signal ("Killed: 9"); "" while it never exited.
+	LastExit string
+}
+
+// Inspect reads the collector job from launchd. An error means launchctl
+// failed — in practice, the job is not loaded.
+func Inspect() (Job, error) {
 	out, err := Exec("print", guiTarget()+"/"+Label)
 	if err != nil {
-		return false, 0, err
+		return Job{}, err
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	return parseJob(string(out)), nil
+}
+
+// parseJob reads Job's fields off `launchctl print` output. Only the FIRST
+// "state =" line is the job's: later ones belong to nested sections (its
+// endpoints print "state = active"). pid and runs keep the same tolerance
+// Info always had — any matching line counts.
+func parseJob(out string) Job {
+	var j Job
+	for _, line := range strings.Split(out, "\n") {
 		t := strings.TrimSpace(line)
-		if t == "state = running" {
-			running = true
+		if v, ok := strings.CutPrefix(t, "state = "); ok && j.State == "" {
+			j.State = strings.TrimSpace(v)
 		}
 		if v, ok := strings.CutPrefix(t, "pid = "); ok {
-			pid, _ = strconv.Atoi(strings.TrimSpace(v))
+			j.PID, _ = strconv.Atoi(strings.TrimSpace(v))
+		}
+		if v, ok := strings.CutPrefix(t, "runs = "); ok {
+			j.Runs, _ = strconv.Atoi(strings.TrimSpace(v))
+		}
+		if v, ok := strings.CutPrefix(t, "last exit code = "); ok {
+			if v = strings.TrimSpace(v); v != "(never exited)" {
+				j.LastExit = v
+			}
+		}
+		if v, ok := strings.CutPrefix(t, "last terminating signal = "); ok {
+			j.LastExit = strings.TrimSpace(v)
 		}
 	}
-	return running, pid, nil
+	return j
 }
+
+// Running reports whether the collector process is up right now.
+func (j Job) Running() bool { return j.State == "running" }
+
+// Down reports whether launchd holds the job but cannot keep it up: loaded,
+// not running, not merely mid-spawn, and with a previous run that ended. A
+// collector compy stopped never gets here — it is not loaded.
+func (j Job) Down() bool {
+	return j.State != "" && !j.Running() && j.State != "xpcproxy" && j.LastExit != ""
+}
+
+// Restarts is how many times launchd restarted the job on its own since
+// compy last started it.
+func (j Job) Restarts() int { return max(j.Runs-1, 0) }

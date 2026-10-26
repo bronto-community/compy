@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/bronto-community/compy/internal/app"
 	"github.com/bronto-community/compy/internal/cfgstore"
@@ -30,11 +31,20 @@ import (
 // actually listening on, detected from the OS — never a claim derived from
 // settings or YAML. Nothing detected omits the segment entirely.
 //
-// dropping is app.DropDiagnosis holding (the running collector drops
-// telemetry AND the active preset is missing required values): it joins the
-// warnings segment as "dropping data" — the native menu can't host the
-// window's add-values flow, so the chip just names the state.
-func statusLines(st app.Status, warns int, dropping bool) (line1, line2 string) {
+// What is WRONG is not on these lines: app.Trouble's reasons get lines of
+// their own right below (reasonLines), in full sentences — a chip squeezed
+// onto the ports line said that something was off, never why. A collector
+// launchd cannot keep up is neither running nor stopped: "✕ Crashed",
+// named like a running one (it is the active setup failing); why is the
+// first reason line.
+func statusLines(st app.Status, warns int) (line1, line2 string) {
+	if st.Crash != nil {
+		line1 = "✕ Crashed · " + st.Config
+		if st.Preset != "" {
+			line1 += " · " + st.Preset
+		}
+		return line1, "launchd keeps retrying"
+	}
 	if !st.Running {
 		line2 = "no listeners"
 		// Stale plist while stopped: the user rebooted (or stopped) inside
@@ -56,30 +66,79 @@ func statusLines(st app.Status, warns int, dropping bool) (line1, line2 string) 
 		}
 		line2 += fmt.Sprintf("%d warnings", warns)
 	}
-	if dropping {
-		if line2 != "" {
-			line2 += " · "
-		}
-		line2 += "dropping data"
-	}
-	// The conformance verdict's warning, appended to the warnings segment:
-	// apps following compy's advertised env would miss this collector.
-	if st.Conformance != nil && !st.Conformance.Conforming {
-		if line2 != "" {
-			line2 += " · "
-		}
-		line2 += "ports mismatch"
-	}
-	// brew upgrade replaced the binary under the running collector: it
-	// survives on the deleted inode, but only a restart runs the new
-	// version (and any launchd restart of the stale path would fail).
-	if st.StaleBinary {
-		if line2 != "" {
-			line2 += " · "
-		}
-		line2 += "restart needed"
-	}
 	return line1, line2
+}
+
+// maxReasonLines is how many reason lines the menu has room for; past it,
+// the last line says how many more there are (the window lists them all).
+const maxReasonLines = 3
+
+// reasonLines renders app.Trouble's reasons as the menu's "why" lines: one
+// per reason, its own sentence (the same words the tooltip and the web UI
+// show), marked ✕ when it is what makes the icon red and ⚠ for yellow — a
+// native menu item cannot tint text, so the glyph carries the colour, the
+// ●/○ convention of the status line. More than fit become "…and N more".
+func reasonLines(tr app.Trouble) []string {
+	var out []string
+	for i, r := range tr.Reasons {
+		if i == maxReasonLines-1 && len(tr.Reasons) > maxReasonLines {
+			out = append(out, fmt.Sprintf("…and %d more — open compy", len(tr.Reasons)-i))
+			break
+		}
+		out = append(out, reasonMark(r)+" "+truncate(sentence(r.Text), 80))
+	}
+	return out
+}
+
+// reasonMark is ✕ for the reasons that make the icon red, ⚠ otherwise.
+func reasonMark(r app.Reason) string {
+	if r.Code == "crashed" {
+		return "✕"
+	}
+	return "⚠"
+}
+
+// tooltipFor is the menu-bar icon's hover text: the plain description while
+// all is well, otherwise what is wrong — the one place a user sees why the
+// icon is red or yellow without opening anything. (The status-item tooltip
+// is the one macOS actually shows; see onReady.)
+func tooltipFor(tr app.Trouble) string {
+	if len(tr.Reasons) == 0 {
+		return defaultTooltip
+	}
+	texts := make([]string, len(tr.Reasons))
+	for i, r := range tr.Reasons {
+		texts[i] = reasonMark(r) + " " + sentence(r.Text)
+	}
+	return "compy — " + strings.Join(texts, "\n")
+}
+
+// sentence capitalizes s's first letter: the reasons are written in the web
+// UI's lowercase voice, and a menu line reads as a sentence.
+func sentence(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
+// live reports whether there is a collector to stop or restart: running,
+// or crashed with launchd still retrying it — Stop is how a user ends a
+// crash loop, and Restart (a fresh apply) is how a stale binary heals.
+func live(st app.Status) bool {
+	return st.Running || st.Crash != nil
+}
+
+// truncate cuts s to n runes with an ellipsis — the crash reason can be a
+// long sentence, and a menu item grows to fit whatever it is given.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // portsSegment compacts detected listening ports for one status line: up to
@@ -244,7 +303,7 @@ func activateMarks(st app.Status, target presetTarget) swapMarks {
 // bring back.
 func toggleMarks(st app.Status) swapMarks {
 	t := presetTarget{config: st.Config, preset: st.Preset}
-	if st.Running {
+	if live(st) {
 		return swapMarks{down: t}
 	}
 	return swapMarks{up: t}
@@ -255,7 +314,7 @@ func toggleMarks(st app.Status) swapMarks {
 // so up (the end state being worked toward) carries it. Restart is disabled
 // while stopped, so a stopped status marks nothing.
 func restartMarks(st app.Status) swapMarks {
-	if !st.Running {
+	if !live(st) {
 		return swapMarks{}
 	}
 	return swapMarks{up: presetTarget{config: st.Config, preset: st.Preset}}
