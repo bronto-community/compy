@@ -32,6 +32,8 @@ jobs:
         run: go vet ./...
       - name: go test
         run: go test ./...
+      - name: Collector updater tests
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: js helper tests (node stdlib runner, no npm)
         run: node --test internal/webui/static/*.test.js
       - name: linux cross-build (CGO off)

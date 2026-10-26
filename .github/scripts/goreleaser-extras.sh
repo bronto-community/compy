@@ -61,13 +61,13 @@ version=$(sed -n 's/^  version: //p' "$root/packaging/collector/manifest.yaml")
 # tarball for this platform into dist/extra, and optionally unpack a copy
 # into stage-dir. The tarballs are built once per manifest change by
 # .github/workflows/collector-build.yml and published under a
-# content-addressed tag (collector-<version>-<manifest sha8>), so a
+# content-addressed tag (collector-<version>-<manifest+builder sha8>), so a
 # release no longer spends ~25 minutes compiling four collectors. Trust
 # model: same-origin release assets over TLS with a sha256 check, like
 # compy's own pulled-distro updates; the compy release then folds the
 # tarballs into its own signed checksums.txt.
 collector() {
-  mhash=$(shasum -a 256 "$root/packaging/collector/manifest.yaml" | cut -c1-8)
+  mhash=$(sh "$root/packaging/collector/cache-key.sh")
   tag="collector-${version}-${mhash}"
   name="otelcol-compy_${version}_$1.tar.gz"
   url="https://github.com/bronto-community/compy/releases/download/$tag/$name"
