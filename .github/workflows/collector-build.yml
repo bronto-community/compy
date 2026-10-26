@@ -51,7 +51,7 @@ jobs:
             (cd out && shasum -a 256 "$name" > "$name.sha256")
             rm -rf "$work"
           done
-          (cd out && shasum -a 256 *.tar.gz > checksums.txt)
+          (cd out && shasum -a 256 ./*.tar.gz > checksums.txt)
 
       - name: Publish prebuilt release
         env:
