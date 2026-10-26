@@ -30,7 +30,8 @@ On first use compy downloads a pinned, checksum-verified collector build
   pinned in `packaging/collector/manifest.yaml`), next to the compy binary
   via the OpenTelemetry Collector Builder. It is a separate, slow step.
   When it sits next to the compy executable it is the default collector
-  and no download happens.
+  and no download happens. For version bumps and isolated builds, see the
+  [collector update guide](packaging/collector/README.md).
 - **macOS app bundle.** `sh packaging/macos/make-app.sh ./compy` assembles
   a `compy.app` next to the binary so the standalone window shows the
   right identity in the app menu and Dock. Everything works without it.
