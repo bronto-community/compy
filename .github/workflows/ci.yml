@@ -82,9 +82,11 @@ jobs:
           TAP="$(brew --repository)/Library/Taps/compy-cask-check/homebrew-tap"
           mkdir -p "$TAP/Casks"
           cp dist/homebrew/Casks/compy.rb "$TAP/Casks/compy.rb"
-          # No `brew trust` needed: naming the tap or a fully qualified cask on
-          # the command line is itself the authorisation (Homebrew's
-          # Trust::explicitly_allowed?), and every call below does.
+          # Homebrew refuses to load casks from untrusted taps, even when the
+          # cask is named fully qualified (it used to count as authorisation;
+          # it no longer does). This throwaway tap is ours and lives only on
+          # this runner, so trust it outright.
+          brew trust --tap compy-cask-check/tap
 
           # goreleaser's built-in template is not style-clean and offers no
           # knob to change it, so the tap normalizes style on main instead.
