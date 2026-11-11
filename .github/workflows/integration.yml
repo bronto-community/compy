@@ -2,7 +2,7 @@
 # contrib distro comes straight from internal/distro/defs.go: the URL and
 # sha256 are parsed out of that file, so a collector bump PR updates this
 # workflow's inputs automatically. Contrib rather than the minimal otlp
-# distro because the shipped defaults use components (debug, batch,
+# distro because the shipped defaults use components (debug, memory_limiter,
 # file_storage) the otlp build does not carry.
 name: Integration
 

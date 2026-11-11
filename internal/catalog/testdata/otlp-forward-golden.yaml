@@ -11,10 +11,6 @@ processors:
     check_interval: 1s
     limit_percentage: 80
     spike_limit_percentage: 20
-  batch:
-    send_batch_size: 1024
-    send_batch_max_size: 1024
-    timeout: 200ms
 
 exporters:
   otlp_http/eu-prod:
@@ -23,6 +19,10 @@ exporters:
       Authorization: Bearer ${env:EU_PROD_API_KEY:-}  # EU prod auth value
     sending_queue:
       storage: file_storage  # survives restarts and offline stretches
+      batch:  # batching lives in the exporter; the batch processor is being retired upstream
+        flush_timeout: 200ms
+        min_size: 1024
+        max_size: 1024
     retry_on_failure:
       max_elapsed_time: 0  # retry forever; the queue holds telemetry until the backend answers
   otlp_http/vendor-two:
@@ -31,6 +31,10 @@ exporters:
       x-example-key: ${env:VENDOR_TWO_API_KEY:-}  # vendor two auth value
     sending_queue:
       storage: file_storage  # survives restarts and offline stretches
+      batch:  # batching lives in the exporter; the batch processor is being retired upstream
+        flush_timeout: 200ms
+        min_size: 1024
+        max_size: 1024
     retry_on_failure:
       max_elapsed_time: 0  # retry forever; the queue holds telemetry until the backend answers
 
@@ -44,13 +48,13 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter]
       exporters: [otlp_http/eu-prod, otlp_http/vendor-two]
     metrics:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter]
       exporters: [otlp_http/eu-prod, otlp_http/vendor-two]
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter]
       exporters: [otlp_http/eu-prod, otlp_http/vendor-two]

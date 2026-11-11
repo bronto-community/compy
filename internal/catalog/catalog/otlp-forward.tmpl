@@ -36,7 +36,7 @@ fields:
     type: toggle
     default: true
     section: pipeline
-    description: Batch before export
+    description: Batch in each exporter before sending
   - name: offline_queue
     type: toggle
     default: false
@@ -45,7 +45,6 @@ fields:
 ---
 {{- $procs := list -}}
 {{- if .memory_limiter}}{{$procs = append $procs "memory_limiter"}}{{end -}}
-{{- if .batch}}{{$procs = append $procs "batch"}}{{end -}}
 {{- $exp := list -}}
 {{- range .backends}}{{$exp = append $exp (printf "otlp_http/%s" ._slug)}}{{end -}}
 receivers:
@@ -63,12 +62,6 @@ processors:
     limit_percentage: 80
     spike_limit_percentage: 20
 {{- end}}
-{{- if .batch}}
-  batch:
-    send_batch_size: 1024
-    send_batch_max_size: 1024
-    timeout: 200ms
-{{- end}}
 {{end}}
 exporters:
 {{- range .backends}}
@@ -78,9 +71,19 @@ exporters:
     headers:
       {{.auth_header}}: {{if eq .auth_header "Authorization"}}Bearer {{end}}${env:{{._env.api_key}}:-}  # {{._label}} auth value
 {{- end}}
-{{- if $.offline_queue}}
+{{- if or $.batch $.offline_queue}}
     sending_queue:
+{{- if $.offline_queue}}
       storage: file_storage  # survives restarts and offline stretches
+{{- end}}
+{{- if $.batch}}
+      batch:  # batching lives in the exporter; the batch processor is being retired upstream
+        flush_timeout: 200ms
+        min_size: 1024
+        max_size: 1024
+{{- end}}
+{{- end}}
+{{- if $.offline_queue}}
     retry_on_failure:
       max_elapsed_time: 0  # retry forever; the queue holds telemetry until the backend answers
 {{- end}}
