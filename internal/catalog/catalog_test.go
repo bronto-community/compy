@@ -132,14 +132,19 @@ func TestRenderShippedOTLPForward(t *testing.T) {
 		"  otlp_http/vendor-two:\n    endpoint: https://otlp.example.net\n    headers:\n      x-example-key: ${env:VENDOR_TWO_API_KEY:-}  # vendor two auth value\n",
 		"  otlp_http/local-tap:\n    endpoint: http://10.0.0.5:4318\n",
 		"  memory_limiter:\n    check_interval: 1s",
-		"  batch:\n    send_batch_size: 1024",
-		"    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlp_http/eu-prod, otlp_http/vendor-two, otlp_http/local-tap]\n",
-		"    metrics:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlp_http/eu-prod, otlp_http/vendor-two, otlp_http/local-tap]\n",
-		"    logs:\n      receivers: [otlp]\n      processors: [memory_limiter, batch]\n      exporters: [otlp_http/eu-prod, otlp_http/vendor-two, otlp_http/local-tap]\n",
+		"  otlp_http/local-tap:\n    endpoint: http://10.0.0.5:4318\n    sending_queue:\n      batch:  # batching lives in the exporter; the batch processor is being retired upstream\n        flush_timeout: 200ms\n        min_size: 1024\n        max_size: 1024\n",
+		"    traces:\n      receivers: [otlp]\n      processors: [memory_limiter]\n      exporters: [otlp_http/eu-prod, otlp_http/vendor-two, otlp_http/local-tap]\n",
+		"    metrics:\n      receivers: [otlp]\n      processors: [memory_limiter]\n      exporters: [otlp_http/eu-prod, otlp_http/vendor-two, otlp_http/local-tap]\n",
+		"    logs:\n      receivers: [otlp]\n      processors: [memory_limiter]\n      exporters: [otlp_http/eu-prod, otlp_http/vendor-two, otlp_http/local-tap]\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render missing:\n%s\nin:\n%s", want, out)
 		}
+	}
+	// Batching is the exporter's job now (collector batching-migration RFC):
+	// the batch processor would double-batch and v0.165+ warns about it.
+	if strings.Contains(out, "  batch:\n    send_batch_size") || strings.Contains(out, ", batch]") {
+		t.Errorf("batch processor still rendered:\n%s", out)
 	}
 	if strings.Contains(out, "otlp_http/local-tap:\n    endpoint: http://10.0.0.5:4318\n    headers") {
 		t.Errorf("emptied auth header still rendered headers:\n%s", out)
@@ -162,6 +167,9 @@ func TestRenderShippedOTLPForward(t *testing.T) {
 	}
 	if !strings.Contains(out, "    traces:\n      receivers: [otlp]\n      exporters: [otlp_http/eu-prod") {
 		t.Errorf("bare pipeline missing with toggles off:\n%s", out)
+	}
+	if strings.Contains(out, "sending_queue") {
+		t.Errorf("sending_queue rendered with batch and offline queue off:\n%s", out)
 	}
 	// The offline queue brings the extension and the per-exporter queue.
 	bag["offline_queue"] = true
