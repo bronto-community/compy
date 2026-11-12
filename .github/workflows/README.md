@@ -3,11 +3,11 @@
 | Workflow | Triggers | What it does |
 |---|---|---|
 | `ci.yml` | PR, push to main, dispatch | gofmt, vet, tests, linux cross-build on ubuntu; vet + tests + tagged window build on macOS |
-| `integration.yml` | nightly, dispatch | downloads the pinned otlp collector (URL and sha256 parsed from `internal/distro/defs.go`, checksum verified) and runs `go test -tags=integration ./integration/` |
+| `integration.yml` | nightly, collector-related PR, dispatch | downloads the pinned contrib collector (URL and sha256 parsed from `internal/distro/defs.go`, checksum verified) and runs `go test -tags=integration ./integration/` |
 | `security.yml` | PR, weekly, dispatch | govulncheck |
-| `collector-bump.yml` | weekly, dispatch | opens a PR bumping the pinned collector release via `.github/scripts/bump-collector.py` when upstream has a newer one |
+| `collector-bump.yml` | manual dispatch only; disabled on GitHub for now | optional PR helper; recurring update checks are tracked in issue #29 |
 | `release.yml` | tags `v*` | GoReleaser: compy archives, compy.app zip, GitHub release, Homebrew cask; the otelcol-compy tarballs are fetched prebuilt (see `collector-build.yml`) |
-| `collector-build.yml` | push to main touching `packaging/collector/`, dispatch | prebuilds the four otelcol-compy tarballs and publishes them under a content-addressed tag (`collector-<version>-<manifest sha8>`), with provenance attestation; the release workflow downloads these instead of compiling |
+| `collector-build.yml` | collector-related PR, push to main touching `packaging/collector/`, dispatch | PRs build and integration-test the bundled collector; main/dispatch builds four platforms and publishes content-addressed tarballs (`collector-<version>-<manifest+builder sha8>`) with provenance attestation |
 
 Dependabot (`.github/dependabot.yml`) watches gomod and github-actions
 weekly.
@@ -24,10 +24,53 @@ weekly.
 - The release job runs in the protected `release` environment (required
   reviewer), so a pushed `v*` tag waits for a human approval before any
   release credential is minted.
-- `BUMP_PR_TOKEN` (optional): a PAT with contents and pull-requests write.
-  PRs opened with the default `GITHUB_TOKEN` do not trigger CI (GitHub
-  blocks workflow recursion), so without this secret a collector-bump PR
-  needs a manual nudge (close/reopen) before CI runs on it.
+- `BUMP_PR_TOKEN` (collector-bump): optional bot PAT with contents and
+  pull-requests write for this repository. It allows PR creation and lets
+  PR checks start automatically. Without it, the workflow uses
+  `GITHUB_TOKEN`: the repository must permit Actions to create PRs, and
+  resulting PR checks can require a maintainer to approve workflow runs.
+
+## Collector update tracking
+
+Use [issue #29](https://github.com/bronto-community/compy/issues/29) as the
+recurring maintenance task. Ask a coding agent to pick it up periodically;
+the issue contains the version check, update, build, test, and reporting
+runbook. Leave it open after each check and record dated results there.
+Scheduled bump PRs are deferred, and the existing bump workflow is disabled
+on GitHub. No repository permission or bot-token changes are needed for
+this manual approach.
+
+The optional, manual bump helper compares stable numeric tags, skips
+drafts and prereleases, and prepares one PR. It updates the
+binary release pins/checksums, each selected component's exact upstream
+module version, and the separate OCB pin from upstream's Makefile. A
+binary patch such as 0.163.2 can use 0.163.0 components and OCB: replacing
+every version string with the binary release is not valid.
+
+The collector PR check builds the actual curated distribution and runs the
+real-collector integration suite before merge. Main builds use current
+stable Go and also exercise the Linux binary before publishing the
+prebuilt artifacts. A subsequent Compy release ships those artifacts;
+neither an update check nor a PR changes a running local collector.
+
+If automated PR creation is requested later, re-enable the workflow and
+either configure `BUMP_PR_TOKEN`, or enable
+**Settings → Actions → General → Workflow permissions → Allow GitHub
+Actions to create and approve pull requests**. Keep the default token
+permission read-only; the workflow grants its own contents/PR write scopes.
+If using the default token, approve the PR's workflow runs when GitHub
+requires it. See [GitHub's workflow triggering rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+
+The setting was disabled and no repository-level `BUMP_PR_TOKEN` was
+configured when investigated on 2026-10-26. The scheduled runs had been
+failing at PR creation, including
+[the October 26 run](https://github.com/bronto-community/compy/actions/runs/40279559906).
+Changing the cron or version pins alone does not fix that permission.
+
+Those automation prerequisites are deferred. No auto-merge is configured.
+
+Local update/build/guest-test commands are in
+[packaging/collector/README.md](../../packaging/collector/README.md).
 
 ## Release integrity, and the Apple-signing limitation
 

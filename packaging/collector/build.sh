@@ -1,7 +1,7 @@
 #!/bin/sh
 # build.sh [output-dir] — build otelcol-compy, the collector distribution
 # shipped with compy, from manifest.yaml using the OpenTelemetry Collector
-# Builder (OCB) pinned to the manifest's collector version.
+# Builder (OCB) pinned separately in builder-version, following upstream.
 #
 # NOT part of the normal go-build gates: OCB downloads a large module graph
 # and takes minutes. Run it when the manifest changes or for a release.
@@ -22,16 +22,19 @@ out=$(cd "$out" && pwd)
 version=$(sed -n 's/^  version: //p' "$here/manifest.yaml")
 [ -n "$version" ] || { echo "no version in manifest.yaml" >&2; exit 1; }
 
-# The builder is versioned in lockstep with the collector: the v0.x.y
-# collector line tags the builder module as cmd/builder/v0.x.y, importable
-# as go.opentelemetry.io/collector/cmd/builder@v0.x.y. Installed for the
+# A binary patch release can retain earlier component and builder versions.
+# bump-collector.py reads the OCB version from upstream's Makefile. Installed for the
 # host (GOOS/GOARCH cleared) so a cross-target build still gets a runnable
 # builder; the builder's inner `go build` then picks up the caller's
 # GOOS/GOARCH from the environment.
-echo "building otelcol-compy (collector $version) via OCB…" >&2
+builder_version=$(tr -d '\n\r' < "$here/builder-version")
+echo "$builder_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+  echo "invalid OCB version in builder-version" >&2; exit 1;
+}
+echo "building otelcol-compy (release $version, OCB $builder_version)…" >&2
 builder_dir=$(mktemp -d)
 trap 'rm -rf "$builder_dir"' EXIT
-GOBIN="$builder_dir" GOOS= GOARCH= go install go.opentelemetry.io/collector/cmd/builder@v"$version"
+GOBIN="$builder_dir" GOOS= GOARCH= go install go.opentelemetry.io/collector/cmd/builder@v"$builder_version"
 
 # Build inside the throwaway dir: the manifest's output_path (./_build) is
 # relative to the CWD, and a shared packaging/collector/_build lets two

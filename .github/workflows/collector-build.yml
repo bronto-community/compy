@@ -1,15 +1,20 @@
 # Prebuilds otelcol-compy for all four platforms whenever the manifest
 # changes, and publishes the tarballs as a release tagged by CONTENT:
-# collector-<version>-<manifest sha256, first 8>. The compy release
+# collector-<version>-<manifest+builder sha256, first 8>. The compy release
 # workflow downloads these instead of compiling (25 minutes of OCB per
-# release otherwise) — see .github/scripts/goreleaser-extras.sh. The
-# weekly collector-bump PR touches packaging/collector/, so merging it
-# triggers this build and the prebuilt is waiting before the next compy
-# release. The collector is pure Go (CGO off), so one ubuntu runner
-# cross-compiles everything.
+# release otherwise) — see .github/scripts/goreleaser-extras.sh. Pull
+# requests build all four targets but do not publish; pushes to main and
+# manual runs also publish the prebuilt for the next Compy release. The
+# collector is pure Go (CGO off), so one Ubuntu runner cross-compiles all.
 name: Collector build
 
 on:
+  pull_request:
+    paths:
+      - "packaging/collector/**"
+      - ".github/scripts/bump-collector.py"
+      - ".github/scripts/test_bump_collector.py"
+      - ".github/workflows/collector-build.yml"
   push:
     branches: [main]
     paths: ["packaging/collector/**"]
@@ -21,24 +26,26 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # publish the prebuilt release
-      id-token: write # provenance attestation (OIDC)
-      attestations: write
+    outputs:
+      tag: ${{ steps.metadata.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          # Binary-only upstream patches can address Go runtime issues.
+          # Build the collector with the maintained stable Go patch release.
+          go-version: stable
+      - name: Test the updater
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 
       - name: Build all platforms
         run: |
           set -eu
           version=$(sed -n 's/^  version: //p' packaging/collector/manifest.yaml)
-          mhash=$(shasum -a 256 packaging/collector/manifest.yaml | cut -c1-8)
-          echo "tag=collector-${version}-${mhash}" >> "$GITHUB_ENV"
+          mhash=$(sh packaging/collector/cache-key.sh)
+          echo "tag=collector-${version}-${mhash}" >> "$GITHUB_OUTPUT"
           mkdir -p out
           # Sequential on purpose: the builds share the module and build
           # caches, so everything after the first compile is cheap.
@@ -46,16 +53,43 @@ jobs:
             work=$(mktemp -d)
             GOOS=${target%_*} GOARCH=${target#*_} CGO_ENABLED=0 \
               sh packaging/collector/build.sh "$work"
+            if [ "$target" = linux_amd64 ]; then
+              OTELCOL_BIN="$work/otelcol-compy" go test -tags=integration ./integration/
+            fi
             name="otelcol-compy_${version}_${target}.tar.gz"
             tar -czf "out/$name" -C "$work" otelcol-compy otelcol-compy.version
             (cd out && shasum -a 256 "$name" > "$name.sha256")
             rm -rf "$work"
           done
           (cd out && shasum -a 256 ./*.tar.gz > checksums.txt)
+        id: metadata
+
+      - name: Preserve release artifacts
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: collector-prebuilt
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # publish the prebuilt release
+      id-token: write # provenance attestation (OIDC)
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: collector-prebuilt
+          path: out
 
       - name: Publish prebuilt release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ needs.build.outputs.tag }}
         run: |
           set -eu
           if gh release view "$tag" >/dev/null 2>&1; then
@@ -63,7 +97,7 @@ jobs:
           else
             gh release create "$tag" out/* \
               --title "$tag" \
-              --notes "Prebuilt otelcol-compy tarballs for packaging/collector/manifest.yaml at this content hash. Consumed by the compy release workflow; not for direct installation — the bundled collector ships inside compy releases."
+              --notes "Prebuilt otelcol-compy tarballs for the collector manifest and builder pin at this content hash. Consumed by the compy release workflow; the bundled collector ships inside compy releases."
           fi
 
       - name: Attest build provenance

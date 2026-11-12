@@ -44,10 +44,18 @@ CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,productio
 when deliberately rolling out.
 
 `sh packaging/collector/build.sh` builds `otelcol-compy` (the bundled
-distro, from `packaging/collector/manifest.yaml` via OCB, builder pinned to
-the manifest's collector version) next to the compy binary, plus its
+distro, from `packaging/collector/manifest.yaml` via OCB, whose version is
+separately pinned in `packaging/collector/builder-version`) next to the
+compy binary, plus its
 `otelcol-compy.version` stamp. Slow (big module graph) and deliberately NOT
 part of the gates above; run it when the manifest changes.
+
+Binary release, component module, and OCB versions can differ on upstream
+patch releases. Use `.github/scripts/bump-collector.py` to read the actual
+upstream pins and refresh checksums. Periodic maintenance is tracked in
+[issue #29](https://github.com/bronto-community/compy/issues/29); scheduled
+bump PRs are deferred. See [packaging/collector/README.md](packaging/collector/README.md)
+for isolated builds and the update process.
 
 ## Dependencies
 

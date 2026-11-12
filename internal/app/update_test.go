@@ -206,12 +206,13 @@ func countingFetch(fetch distro.Fetch, calls *int) distro.Fetch {
 
 func TestUpdateCheckPersistsAndShowsOnRows(t *testing.T) {
 	setup(t, "")
+	latest := nextCollectorRelease(t)
 	a, err := app.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	calls := 0
-	a.Fetch = countingFetch(updateFetch(t, "0.160.0", tarGzWith(t, "otelcol-otlp")), &calls)
+	a.Fetch = countingFetch(updateFetch(t, latest, tarGzWith(t, "otelcol-otlp")), &calls)
 	installDistro(t, a, "otlp", "otelcol-otlp", "0.150.0")
 
 	// The on-demand check persists its result.
@@ -219,8 +220,8 @@ func TestUpdateCheckPersistsAndShowsOnRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	chk, err := state.LoadUpdateCheck()
-	if err != nil || chk.Latest != "0.160.0" || chk.CheckedAt.IsZero() {
-		t.Fatalf("persisted check = %+v (%v), want latest 0.160.0 with checked_at", chk, err)
+	if err != nil || chk.Latest != latest || chk.CheckedAt.IsZero() {
+		t.Fatalf("persisted check = %+v (%v), want latest %s with checked_at", chk, err, latest)
 	}
 	if calls != 1 {
 		t.Fatalf("listing calls = %d, want 1", calls)
@@ -242,8 +243,8 @@ func TestUpdateCheckPersistsAndShowsOnRows(t *testing.T) {
 	for _, r := range rows {
 		byName[r["name"].(string)] = r
 	}
-	if byName["otlp"]["latest_available"] != "0.160.0" {
-		t.Errorf("otlp latest_available = %v, want 0.160.0", byName["otlp"]["latest_available"])
+	if byName["otlp"]["latest_available"] != latest {
+		t.Errorf("otlp latest_available = %v, want %s", byName["otlp"]["latest_available"], latest)
 	}
 	if s, _ := byName["otlp"]["checked_at"].(string); s == "" {
 		t.Errorf("otlp checked_at missing")
@@ -253,8 +254,8 @@ func TestUpdateCheckPersistsAndShowsOnRows(t *testing.T) {
 		if v, ok := r["latest_available"]; ok {
 			t.Errorf("%s claims %v; undownloaded rows have nothing to update", name, v)
 		}
-		if r["fetch_version"] != "0.160.0" {
-			t.Errorf("%s fetch_version = %v, want 0.160.0", name, r["fetch_version"])
+		if r["fetch_version"] != latest {
+			t.Errorf("%s fetch_version = %v, want %s", name, r["fetch_version"], latest)
 		}
 		if _, ok := r["fetch_pinned"]; ok {
 			t.Errorf("%s fetch_pinned set despite a check result", name)
@@ -369,11 +370,22 @@ func otlpDef(t *testing.T) distro.Def {
 	return distro.Def{}
 }
 
+// Keep future-release fixtures newer than the compiled-in pin after a bump.
+func nextCollectorRelease(t *testing.T) string {
+	t.Helper()
+	var major, minor, patch int
+	if _, err := fmt.Sscanf(otlpDef(t).Version, "%d.%d.%d", &major, &minor, &patch); err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%d.%d.0", major, minor+1)
+}
+
 // TestDistroRowStates is the row-state matrix: undownloaded rows advertise
 // what a download would fetch (never an update claim), installed rows claim
 // only when older than the persisted latest.
 func TestDistroRowStates(t *testing.T) {
 	setup(t, "")
+	latest := nextCollectorRelease(t)
 	a, err := app.New()
 	if err != nil {
 		t.Fatal(err)
@@ -404,12 +416,12 @@ func TestDistroRowStates(t *testing.T) {
 	}
 
 	// Undownloaded with a persisted latest: that is what a download fetches.
-	if err := state.SaveUpdateCheck(state.UpdateCheck{Latest: "0.160.0", CheckedAt: time.Now().UTC()}); err != nil {
+	if err := state.SaveUpdateCheck(state.UpdateCheck{Latest: latest, CheckedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
 	r = row("otlp")
-	if r["fetch_version"] != "0.160.0" {
-		t.Fatalf("undownloaded checked row fetch_version = %v, want 0.160.0", r["fetch_version"])
+	if r["fetch_version"] != latest {
+		t.Fatalf("undownloaded checked row fetch_version = %v, want %s", r["fetch_version"], latest)
 	}
 	if _, ok := r["fetch_pinned"]; ok {
 		t.Fatalf("fetch_pinned set despite a check result: %v", r)
@@ -419,10 +431,10 @@ func TestDistroRowStates(t *testing.T) {
 	}
 
 	// Downloaded and current: a version, no claims of any kind.
-	installDistro(t, a, "otlp", "otelcol-otlp", "0.160.0")
+	installDistro(t, a, "otlp", "otelcol-otlp", latest)
 	r = row("otlp")
-	if r["version"] != "0.160.0" {
-		t.Fatalf("installed row version = %v, want 0.160.0", r["version"])
+	if r["version"] != latest {
+		t.Fatalf("installed row version = %v, want %s", r["version"], latest)
 	}
 	for _, k := range []string{"latest_available", "fetch_version", "fetch_pinned"} {
 		if v, ok := r[k]; ok {
@@ -433,8 +445,8 @@ func TestDistroRowStates(t *testing.T) {
 	// Downloaded and older: the one case that claims an update.
 	installDistro(t, a, "contrib", "otelcol-contrib", "0.150.0")
 	r = row("contrib")
-	if r["version"] != "0.150.0" || r["latest_available"] != "0.160.0" {
-		t.Fatalf("installed older row = %v, want version 0.150.0 claiming 0.160.0", r)
+	if r["version"] != "0.150.0" || r["latest_available"] != latest {
+		t.Fatalf("installed older row = %v, want version 0.150.0 claiming %s", r, latest)
 	}
 }
 
@@ -443,17 +455,18 @@ func TestDistroRowStates(t *testing.T) {
 // recorded in settings — and an installed binary is never silently upgraded.
 func TestEnsureDistroFetchesLatestKnownRelease(t *testing.T) {
 	setup(t, "")
+	latest := nextCollectorRelease(t)
 	a, err := app.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	var urls []string
-	inner := updateFetch(t, "0.160.0", tarGzWith(t, "otelcol-otlp"))
+	inner := updateFetch(t, latest, tarGzWith(t, "otelcol-otlp"))
 	a.Fetch = func(url string) (io.ReadCloser, int64, error) {
 		urls = append(urls, url)
 		return inner(url)
 	}
-	if err := state.SaveUpdateCheck(state.UpdateCheck{Latest: "0.160.0", CheckedAt: time.Now().UTC()}); err != nil {
+	if err := state.SaveUpdateCheck(state.UpdateCheck{Latest: latest, CheckedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -461,7 +474,7 @@ func TestEnsureDistroFetchesLatestKnownRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(a.Dir, "distros", "otlp-0.160.0", "otelcol-otlp")
+	want := filepath.Join(a.Dir, "distros", "otlp-"+latest, "otelcol-otlp")
 	if path != want {
 		t.Fatalf("EnsureDistro = %q, want %q (one download, straight to the latest)", path, want)
 	}
@@ -470,21 +483,21 @@ func TestEnsureDistroFetchesLatestKnownRelease(t *testing.T) {
 		switch {
 		case strings.Contains(u, "api.github.com"):
 			t.Errorf("fetch ran a live release check: %s", u)
-		case strings.HasSuffix(u, "0.160.0_"+runtime.GOOS+"_"+runtime.GOARCH+".tar.gz"):
+		case strings.HasSuffix(u, latest+"_"+runtime.GOOS+"_"+runtime.GOARCH+".tar.gz"):
 			gotTar = true
 		case strings.HasSuffix(u, ".sha256"):
 			gotSHA = true
 		}
 	}
 	if !gotTar || !gotSHA {
-		t.Fatalf("fetched %v, want the 0.160.0 tarball and its .sha256 asset", urls)
+		t.Fatalf("fetched %v, want the %s tarball and its .sha256 asset", urls, latest)
 	}
 	s, err := state.LoadSettings()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.DistroVersions["otlp"] != "0.160.0" {
-		t.Fatalf("DistroVersions = %v, want otlp 0.160.0", s.DistroVersions)
+	if s.DistroVersions["otlp"] != latest {
+		t.Fatalf("DistroVersions = %v, want otlp %s", s.DistroVersions, latest)
 	}
 
 	// Installed: idempotent, offline, and never a silent upgrade — a newer

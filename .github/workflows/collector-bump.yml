@@ -1,28 +1,33 @@
-# Weekly check for a newer upstream collector release. When one exists,
+# Optional manual check for a newer upstream collector release. Periodic
+# maintenance is tracked in https://github.com/bronto-community/compy/issues/29
+# instead of a schedule for now. When a newer release exists,
 # .github/scripts/bump-collector.py rewrites the OCB manifest and the
 # pinned distro definitions (fetching the real per-asset sha256 values) and
 # the job opens a PR with the result. No newer release means a clean exit.
 #
-# Note: PRs opened with the default GITHUB_TOKEN do not trigger CI (GitHub
-# blocks workflow-on-workflow recursion). Set the BUMP_PR_TOKEN secret to a
-# PAT with contents+pull-requests write to get CI on bump PRs, or nudge the
-# PR manually (close/reopen, or push an empty commit).
+# The repository must allow Actions to create PRs, or BUMP_PR_TOKEN must
+# provide contents+pull-requests write. Default-token PR checks can require
+# workflow approval; a bot PAT lets the PR checks start automatically.
 name: Collector bump
 
 on:
-  schedule:
-    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: collector-bump
+  cancel-in-progress: false
+
 jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test the updater
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: Find the latest collector release
         id: latest
         env:
@@ -31,10 +36,16 @@ jobs:
           # Plain v0.x.y tags only: the repo also tags cmd/builder/v0.x.y
           # and cmd/opampsupervisor/v0.x.y in the same listing.
           tag=$(gh api 'repos/open-telemetry/opentelemetry-collector-releases/releases?per_page=30' \
-            --jq '[.[] | select(.prerelease | not) | .tag_name | select(startswith("v"))][0]')
+            --jq '[.[] | select(.prerelease == false and .draft == false) | .tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | max_by(ltrimstr("v") | split(".") | map(tonumber))')
+          test "$tag" != null
           new=${tag#v}
           cur=$(sed -n 's/^  version: //p' packaging/collector/manifest.yaml)
           echo "current $cur, latest $new"
+          {
+            echo "## OpenTelemetry Collector release check"
+            echo "Pinned: $cur; newest stable binary release: $new."
+            echo "Upstream: https://github.com/open-telemetry/opentelemetry-collector-releases/releases/tag/v$new"
+          } >> "$GITHUB_STEP_SUMMARY"
           if [ -z "$new" ] || [ "$new" = "$cur" ] || \
              [ "$(printf '%s\n%s\n' "$cur" "$new" | sort -V | tail -n1)" != "$new" ]; then
             echo "nothing to bump"
@@ -51,23 +62,43 @@ jobs:
           NEW: ${{ steps.latest.outputs.new }}
         run: python3 .github/scripts/bump-collector.py "$NEW"
       - name: Open PR
+        id: pr
         if: steps.latest.outputs.new != ''
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.BUMP_PR_TOKEN || github.token }}
-          branch: collector-bump/v${{ steps.latest.outputs.new }}
+          branch: automation/collector-update
+          delete-branch: true
+          add-paths: |
+            packaging/collector/manifest.yaml
+            packaging/collector/builder-version
+            internal/distro/defs.go
           commit-message: "chore: bump collector to v${{ steps.latest.outputs.new }}"
           title: "Bump collector to v${{ steps.latest.outputs.new }}"
           body: |
             Automated bump of the pinned OpenTelemetry Collector from
             v${{ steps.latest.outputs.cur }} to v${{ steps.latest.outputs.new }}.
 
-            - `packaging/collector/manifest.yaml`: every component pin,
-              including the paired 1.x confmap-provider line read from the
-              upstream otelcol manifest at the new tag.
+            - `packaging/collector/manifest.yaml`: component/provider pins
+              copied from upstream manifests, including patch releases whose
+              binary and Go module versions differ.
+            - `packaging/collector/builder-version`: OCB version from the
+              upstream release's Makefile.
             - `internal/distro/defs.go`: pinned versions, download URLs, and
               per-asset sha256 values fetched from the release's published
               `.sha256` assets.
 
-            CI validates this like any PR. Release tags:
+            The collector PR check builds the bundled distribution and runs
+            real-collector integration tests before merge. Default-token PRs
+            may require approval to run checks; use BUMP_PR_TOKEN for automatic CI.
+            Release tags:
             https://github.com/open-telemetry/opentelemetry-collector-releases/releases/tag/v${{ steps.latest.outputs.new }}
+      - name: Record tracking PR
+        if: steps.pr.outputs.pull-request-url != ''
+        env:
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
+        run: echo "Tracking PR $PR_URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Explain failed PR creation
+        if: failure() && steps.latest.outputs.new != ''
+        run: |
+          echo "::error::Collector update failed. If GitHub refused PR creation, enable Settings > Actions > General > Allow GitHub Actions to create and approve pull requests, or configure BUMP_PR_TOKEN. See .github/workflows/README.md."
