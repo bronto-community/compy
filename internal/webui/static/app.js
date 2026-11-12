@@ -500,7 +500,7 @@ function restoreFocus(f) {
     queueMicrotask(() => { if (cm) cm.focus(); });
     return;
   }
-  const e = document.querySelector('[data-fk="' + f.fk.replace(/"/g, '\\"') + '"]');
+  const e = document.querySelector('[data-fk="' + CSS.escape(f.fk) + '"]');
   if (!e) return;
   if (f.value != null && e.value !== f.value) e.value = f.value;
   e.focus();
