@@ -1,5 +1,6 @@
 /compy
 *.tmp
+.DS_Store
 dist/
 .claude/
 /compy.app/
