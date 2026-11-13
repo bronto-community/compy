@@ -69,7 +69,7 @@ func LatestVersion(fetch Fetch) (string, error) {
 // NewerVersion reports whether latest is a strictly newer release than
 // current, comparing dot-separated numeric parts (a missing part counts as
 // 0, so "0.161" > "0.135.0"). A malformed or empty version on either side
-// never claims: "", "unknown" (the bundled build stamp fallback), or any
+// never claims: "", "unknown", or any
 // non-numeric part compares false.
 func NewerVersion(latest, current string) bool {
 	lp, lok := versionParts(latest)

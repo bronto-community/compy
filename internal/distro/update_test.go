@@ -81,7 +81,7 @@ func TestNewerVersion(t *testing.T) {
 		{"0.135.1", "0.135.0", true},  // patch bump
 		{"0.161", "0.135.0", true},    // short form, missing part = 0
 		{"0.135.0", "0.135", false},   // equal via missing part
-		{"0.161.0", "unknown", false}, // bundled stamp fallback: no claim
+		{"0.161.0", "unknown", false}, // non-numeric version: no claim
 		{"0.161.0", "", false},        // user-managed rows have no version
 		{"", "0.135.0", false},        // no check result yet
 		{"garbage", "0.135.0", false}, // malformed latest
@@ -171,54 +171,8 @@ func TestEnsureVersionVerifiesAgainstReleaseChecksum(t *testing.T) {
 	}
 }
 
-func TestBundled(t *testing.T) {
-	dir := t.TempDir()
-	exe := filepath.Join(dir, "compy")
-	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	orig := bundledExe
-	bundledExe = func() (string, error) { return exe, nil }
-	t.Cleanup(func() { bundledExe = orig })
-
-	if p, _ := Bundled(); p != "" {
-		t.Fatalf("no binary: path = %q, want empty", p)
-	}
-
-	bin := filepath.Join(dir, "otelcol-compy")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	p, v := Bundled()
-	if r, err := filepath.EvalSymlinks(bin); err == nil {
-		bin = r // macOS: /var is a symlink to /private/var
-	}
-	if p != bin || v != "unknown" {
-		t.Fatalf("no stamp: got (%q, %q), want (%q, unknown)", p, v, bin)
-	}
-
-	if err := os.WriteFile(bin+".version", []byte("0.159.0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, v := Bundled(); v != "0.159.0" {
-		t.Fatalf("version = %q, want 0.159.0", v)
-	}
-}
-
-func TestRegistryIncludesBundledAndEffectiveVersions(t *testing.T) {
+func TestRegistryEffectiveVersions(t *testing.T) {
 	t.Setenv("COMPY_HOME", t.TempDir())
-	dir := t.TempDir()
-	exe := filepath.Join(dir, "compy")
-	bin := filepath.Join(dir, "otelcol-compy")
-	for _, f := range []string{exe, bin} {
-		if err := os.WriteFile(f, []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	orig := bundledExe
-	bundledExe = func() (string, error) { return exe, nil }
-	t.Cleanup(func() { bundledExe = orig })
-
 	root := t.TempDir()
 	// A pulled otlp update on disk, recorded in settings.
 	newBin := filepath.Join(root, "distros", "otlp-0.160.0", "otelcol-otlp")
@@ -236,11 +190,8 @@ func TestRegistryIncludesBundledAndEffectiveVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r, err := filepath.EvalSymlinks(bin); err == nil {
-		bin = r // macOS: /var is a symlink to /private/var
-	}
-	if reg[0].Name != BundledName || reg[0].Path != bin {
-		t.Fatalf("first row = %+v, want bundled %q", reg[0], bin)
+	if len(reg) != len(Defs()) || reg[0].Name != Defs()[0].Name {
+		t.Fatalf("registry = %+v, want exactly the definitions, in order", reg)
 	}
 	byName := map[string]string{}
 	for _, d := range reg {

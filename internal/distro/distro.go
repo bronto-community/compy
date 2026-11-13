@@ -176,12 +176,11 @@ func InstalledPath(root string, d Def, s state.Settings) string {
 	return p
 }
 
-// Registry returns the bundled distro (BundledName, Path "" when not built
-// next to the executable) followed by state.LoadDistros() merged with
-// Defs(): definition entries appear with Path set to their installed path
-// (or "" if not yet downloaded into root), at the version in effect per
-// settings; a user entry (state.Distro) with the same name as a definition
-// or the bundled distro overrides it entirely.
+// Registry returns state.LoadDistros() merged with Defs(): definition
+// entries appear with Path set to their installed path (or "" if not yet
+// downloaded into root), at the version in effect per settings; a user
+// entry (state.Distro) with the same name as a definition overrides it
+// entirely.
 func Registry(root string) ([]state.Distro, error) {
 	user, err := state.LoadDistros()
 	if err != nil {
@@ -196,14 +195,8 @@ func Registry(root string) ([]state.Distro, error) {
 		overrides[u.Name] = u
 	}
 
-	out := make([]state.Distro, 0, len(defs)+len(user)+1)
-	seen := map[string]bool{BundledName: true}
-	if u, ok := overrides[BundledName]; ok {
-		out = append(out, u)
-	} else {
-		path, _ := Bundled()
-		out = append(out, state.Distro{Name: BundledName, Path: path})
-	}
+	out := make([]state.Distro, 0, len(defs)+len(user))
+	seen := map[string]bool{}
 	for _, d := range Defs() {
 		seen[d.Name] = true
 		if u, ok := overrides[d.Name]; ok {

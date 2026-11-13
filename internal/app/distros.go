@@ -142,13 +142,6 @@ func (a *App) EnsureDistro(name string, progress distro.Progress) (string, error
 	if i := slices.IndexFunc(user, func(d state.Distro) bool { return d.Name == name }); i >= 0 {
 		return user[i].Path, nil
 	}
-	if name == distro.BundledName {
-		p, _ := distro.Bundled()
-		if p == "" {
-			return "", state.BadRequest(errors.New("the bundled collector is not built — run packaging/collector/build.sh"))
-		}
-		return p, nil
-	}
 	for _, d := range distro.Defs() {
 		if d.Name == name {
 			if !distro.Available(d) {
@@ -266,12 +259,9 @@ func (a *App) Distros() ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(reg))
 	for _, d := range reg {
 		def, isDef := defs[d.Name]
-		bundled := d.Name == distro.BundledName && !isUserEntry[d.Name]
 		version := ""
 		if isDef {
 			version = distro.EffectiveVersion(def, s)
-		} else if bundled && d.Path != "" {
-			_, version = distro.Bundled()
 		}
 		row := map[string]any{
 			"name":       d.Name,
@@ -279,15 +269,13 @@ func (a *App) Distros() ([]map[string]any, error) {
 			"version":    version,
 			"selected":   d.Name == selected,
 			"definition": isDef,
-			"bundled":    bundled,
 			"available":  !isDef || distro.Available(def),
 			"downloaded": d.Path != "",
 			"user_entry": isUserEntry[d.Name],
 		}
 		// An update claim rides only on INSTALLED updatable rows — pinned
-		// definitions, downloaded, not overridden by a user entry. The
-		// bundled collector updates with compy, user paths are the user's to
-		// update, and an undownloaded row has nothing to update: it instead
+		// definitions, downloaded, not overridden by a user entry. User
+		// paths are the user's to update, and an undownloaded row has nothing to update: it instead
 		// advertises what a download would fetch (fetch_version — the
 		// persisted latest when a check has run, else the compiled-in pin,
 		// flagged fetch_pinned so the UI can say which it is). NewerVersion
@@ -501,14 +489,10 @@ func (a *App) UseDistro(name string) error {
 }
 
 // updatableDef returns the shipped definition behind name when `compy
-// distro update` applies to it. The bundled collector, user-managed
-// entries, and undownloaded definitions (nothing installed to update — a
+// distro update` applies to it. User-managed entries, and undownloaded definitions (nothing installed to update — a
 // download fetches the newest release directly) are refused with a message
 // the UI shows verbatim.
 func (a *App) updatableDef(name string) (distro.Def, error) {
-	if name == distro.BundledName {
-		return distro.Def{}, state.BadRequest(errors.New("the bundled collector updates with compy releases"))
-	}
 	user, err := state.LoadDistros()
 	if err != nil {
 		return distro.Def{}, err
@@ -788,4 +772,34 @@ func (a *App) StartUpdateDistro(name string) (current, latest string, started bo
 		a.endDownload(name, err)
 	}()
 	return current, latest, true, nil
+}
+
+// retiredBundledName is the settings.Distro value that selected the
+// otelcol-compy collector compy used to ship next to its own executable
+// (issue #38). It no longer exists after an upgrade.
+const retiredBundledName = "compy"
+
+// retireBundledDistro moves settings that still select the retired bundled
+// collector onto DefaultDistro, reporting whether it changed anything. A
+// user-registered distro that happens to be named "compy" is the user's
+// and is left alone. It does not restart the collector: the job's plist
+// keeps naming the deleted binary (launchd.StaleBinary), which status and
+// the tray already report, and the next start/apply re-resolves it.
+func (a *App) retireBundledDistro() (bool, error) {
+	s, err := state.LoadSettings()
+	if err != nil {
+		return false, err
+	}
+	if s.Distro != retiredBundledName {
+		return false, nil
+	}
+	user, err := state.LoadDistros()
+	if err != nil {
+		return false, err
+	}
+	if slices.ContainsFunc(user, func(d state.Distro) bool { return d.Name == retiredBundledName }) {
+		return false, nil
+	}
+	s.Distro = ""
+	return true, state.SaveSettings(s)
 }

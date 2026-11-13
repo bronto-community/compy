@@ -22,19 +22,14 @@ The `desktop,production` tags are required by Wails; the `CGO_LDFLAGS`
 links a framework Wails references but does not link itself. Neither
 applies to non-darwin builds.
 
-On first use compy downloads a pinned, checksum-verified collector build
-(~90MB). Two optional extras (the Homebrew install ships both):
+On first use compy downloads upstream `otelcol-contrib`, checksum-verified
+(~90MB). compy ships no collector of its own.
 
-- **Bundled collector.** `sh packaging/collector/build.sh` builds
-  `otelcol-compy`, compy's own curated collector distribution (components
-  pinned in `packaging/collector/manifest.yaml`), next to the compy binary
-  via the OpenTelemetry Collector Builder. It is a separate, slow step.
-  When it sits next to the compy executable it is the default collector
-  and no download happens.
-- **macOS app bundle.** `sh packaging/macos/make-app.sh ./compy` assembles
-  a `compy.app` next to the binary so the standalone window shows the
-  right identity in the app menu and Dock. Everything works without it.
-  See `packaging/macos/README.md`.
+One optional extra (the Homebrew install ships it): the **macOS app
+bundle**. `sh packaging/macos/make-app.sh ./compy` assembles a `compy.app`
+next to the binary so the standalone window shows the right identity in
+the app menu and Dock. Everything works without it. See
+`packaging/macos/README.md`.
 
 ## The gates
 
@@ -89,8 +84,8 @@ goes to be forgotten.
 ## Releases
 
 Pushing a `vX.Y.Z` tag runs the release workflow: GoReleaser builds the
-compy archives (darwin arm64+amd64 with cgo, linux amd64+arm64 without),
-the `otelcol-compy` collector tarballs, and the `compy.app` zip, then
+compy archives (darwin arm64+amd64 with cgo, linux amd64+arm64 without)
+and the `compy.app` zip, then
 publishes the GitHub release and the Homebrew cask in
 `bronto-community/homebrew-tap`. `.github/workflows/README.md` documents
 every workflow and the secrets involved.

@@ -35,21 +35,18 @@ import (
 const probeTimeout = 5 * time.Second
 
 // DefaultDistro is the collector compy falls back to when settings name
-// none and no bundled otelcol-compy sits next to the executable: contrib,
-// downloaded (checksum-verified) automatically the first time anything
-// needs a collector binary. An explicit settings.Distro — set via
-// `compy distro use` or a first `compy distro add` — always wins.
+// none: contrib, downloaded (checksum-verified) automatically the first
+// time anything needs a collector binary. Not core: the shipped
+// otlp-forward configuration's offline queue needs file_storage, which
+// only contrib has. An explicit settings.Distro — set via `compy distro
+// use` or a first `compy distro add` — always wins.
 const DefaultDistro = "contrib"
 
-// effectiveDistro is the distro a blank settings.Distro resolves to: the
-// bundled otelcol-compy when it is built next to the compy executable, else
+// effectiveDistro is the distro a blank settings.Distro resolves to:
 // DefaultDistro. An explicit setting always wins.
 func effectiveDistro(s state.Settings) string {
 	if s.Distro != "" {
 		return s.Distro
-	}
-	if p, _ := distro.Bundled(); p != "" {
-		return distro.BundledName
 	}
 	return DefaultDistro
 }
@@ -165,6 +162,11 @@ func New() (*App, error) {
 	// the legacy tree left in place for a retry on the next run.
 	if err := a.migrateLegacy(); err != nil {
 		fmt.Fprintln(os.Stderr, "compy: migration failed:", err)
+	}
+	if retired, err := a.retireBundledDistro(); err != nil {
+		fmt.Fprintln(os.Stderr, "compy: distro migration failed:", err)
+	} else if retired {
+		fmt.Fprintf(os.Stderr, "compy: the bundled collector (otelcol-compy) is no longer shipped; switched to %q — restart the collector (`compy apply`) to use it\n", DefaultDistro)
 	}
 	if err := cfgstore.MaterializeDefaults(dir); err != nil {
 		return nil, err
@@ -335,6 +337,11 @@ func (a *App) launch(name, preset string) error {
 // failure path only delays the diagnostic the user is waiting for.
 func (a *App) restorePrevious() (string, error) {
 	if err := cfgstore.RestoreActive(a.Dir); err != nil {
+		return "", err
+	}
+	// A snapshot taken before the bundled collector was dropped may still
+	// name it; restoring that would point the job at a binary that is gone.
+	if _, err := a.retireBundledDistro(); err != nil {
 		return "", err
 	}
 	name, preset, err := a.ActiveConfig()

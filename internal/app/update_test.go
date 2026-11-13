@@ -20,29 +20,6 @@ import (
 	"github.com/bronto-community/compy/internal/state"
 )
 
-// placeBundled drops a fake otelcol-compy (plus version stamp) next to the
-// running test binary — the real place Bundled() looks — and removes it
-// again on cleanup so no other test sees a bundled collector.
-func placeBundled(t *testing.T, version string) string {
-	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(filepath.Dir(exe), "otelcol-compy")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stamp := bin + ".version"
-	if version != "" {
-		if err := os.WriteFile(stamp, []byte(version+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Cleanup(func() { os.Remove(bin); os.Remove(stamp) })
-	return bin
-}
-
 // updateFetch serves a stubbed GitHub: the releases listing, one release's
 // tarball, and its .sha256 checksum asset — keyed purely on URL shape, the
 // way the injected app.Fetch sees them.
@@ -263,11 +240,9 @@ func TestUpdateCheckPersistsAndShowsOnRows(t *testing.T) {
 			t.Errorf("%s version = %v, want empty (nothing installed)", name, r["version"])
 		}
 	}
-	for _, name := range []string{"compy", "fake"} {
-		for _, k := range []string{"latest_available", "fetch_version"} {
-			if v, ok := byName[name][k]; ok {
-				t.Errorf("%s %s = %v; bundled/user rows must not claim", name, k, v)
-			}
+	for _, k := range []string{"latest_available", "fetch_version"} {
+		if v, ok := byName["fake"][k]; ok {
+			t.Errorf("fake %s = %v; user rows must not claim", k, v)
 		}
 	}
 }
@@ -733,14 +708,14 @@ func TestStartUpdateDistroAsync(t *testing.T) {
 	}
 }
 
-func TestUpdateDistroRefusesBundledAndUserManaged(t *testing.T) {
+func TestUpdateDistroRefusesUserManaged(t *testing.T) {
 	setup(t, "")
 	a, err := app.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := a.CheckDistroUpdate("compy"); !state.IsBadRequest(err) || !strings.Contains(fmt.Sprint(err), "compy releases") {
-		t.Fatalf("check compy: %v, want bundled 400", err)
+	if _, _, err := a.CheckDistroUpdate("compy"); !state.IsBadRequest(err) {
+		t.Fatalf("check compy: %v, want 400 (the bundled collector is gone)", err)
 	}
 	fakeDistro(t, "exit 0") // registers user distro "fake"
 	if _, _, err := a.CheckDistroUpdate("fake"); !state.IsBadRequest(err) || !strings.Contains(fmt.Sprint(err), "user-managed") {
@@ -764,49 +739,7 @@ func TestUpdateDistroRefusesBundledAndUserManaged(t *testing.T) {
 	}
 }
 
-func TestBundledDefaultResolution(t *testing.T) {
-	setup(t, "")
-	bin := placeBundled(t, "0.159.0")
-
-	a, err := app.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// No explicit setting: the bundled collector is the default, no download.
-	a.Fetch = func(url string) (io.ReadCloser, int64, error) {
-		t.Errorf("unexpected download of %q with the bundled collector present", url)
-		return nil, 0, fmt.Errorf("no network")
-	}
-	path, err := a.EnsureDistro("", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Base(path) != "otelcol-compy" {
-		t.Fatalf("EnsureDistro(\"\") = %q, want the bundled binary (%s)", path, bin)
-	}
-	st, err := a.Status()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Distro != "compy" {
-		t.Fatalf("Status.Distro = %q, want compy", st.Distro)
-	}
-	rows, err := a.Distros()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r := rows[0]; r["name"] != "compy" || r["bundled"] != true || r["selected"] != true ||
-		r["downloaded"] != true || r["version"] != "0.159.0" {
-		t.Fatalf("compy row = %v", r)
-	}
-	// An explicit setting still wins.
-	fakeDistro(t, "exit 0")
-	if st, err := a.Status(); err != nil || st.Distro != "fake" {
-		t.Fatalf("Status.Distro = %q (%v), want fake", st.Distro, err)
-	}
-}
-
-func TestNoBundledFallsBackToContrib(t *testing.T) {
+func TestDefaultIsContrib(t *testing.T) {
 	setup(t, "")
 	a, err := app.New()
 	if err != nil {
@@ -817,17 +750,60 @@ func TestNoBundledFallsBackToContrib(t *testing.T) {
 		t.Fatal(err)
 	}
 	if st.Distro != "contrib" {
-		t.Fatalf("Status.Distro = %q, want contrib fallback", st.Distro)
+		t.Fatalf("Status.Distro = %q, want contrib", st.Distro)
 	}
 	rows, err := a.Distros()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := rows[0]; r["name"] != "compy" || r["downloaded"] != false || r["selected"] != false {
-		t.Fatalf("absent compy row = %v", r)
+	for _, r := range rows {
+		if r["name"] == "compy" {
+			t.Fatalf("the retired bundled collector is still listed: %v", r)
+		}
+		if _, ok := r["bundled"]; ok {
+			t.Fatalf("row still carries a bundled field: %v", r)
+		}
 	}
-	// Selecting the unbuilt bundled collector is a caller mistake, said plainly.
-	if _, err := a.EnsureDistro("compy", nil); !state.IsBadRequest(err) || !strings.Contains(fmt.Sprint(err), "build.sh") {
-		t.Fatalf("EnsureDistro(compy) without the binary: %v", err)
+	if r := rows[0]; r["name"] != "core" {
+		t.Fatalf("first row = %v, want the core definition", r)
+	}
+	if _, err := a.EnsureDistro("compy", nil); err == nil {
+		t.Fatal("EnsureDistro(compy) succeeded; the bundled collector is gone")
+	}
+}
+
+// Settings that selected the retired bundled collector move to the default
+// at startup; a user entry that happens to be called "compy" is kept.
+func TestRetireBundledDistroSetting(t *testing.T) {
+	setup(t, "")
+	if err := state.SaveSettings(state.Settings{Distro: "compy"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.New(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := state.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Distro != "" {
+		t.Fatalf("settings.Distro = %q after startup, want \"\" (the contrib default)", s.Distro)
+	}
+
+	p := filepath.Join(t.TempDir(), "otelcol")
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveDistros([]state.Distro{{Name: "compy", Path: p}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SaveSettings(state.Settings{Distro: "compy"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.New(); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := state.LoadSettings(); s.Distro != "compy" {
+		t.Fatalf("settings.Distro = %q, want the user's own compy entry kept", s.Distro)
 	}
 }

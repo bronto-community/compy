@@ -1,6 +1,6 @@
 # Weekly check for a newer upstream collector release. When one exists,
-# .github/scripts/bump-collector.py rewrites the OCB manifest and the
-# pinned distro definitions (fetching the real per-asset sha256 values) and
+# .github/scripts/bump-collector.py rewrites the pinned distro definitions
+# (fetching the real per-asset sha256 values) and
 # the job opens a PR with the result. No newer release means a clean exit.
 #
 # Note: PRs opened with the default GITHUB_TOKEN do not trigger CI (GitHub
@@ -33,7 +33,7 @@ jobs:
           tag=$(gh api 'repos/open-telemetry/opentelemetry-collector-releases/releases?per_page=30' \
             --jq '[.[] | select(.prerelease | not) | .tag_name | select(startswith("v"))][0]')
           new=${tag#v}
-          cur=$(sed -n 's/^  version: //p' packaging/collector/manifest.yaml)
+          cur=$(sed -n 's/^[[:space:]]*Version:[[:space:]]*"\(.*\)",$/\1/p' internal/distro/defs.go | head -n1)
           echo "current $cur, latest $new"
           if [ -z "$new" ] || [ "$new" = "$cur" ] || \
              [ "$(printf '%s\n%s\n' "$cur" "$new" | sort -V | tail -n1)" != "$new" ]; then
@@ -62,9 +62,6 @@ jobs:
             Automated bump of the pinned OpenTelemetry Collector from
             v${{ steps.latest.outputs.cur }} to v${{ steps.latest.outputs.new }}.
 
-            - `packaging/collector/manifest.yaml`: every component pin,
-              including the paired 1.x confmap-provider line read from the
-              upstream otelcol manifest at the new tag.
             - `internal/distro/defs.go`: pinned versions, download URLs, and
               per-asset sha256 values fetched from the release's published
               `.sha256` assets.

@@ -5,15 +5,14 @@
 #   go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean
 #
 # Beyond the compy binaries, a post-build hook (.github/scripts/
-# goreleaser-extras.sh) produces the otelcol-compy collector tarballs and
-# the compy.app zip (release.extra_files picks them up from dist/extra/),
-# plus a per-arch staging dir (dist/stage/<os>_<arch>/: otelcol-compy, its
-# .version stamp, compy.app) that the darwin archives fold in — so the
-# Homebrew cask's Caskroom staging dir holds the bundled collector and the
-# app bundle right next to the compy binary, where compy's bundled-collector
-# detection (internal/distro.Bundled) and the tray's window spawn
-# (internal/tray windowExe) look for them after resolving the
-# /opt/homebrew/bin/compy symlink.
+# goreleaser-extras.sh) produces the compy.app zip (release.extra_files
+# picks it up from dist/extra/), plus a per-arch staging dir
+# (dist/stage/<os>_<arch>/compy.app) that the darwin archives fold in — so
+# the Homebrew cask's Caskroom staging dir holds the app bundle right next
+# to the compy binary, where the tray's window spawn (internal/tray
+# windowExe) looks for it after resolving the /opt/homebrew/bin/compy
+# symlink. compy ships no collector of its own: it downloads upstream
+# otelcol-contrib (checksum-verified) on first use.
 version: 2
 
 project_name: compy
@@ -25,8 +24,8 @@ before:
 builds:
   # darwin needs cgo; amd64 cross-compiles from the arm64 runner because
   # clang targets both architectures. The extras hook runs per darwin
-  # target: each stages its own arch, the arm64 one also builds the linux
-  # collector tarballs and the compy.app zip.
+  # target: each stages its own arch, the arm64 one also writes the
+  # compy.app zip.
   - id: compy-darwin
     main: ./cmd/compy
     binary: compy
@@ -61,9 +60,8 @@ builds:
 
 archives:
   # The darwin archives carry the full install: compy plus the staged
-  # otelcol-compy (+ .version) and compy.app from the extras hook, laid out
-  # flat so extraction — including Homebrew's into the Caskroom — puts them
-  # next to the binary.
+  # compy.app from the extras hook, laid out flat so extraction — including
+  # Homebrew's into the Caskroom — puts it next to the binary.
   - id: compy-darwin
     ids: [compy-darwin]
     formats: [tar.gz]
@@ -86,7 +84,6 @@ archives:
 checksum:
   name_template: checksums.txt
   extra_files:
-    - glob: dist/extra/*.tar.gz
     - glob: dist/extra/compy.app.zip
 
 # Keyless (OIDC) cosign signature over the checksums file: verifying one
@@ -144,7 +141,7 @@ homebrew_casks:
       depends_on macos: ">= :big_sur"
 
       # Everything in the staged dir is unsigned/ad-hoc: strip quarantine
-      # recursively so compy, otelcol-compy, and compy.app all run. This
+      # recursively so compy and compy.app both run. This
       # exists only because nothing here is Developer ID notarized;
       # notarizing would let it be deleted outright.
       #

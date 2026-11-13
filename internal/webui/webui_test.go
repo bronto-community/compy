@@ -1601,13 +1601,13 @@ func TestDownloadProgressRoute(t *testing.T) {
 
 // TestDistroUpdateRoutes: GET checks, POST pulls — the no-op answer
 // (started false, current == latest) is a 200 the screen turns into an
-// "already newest" note, and a refusal (the bundled collector, a
-// user-managed entry) is a 400 whose message is the whole answer.
+// "already newest" note, and a refusal (a user-managed entry) is a 400
+// whose message is the whole answer.
 func TestDistroUpdateRoutes(t *testing.T) {
 	api := fakeAPI()
 	api.CheckDistroUpdate = func(name string) (string, string, error) {
-		if name == "compy" {
-			return "", "", markBadRequest(fmt.Errorf("the bundled collector updates with compy releases"))
+		if name == "mine" {
+			return "", "", markBadRequest(fmt.Errorf("distro %q is user-managed — update the binary at its path yourself", name))
 		}
 		return "0.135.0", "0.160.0", nil
 	}
@@ -1645,13 +1645,13 @@ func TestDistroUpdateRoutes(t *testing.T) {
 		t.Fatalf("POST update = %d %v (started %q)", resp.StatusCode, body, started)
 	}
 
-	resp, err = http.Get(srv.URL + "/api/distros/compy/update")
+	resp, err = http.Get(srv.URL + "/api/distros/mine/update")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("GET update compy = %d, want 400", resp.StatusCode)
+		t.Fatalf("GET update mine = %d, want 400", resp.StatusCode)
 	}
 }
 

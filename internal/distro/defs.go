@@ -1,8 +1,7 @@
 package distro
 
 // Pinned collector distribution definitions, version v0.159.0 of
-// open-telemetry/opentelemetry-collector-releases — the same release the
-// bundled otelcol-compy manifest builds from. URLs follow the GitHub
+// open-telemetry/opentelemetry-collector-releases. URLs follow the GitHub
 // release-asset naming for that repo:
 //
 //	https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.159.0/<asset>

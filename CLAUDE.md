@@ -43,12 +43,6 @@ CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,productio
 
 when deliberately rolling out.
 
-`sh packaging/collector/build.sh` builds `otelcol-compy` (the bundled
-distro, from `packaging/collector/manifest.yaml` via OCB, builder pinned to
-the manifest's collector version) next to the compy binary, plus its
-`otelcol-compy.version` stamp. Slow (big module graph) and deliberately NOT
-part of the gates above; run it when the manifest changes.
-
 ## Dependencies
 
 Stdlib only, except `fyne.io/systray` (tray icon; darwin-only build, stubbed
@@ -98,13 +92,14 @@ custom encoder without a new ruling.
 - `vars` — extracts `${VAR}` / `${env:VAR:-default}` references (and their
   trailing-comment descriptions) from collector YAML.
 - `distro` — pinned collector-distribution definitions, checksum-verified
-  on-demand download, the distro registry, the bundled `otelcol-compy`
-  (resolved next to the compy executable, never downloaded, updates with
-  compy releases), and pulling newer upstream releases of the pinned
-  distros. Trust model: a PINNED version ships with a compiled-in sha256; a
+  on-demand download, the distro registry, and pulling newer upstream
+  releases of the pinned distros. compy ships no collector of its own (the
+  bundled `otelcol-compy` was dropped, #38; `app.New` moves a
+  `settings.Distro` of `compy` to the default). Trust model: a PINNED version ships with a compiled-in sha256; a
   PULLED update is verified against the `.sha256` asset published in the
   same upstream release (TLS + same-origin release assets). Default distro
-  chain: explicit `settings.Distro` → bundled-if-present → `contrib`.
+  chain: explicit `settings.Distro` → `contrib`. Not `core`: the shipped
+  `otlp-forward` config's offline queue needs `file_storage`, contrib-only.
   Pulled versions are recorded in settings.json (`distro_versions`) so the
   last-good restore rolls a bad update back. `contrib` is the implicit
   default: an empty `settings.Distro` resolves to it, auto-downloaded by
