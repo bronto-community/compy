@@ -463,7 +463,6 @@ function distroState(b, d, checking) {
   const here = !!b.downloaded;
   const blocked = !!b.definition && !b.available;
   const mine = !!b.user_entry && !b.definition;
-  const bundled = !!b.bundled;
   const ver = b.version ? " · " + b.version : "";
   // The persisted release check (background or on-demand) claims a newer
   // version; only installed updatable rows carry it, and it clears once the
@@ -482,7 +481,6 @@ function distroState(b, d, checking) {
     if (busy) return "downloading… " + (d.pct == null ? "" : d.pct + "%");
     if (failed) return short ? "download failed · " + short : "download failed";
     if (checking) return "checking for a newer release…";
-    if (bundled) return here ? "shipped with compy" + ver : "not built — packaging/collector/build.sh";
     if (inUse) return "in use" + ver + (here ? avail : fetches);
     if (blocked) return "not available on macOS";
     if (here) return mine ? "added by you" : "installed" + ver + avail;
@@ -490,18 +488,16 @@ function distroState(b, d, checking) {
   })();
   const cls = busy || checking || inUse ? " accent"
     : failed ? " bad"
-      : blocked || (bundled && !here) ? " off"
+      : blocked ? " off"
         : mine ? " mine" : "";
-  const glyph = inUse ? "dot" : blocked || (bundled && !here) ? "ban" : here ? "circle" : "download";
+  const glyph = inUse ? "dot" : blocked ? "ban" : here ? "circle" : "download";
 
-  // The update affordance belongs to INSTALLED pinned definitions only: the
-  // bundled collector updates with compy releases, a user-managed path is
-  // the user's to update, and an undownloaded row has nothing to update —
+  // The update affordance belongs to INSTALLED pinned definitions only: a
+  // user-managed path is the user's to update, and an undownloaded row has nothing to update —
   // its download fetches the newest release directly. Each disabled title
   // says so.
   const canUpdate = !!b.definition && !b.user_entry && !blocked && here;
   const updTitle = (() => {
-    if (bundled) return "updates with compy releases";
     if (!b.definition || b.user_entry) return "user-managed — update the binary at its path yourself";
     if (blocked) return "not available on macOS";
     if (!here) return "nothing installed — download fetches the newest release";
@@ -513,11 +509,9 @@ function distroState(b, d, checking) {
   const playTitle = (() => {
     if (inUse) return "already in use";
     if (here) return "run every config on " + b.name;
-    if (bundled) return "not built — packaging/collector/build.sh";
     return "download it first";
   })();
   const dlTitle = (() => {
-    if (bundled) return "never downloaded — built with compy";
     if (busy) return "downloading…";
     if (failed) return "try again";
     if (blocked) return "not available on macOS";
@@ -527,7 +521,7 @@ function distroState(b, d, checking) {
 
   return {
     state, cls, glyph, canUpdate, playTitle, dlTitle, updTitle,
-    busy, failed, inUse, here, blocked, mine, bundled,
+    busy, failed, inUse, here, blocked, mine,
   };
 }
 

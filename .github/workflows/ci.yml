@@ -73,10 +73,6 @@ jobs:
           # Same pin as release.yml, so this validates what a release renders.
           version: v2.17.0
           args: release --snapshot --clean --skip=publish,sign,sbom,announce
-        env:
-          # The extras hook's OCB collector builds are slow and irrelevant to
-          # the cask template; the hook documents this switch for exactly this.
-          SKIP_COLLECTOR: "1"
       - name: Check the rendered cask
         run: |
           TAP="$(brew --repository)/Library/Taps/compy-cask-check/homebrew-tap"

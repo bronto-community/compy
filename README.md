@@ -35,8 +35,9 @@ compy tray install
 No `brew tap` and no `brew trust` step: installing a fully qualified name taps
 the repository and trusts that one cask on its own.
 
-The install brings the compy binary, its bundled collector distribution
-(`otelcol-compy`) and the `compy.app` identity for the native window. The
+The install brings the compy binary and the `compy.app` identity for the
+native window. The collector itself is upstream `otelcol-contrib`, which
+compy downloads (checksum-verified) the first time it needs it. The
 menu bar item — compy's main interface — is a login item, so adding it is
 that second command rather than something `brew install` does for you. Take
 it out again from the danger area at the bottom of the window's settings
@@ -143,9 +144,9 @@ for OS-level (`launchctl setenv`) variables that GUI apps see too. A
 process's own environment always wins over anything compy sets.
 
 **Collector distributions.** `compy distro list` shows the known
-collector builds: the bundled `otelcol-compy`, the pinned
-`core`/`contrib`/`otlp` upstream builds (downloaded on demand,
-checksum-verified), and any binary you register with `compy distro add`.
+collector builds: the pinned `core`/`contrib`/`otlp` upstream builds
+(downloaded on demand, checksum-verified; `contrib` is the default), and
+any binary you register with `compy distro add`.
 `compy distro use` switches, `compy distro update` pulls a newer upstream
 release of an installed one.
 

@@ -3163,7 +3163,7 @@ function screenSettings() {
 
   wrap.appendChild(el("div", { class: "sec", attrs: { style: "margin-top:4px" } }, [
     span("title", "collector"),
-    el("div", { class: "subtitle sans", text: "one collector runs every configuration. compy ships with its own (otelcol-compy); download core, contrib, or otlp, or add your own." }),
+    el("div", { class: "subtitle sans", text: "one collector runs every configuration. compy uses contrib unless you pick another: download core, contrib, or otlp, or add your own." }),
   ]));
 
   const table = el("div", { class: "card" }, [
@@ -3337,8 +3337,8 @@ function distroRow(b) {
   const t = distroState(b, d, checking);
 
   const row = el("div", { class: "bin-grid bin-row" + (t.inUse ? " on" : "") }, [
-    el("span", { class: "ic" + (t.blocked || (t.bundled && !t.here) ? " off" : ""), title: t.state }, [icon(t.glyph, 13)]),
-    el("span", { class: "nm", text: b.name, title: b.path || (t.blocked ? "not available on macOS" : t.bundled ? "not built — packaging/collector/build.sh" : "not downloaded yet") }),
+    el("span", { class: "ic" + (t.blocked ? " off" : ""), title: t.state }, [icon(t.glyph, 13)]),
+    el("span", { class: "nm", text: b.name, title: b.path || (t.blocked ? "not available on macOS" : "not downloaded yet") }),
     el("span", { class: "bin-state" }, [
       el("span", { class: "s" + t.cls, text: t.state, title: t.failed ? d.error : null }),
       t.busy && d.pct != null ? el("span", { class: "pbar" }, [el("i", { attrs: { style: "width:" + d.pct + "%" } })]) : null,
@@ -3351,9 +3351,9 @@ function distroRow(b) {
         on: { click: () => useDistro(b.name) },
       }, [icon("play", 11, true)]),
       el("button", {
-        class: "ico" + (!t.here && !t.blocked && !t.bundled ? " accent" : ""),
+        class: "ico" + (!t.here && !t.blocked ? " accent" : ""),
         title: t.dlTitle,
-        attrs: t.here || t.blocked || t.busy || t.bundled ? { disabled: "" } : null,
+        attrs: t.here || t.blocked || t.busy ? { disabled: "" } : null,
         on: { click: () => fetchDistro(b.name) },
       }, [icon("download", 13)]),
       el("button", {

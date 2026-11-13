@@ -971,13 +971,7 @@ func cmdDistro(args []string) error {
 				}
 				ver, _ := d["version"].(string)
 				note := "user"
-				if d["bundled"] == true {
-					if d["downloaded"] == true {
-						note = "shipped with compy (" + ver + ")"
-					} else {
-						note = "not built — packaging/collector/build.sh"
-					}
-				} else if d["definition"] == true {
+				if d["definition"] == true {
 					switch {
 					case d["available"] != true:
 						note = "unavailable on this platform"
